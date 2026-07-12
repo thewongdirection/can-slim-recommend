@@ -1,14 +1,15 @@
-# CAN SLIM Methodology — distilled from William J. O'Neil, *How to Make Money in Stocks* (4th ed.)
+# CAN SLIM Methodology — the rule set this skill enforces
 
-This is the complete rule set the `stock-recommend` skill applies. It is a faithful
-compression of the book. Read it fully before screening. Numbers are O'Neil's own
-thresholds; do not invent softer ones.
+This is the complete rule set the `stock-recommend` skill applies — a growth-stock
+selection framework distilled from decades of study of the market's biggest winners. Read
+it fully before screening. The numbers below are the established thresholds of the method;
+do not invent softer ones.
 
 The core thesis: the greatest winning stocks of the last ~125 years shared **seven
 common traits at the moment just before their biggest advances.** CAN SLIM names those
 seven. It is a system built on *how the market actually behaves* (supply/demand + crowd
-psychology), not opinion, forecasts, P/E "value," dividends, or book value — which O'Neil
-shows had little predictive value for the biggest winners.
+psychology), not opinion, forecasts, P/E "value," dividends, or book value — which
+historically had little predictive value for the biggest winners.
 
 Two ideas underpin everything:
 - **The Great Paradox:** what looks too high and risky to the crowd usually goes higher;
@@ -23,7 +24,7 @@ Two ideas underpin everything:
 
 ### C — Current Quarterly Earnings & Sales
 - **EPS (most recent quarter) up ≥ 25%** vs. the *same quarter a year ago* (never vs. the
-  prior quarter — avoids seasonality). Absolute minimum floor is 18–20%; O'Neil prefers
+  prior quarter — avoids seasonality). Absolute minimum floor is 18–20%; the method prefers
   concentrating on **40%–500%+** in bull markets. The higher, the better.
 - Insist ideally on **two consecutive** quarters of strong gains.
 - **Earnings acceleration** matters as much as the level: the growth *rate* should be
@@ -85,7 +86,7 @@ Two ideas underpin everything:
 - **Relative Strength (RS):** buy stocks whose 12-month price performance beats **≥ 80%**
   (ideally 90%+) of the market. Big winners averaged an **RS ~87** before their major run.
   **Do not buy RS below ~70.** (This skill computes an RS *proxy* from price history — see
-  ibkr-data-guide.md — since the true 1–99 IBD rating needs the whole market.)
+  ibkr-data-guide.md — since a true full-market 1–99 RS rating needs the whole market.)
 - **Avoid "sympathy plays"** — the cheaper laggard in the same group that never performs
   like the leader. "The first man gets the oyster; the second, the shell."
 - **Never buy on the way down** because it "looks cheap" (Cisco $82→$8, Crocs $75→$1, BofA
@@ -171,8 +172,7 @@ all-time new high has none — an advantage. Supply >2 years old matters less.
 
 ## SELL rules (defense) — needed even for a recommendation list
 
-Recommendations must ship with an exit plan. O'Neil: "you can't win big without a strong
-defense."
+Recommendations must ship with an exit plan — you can't win big without a strong defense.
 
 **The absolute loss rule (never optional):**
 - **Cut every loss at 7–8% below your purchase price. No exceptions, ever.** If bought
@@ -206,12 +206,13 @@ smart money sells before the fundamentals turn):
 
 ## Money management & portfolio construction
 
-- **Concentration, not wide diversification.** O'Neil: most investors should hold **4–6**
-  well-chosen stocks (fewer for small accounts; even $1M+ needs only 6–7). "Diversification
-  is a hedge for ignorance." **Force-feed** money from laggards into your best performers
-  (pyramid up 2–2.5% above the first buy, smaller add-ons, never past ~5% extended).
+- **Concentration, not wide diversification.** The method holds that most investors should
+  own **4–6** well-chosen stocks (fewer for small accounts; even $1M+ needs only 6–7);
+  broad diversification is treated as a hedge for ignorance. **Force-feed** money from
+  laggards into your best performers (pyramid up 2–2.5% above the first buy, smaller
+  add-ons, never past ~5% extended).
   → *This skill outputs a longer ranked, sector-diversified watchlist; it explicitly tells
-  the user O'Neil would concentrate into the top few names.*
+  the user the methodology would concentrate into the top few names.*
 - Sector matters: **~37% of a stock's move is its industry group, +12% its sector ≈ half.**
   Buy leaders in **top-ranked groups** (top ~20 of 197 / top 6 sectors on the new-high
   list); avoid the bottom groups. **60%+ of big winners** were part of a group move.

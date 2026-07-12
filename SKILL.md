@@ -2,12 +2,12 @@
 name: stock-recommend
 description: >-
   Generate a ranked, sector-diversified list of stock recommendations by screening the
-  market with William O'Neil's CAN SLIM methodology (from *How to Make Money in Stocks*)
-  against live Interactive Brokers (IBKR) data plus web research. Use this whenever the
+  market with the CAN SLIM growth-investing methodology against live Interactive Brokers
+  (IBKR) data plus web research. Use this whenever the
   user asks for stock ideas, picks, or recommendations — "recommend some stocks", "what
   stocks should I buy", "give me a list of stocks", "find me growth stocks", "screen for
   CAN SLIM stocks", "what should I add to my watchlist", "any good stocks right now",
-  "build me a stock shortlist" — even if they don't name CAN SLIM or O'Neil. Also use when
+  "build me a stock shortlist" — even if they don't name CAN SLIM. Also use when
   they ask for stocks in a theme/sector ("recommend AI stocks", "best energy names") and
   want them vetted, or ask how many strong setups exist right now. Asks how many names to
   return (default 20) and diversifies across non-overlapping industry groups. Prefer this
@@ -17,13 +17,16 @@ description: >-
 
 # stock-recommend — CAN SLIM stock screener over IBKR
 
-Produces a **ranked, sector-diversified watchlist of buy candidates** that fit William J.
-O'Neil's CAN SLIM system, verified against live IBKR price/volume/leadership data and web
+Produces a **ranked, sector-diversified watchlist of buy candidates** that fit the CAN SLIM
+growth-investing system, verified against live IBKR price/volume/leadership data and web
 research for fundamentals. Output is a decision-support shortlist with a per-name rationale,
 buy point, and loss-cutting stop — **not investment advice, and never an order.**
 
 ## What CAN SLIM is (the standard this skill enforces)
-Seven traits shared by the greatest winning stocks just before their big moves:
+CAN SLIM is a growth-stock selection framework built on how the market actually behaves
+(supply/demand and crowd psychology) rather than on opinion or valuation "cheapness." Each
+letter is one of seven traits shared by the biggest winning stocks just before their big
+moves:
 **C** current quarterly earnings & sales up big and accelerating · **A** annual earnings
 growth 3 yrs + high ROE · **N** a new product/management/condition AND a breakout to new
 highs from a sound base · **S** supply/demand (volume surge, tight float, buybacks) ·
@@ -52,7 +55,7 @@ Work in order. Scale research depth to the request; keep the user informed as yo
 ### 1 — Set the count and scope
 Confirm **how many names** to return (**default 20**) and any scope the user gave (a theme
 like "AI"/"energy", their watchlist, market-cap preference). Default universe: **US-listed
-common stocks** (O'Neil's price/liquidity rules assume NYSE/Nasdaq). Don't over-ask — if
+common stocks** (the method's price/liquidity rules assume NYSE/Nasdaq). Don't over-ask — if
 they just said "recommend stocks", proceed with 20, US, broad market.
 
 ### 2 — Assess market direction (M) — do this first, it gates the tone
@@ -96,7 +99,7 @@ never pad with weak names (that is the whole point of the method). Present:
   Suggested stop (7–8%, or 3% in a correction)`.
 - **Per-name rationale:** 2–4 sentences — the "new" story, the earnings/sales figures, the
   leadership/RS read, the base and pivot, and the main risk/what would disqualify it.
-- **Portfolio note (always):** state that O'Neil advocates **concentration (4–6 names)**, so
+- **Portfolio note (always):** state that the methodology advocates **concentration (4–6 names)**, so
   treat this 20-name list as a **research shortlist to narrow**, not 20 positions to buy at
   once; and restate the loss-cutting discipline (cut losses 7–8%, average up never down,
   take many 20–25% gains but hold the powerful leaders).
@@ -114,7 +117,7 @@ never pad with weak names (that is the whole point of the method). Present:
   account-bound data. Present stocks by symbol/name only.
 - **No personalized advice or directives.** Give the factual CAN SLIM setup and let the user
   decide. If asked "should I buy X", present the scorecard and risks, not a yes/no.
-- Timestamp everything; flag approximations (RS is a proxy, not the IBD 1–99 rating; web
+- Timestamp everything; flag approximations (RS is a proxy, not a full-market 1–99 rating; web
   fundamentals may lag). Obey copyright in research (paraphrase; short quotes only).
 - The methodology is a probability edge, not a guarantee — always pair a recommendation
   with its exit rule.

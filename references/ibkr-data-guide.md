@@ -35,10 +35,11 @@ several sources, then filter it down. Aim to *start* with 60–120 names so ~20 
      most central), each with a `contract_id` you can reuse directly. This surfaces group
      leaders without needing symbols up front.
 2. **Web research for current leaders.** Search for names currently showing CAN SLIM traits:
-   recent-quarter EPS up big, near 52-week highs, top IBD-style groups, strong RS, breaking
-   out of bases. Good queries: "stocks breaking out to new highs [current month year]",
-   "leading growth stocks strong earnings [quarter]", "IBD 50 / IBD leaderboard current
-   leaders", "top performing S&P sectors this quarter". This keeps the universe current.
+   recent-quarter EPS up big, near 52-week highs, top-ranked industry groups, strong RS,
+   breaking out of bases. Good queries: "stocks breaking out to new highs [current month
+   year]", "leading growth stocks strong earnings [quarter]", "top growth-stock leaderboards
+   current leaders", "top performing S&P sectors this quarter". This keeps the universe
+   current.
 3. **User's own watchlists (optional):** if the user asks to screen their lists, `get_watchlists`
    → `get_watchlist { id }`. (Read-only; never write.)
 4. Deduplicate; resolve every symbol to a `contract_id` via `search_contracts` (exact
@@ -59,7 +60,7 @@ Do this before deep candidate work — it sets risk posture and the message to t
 - Check whether price is above/below the 50-day and 200-day moving averages and making
   higher highs/lows (uptrend) vs. lower highs/lows (correction).
 - Cross-check with a web search for current market status ("stock market uptrend or
-  correction today", follow-through day / distribution-day count from IBD-style sources).
+  correction today", follow-through day / distribution-day count from market-analysis sources).
 - Classify as one of: **Confirmed uptrend** / **Uptrend under pressure** / **Correction /
   downtrend**. Per user preference, the skill **still delivers** the list in a correction
   but states the status prominently and switches to higher-risk framing (tighter 3% stops,
@@ -87,7 +88,7 @@ keys are **hyphenated**; vol values are fractions (×100 for %). From this:
   **breakout volume** (latest up-day volume vs. ~50-day average; want ≥ +40–50%), volume
   dry-ups near base lows, and distance past any pivot (avoid > 5–10% extended).
 - **Relative Strength proxy** (see script): compute the candidate's price return over 3, 6,
-  and 12 months and compare to SPY over the same windows. A true IBD 1–99 RS needs the whole
+  and 12 months and compare to SPY over the same windows. A true full-market 1–99 RS needs the whole
   market; instead **rank candidates against each other** on 12-month (weighted toward
   recent) relative return, and keep the top performers (target the equivalent of RS ≥ 80:
   clearly outperforming SPY and in the top tier of the candidate set). Reject names lagging
@@ -124,7 +125,7 @@ unavailable, mark the field "n/a" and lower confidence rather than guessing.
 2. **CAN SLIM score:** rate each of C, A, N, S, L, I against the thresholds in
    `canslim-methodology.md` (e.g., pass/partial/fail), plus the M context. Rank by how many
    criteria are strongly met, weighting C, A (earnings) and L (RS/leadership) most heavily —
-   these were O'Neil's most predictive.
+   these are the method's most predictive factors.
 3. **Sector non-overlap:** use `get_company_themes { contract_id }` to get each finalist's
    sectors/trends. Enforce diversification: **cap how many names share the same industry
    group/sector** (aim ≤ 2–3 per group for a 20-name list) so the watchlist isn't, e.g., 15

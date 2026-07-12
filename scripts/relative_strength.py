@@ -57,7 +57,7 @@ def rs_proxy(cand_daily, bench_daily):
     for name, lb in windows.items():
         cr, br = ret_over(c, lb), ret_over(b, lb)
         rel[name] = None if cr is None or br is None else round(cr - br, 4)
-    # Blend: weight recent more (IBD RS weights the most recent quarter). Skip missing.
+    # Blend: weight recent more (relative-strength ratings weight the most recent quarter). Skip missing.
     weights = {"3m": 0.40, "6m": 0.35, "12m": 0.25}
     num = sum(weights[k] * rel[k] for k in weights if rel[k] is not None)
     den = sum(weights[k] for k in weights if rel[k] is not None)
