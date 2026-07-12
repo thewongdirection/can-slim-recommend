@@ -92,23 +92,47 @@ survivors on C-A-N-S-L-I-M (weight earnings C/A and leadership L most). Use
 `get_company_themes` per finalist to tag industry group/sector, and **cap names per group
 (≤ ~2–3)** so the final list spans **non-overlapping sectors**. Rank by CAN SLIM score.
 
-### 6 — Deliver
+### 6 — Deliver: an HTML dashboard by default (offer PDF)
 Return the requested count (default 20). **If fewer qualify, return fewer and say why** —
-never pad with weak names (that is the whole point of the method). Present:
+never pad with weak names (that is the whole point of the method).
 
-- **Header:** timestamp, data source (IBKR live/delayed + web), and the **market-direction
-  verdict** with its implication for buying now.
-- **Ranked table**, one row per stock: `Rank · Symbol · Company · Sector/Group · CAN SLIM
-  scorecard (C A N S L I as ✓/~/✗) · RS proxy · % off 52-wk high · Buy point (pivot area) ·
-  Suggested stop (7–8%, or 3% in a correction)`.
-- **Per-name rationale:** 2–4 sentences — the "new" story, the earnings/sales figures, the
-  leadership/RS read, the base and pivot, and the main risk/what would disqualify it.
-- **Portfolio note (always):** state that the methodology advocates **concentration (4–6 names)**, so
-  treat this 20-name list as a **research shortlist to narrow**, not 20 positions to buy at
-  once; and restate the loss-cutting discipline (cut losses 7–8%, average up never down,
-  take many 20–25% gains but hold the powerful leaders).
-- **Disclaimers:** informational only, not investment advice, you are not a financial
-  advisor; figures are as-of the timestamp; nothing here is an order.
+**Every run must produce a well-organized, formatted table of the recommended stocks** —
+basic info per name (symbol, company, group, price, RS, % off 52-wk high, buy point, stop)
+**plus, for each stock, why it is recommended.**
+
+**The "why" must be expressed *only* in CAN SLIM concepts and rules** — the seven letters
+(C, A, N, S, L, I, M); bases / pivots / handles and the base type; relative strength; new
+highs off a sound base; volume, accumulation/distribution; leader-vs-laggard and group
+leadership; institutional sponsorship; market direction (distribution days / follow-through).
+**Do not justify a pick with anything outside the method** — no generic macro opinions, no
+analyst price targets, no "it's a good company," no personal vibe. If a name cannot be
+defended in CAN SLIM terms, it does not belong on the list. Keep each reason concrete (cite
+the actual EPS/sales %, the RS figure, the base and pivot).
+
+**Default output format = a self-contained HTML dashboard**, rendered from
+`assets/dashboard_template.html`:
+1. Copy the template to an output file (e.g. `canslim-recommendations-<date>.html`).
+2. Fill the `CONFIG` object — the *only* thing you edit; the page renders itself. Populate:
+   `market` (verdict + tone + the M implication), `picks[]` (each with `scores` = `pass` /
+   `partial` / `fail` for every one of C·A·N·S·L·I, the basic info fields, and the
+   CAN-SLIM-only `reason`), and, when they apply, `shortfall` (fewer than requested),
+   `watch[]` (leaders repairing bases — not yet buyable), `speculative[]` (strong charts that
+   fail the earnings test), `excluded[]` (groups with no leaders at highs), `rationale[]`
+   (optional longer per-name cards), `portfolioNote`, `disclaimer`, `sources[]`.
+3. Present the file (SendUserFile / present_files, or give the path). Keep the chat reply
+   short: the market read, the headline picks, and why the count is what it is.
+
+The template is a complete UTF-8 document, theme-aware, and print-optimized (A4/Letter).
+**Always offer PDF** — e.g. *"Want this as a PDF too?"* — and on request convert the saved
+HTML to PDF (headless Chrome `--headless --print-to-pdf=out.pdf file.html`, or the `pdf`
+skill, or `weasyprint`) and deliver that file as well.
+
+The dashboard must always include: header (timestamp + data source), the **market-direction
+verdict**, the ranked table (basic info + C·A·N·S·L·I scorecard + CAN-SLIM reason), the
+shortfall note when fewer than requested qualify, the **portfolio / loss-cutting note**
+(concentration 4–6; cut losses 7–8%; average up never down; take 20–25% gains but hold the
+powerful leaders), and the **disclaimer** (informational only, not advice, as-of timestamp,
+nothing is an order). **Never** write account-bound data into the file — it may be shared.
 
 ## Delegating for deeper financials & required companion skills
 This skill screens breadth; for depth on a single name, hand off to a specialized skill
@@ -158,3 +182,7 @@ skill, but it isn't installed. You can add it from https://github.com/thewongdir
 - `scripts/relative_strength.py` — computes RS proxy, % off 52-week high, base depth/length,
   and breakout volume from IBKR OHLCV bars. Pure standard library; feed it the collected
   bars rather than eyeballing charts.
+- `assets/dashboard_template.html` — the default output. A self-contained, theme-aware,
+  print-optimized (PDF-ready) dashboard driven entirely by a `CONFIG` object you fill each
+  run: market verdict, the ranked table with the C·A·N·S·L·I scorecard and CAN-SLIM reasons,
+  watch/speculative/excluded tiers, and the portfolio note + disclaimer.
