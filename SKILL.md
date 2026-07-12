@@ -116,8 +116,9 @@ the actual EPS/sales %, the RS figure, the base and pivot).
 1. Copy the template to an output file (e.g. `canslim-recommendations-<date>.html`).
 2. Fill the `CONFIG` object — the *only* thing you edit; the page renders itself. Populate:
    `market` (verdict + tone + the M implication), `picks[]` (each with `scores` = `pass` /
-   `partial` / `fail` for every one of C·A·N·S·L·I, the basic info fields, and the
-   CAN-SLIM-only `reason`), and, when they apply, `shortfall` (fewer than requested),
+   `partial` / `fail` for every one of C·A·N·S·L·I, the basic info fields, the CAN-SLIM-only
+   `reason`, and optionally `spark`/`pivot` for the base sparkline), and, when they apply,
+   `shortfall` (fewer than requested),
    `watch[]` (leaders repairing bases — not yet buyable), `speculative[]` (strong charts that
    fail the earnings test), `excluded[]` (groups with no leaders at highs), `rationale[]`
    (optional longer per-name cards), `portfolioNote`, `disclaimer`, `sources[]`.
@@ -128,6 +129,20 @@ the actual EPS/sales %, the RS figure, the base and pivot).
 header sorts by it (alphabetical for Stock/Group, numeric for Price/RS/% off high/scorecard),
 toggling ascending/descending. Keep `price`, `rs`, and `offHigh` as clean values (e.g.
 `"186.96"`, `"+51"`, `"8%"`) so numeric sort parses them.
+
+**Built-in visuals (auto-rendered from CONFIG):**
+- **Leadership map** — a scatter at the top of the page plotting every pick by **RS (x)** vs.
+  **% off 52-week high (y, 0% at top)**, built straight from each pick's `rs` and `offHigh`
+  (no extra data). Leaders cluster **top-right** in a shaded "buyable leaders" zone (RS ≥ 0 and
+  within ~8% of the high); dots for picks scoring ≥ 4 of C·A·N·S·L·I are drawn in the leader
+  colour. It shows only when ≥ 2 picks have numeric `rs` + `offHigh`, else hides itself. This is
+  the L/N read made visual — it needs nothing beyond the fields you already fill.
+- **Base sparkline** — a per-row mini-chart in a new **Base** column. Give a pick
+  `spark: [<closing prices, oldest→newest>]` (weekly ~30–52 points from the base you already
+  pulled for RS/base math) and optionally `pivot: <buy-point price>`. The sparkline draws the
+  base shape, a dashed pivot line, and a dot at the current price (green when price ≥ pivot,
+  amber below) — a visual **N/base** cue beside the text reason. Omit `spark` and the cell shows
+  a dash, so it degrades cleanly for names you didn't chart.
 
 **Per-ticker deep dive (clickable ticker → in-page report window):** give a pick a
 `reviewUrl` and its ticker becomes a link that opens that report in a modal iframe. To wire
@@ -211,6 +226,8 @@ skill, but it isn't installed. You can add it from https://github.com/thewongdir
   print-optimized (PDF-ready) dashboard driven entirely by a `CONFIG` object you fill each
   run: market verdict, the ranked table with the C·A·N·S·L·I scorecard and CAN-SLIM reasons,
   watch/speculative/excluded tiers, and the portfolio note + disclaimer. Pure-ASCII source
-  (entity glyphs — no mojibake). The table **sorts** on any column header, and a pick's
+  (entity glyphs — no mojibake). The table **sorts** on any column header; a pick's
   ticker becomes a **clickable link** that opens its `ibkr-review-ticker` report in an in-page
-  window when you set the pick's `reviewUrl`.
+  window when you set the pick's `reviewUrl`; a top-of-page **leadership-map scatter**
+  (RS vs. % off high) and a per-row **base sparkline** (from the pick's `spark`/`pivot`) render
+  automatically from CONFIG.
