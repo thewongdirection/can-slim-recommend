@@ -87,15 +87,21 @@ keys are **hyphenated**; vol values are fractions (×100 for %). From this:
   detection: identify the most recent consolidation, its depth (peak-to-trough %), length
   (weeks), whether price is emerging near the top of it, and whether the pattern is tight vs.
   wide-and-loose. Map to the base types in `canslim-methodology.md`.
-- **Daily, ~6 months** (`step: "ONE_DAY", period: "SIX_MONTHS"`) → pivot/breakout check and
+- **Daily, ~14 months** (`step: "ONE_DAY", step_count: ~300`, or `period: "TWO_YEARS"`) —
+  **not** `SIX_MONTHS`/`ONE_YEAR`. The **pivot/breakout check** only reads the recent tail —
   **breakout volume** (latest up-day volume vs. ~50-day average; want ≥ +40–50%), volume
-  dry-ups near base lows, and distance past any pivot (avoid > 5–10% extended).
+  dry-ups near base lows, and distance past any pivot (avoid > 5–10% extended) — but the RS
+  proxy below needs a full 12 months of bars, so pull one longer daily series and reuse it.
 - **Relative Strength proxy** (see script): compute the candidate's price return over 3, 6,
-  and 12 months and compare to SPY over the same windows. A true full-market 1–99 RS needs the whole
+  and 12 months and compare to SPY over the same windows. **The 12-month leg needs > 252 daily
+  bars**, so `SIX_MONTHS` (~126) silently nulls the 6- *and* 12-month legs, and `ONE_YEAR`
+  (~251) falls just short of the 12-month window — pull ~14 months (`step_count ~300`) for
+  **both** the candidate **and SPY**. A true full-market 1–99 RS needs the whole
   market; instead **rank candidates against each other** on 12-month (weighted toward
   recent) relative return, and keep the top performers (target the equivalent of RS ≥ 80:
   clearly outperforming SPY and in the top tier of the candidate set). Reject names lagging
-  SPY over 6–12 months.
+  SPY over 6–12 months. If `rs_relative_return.12m` comes back `null`, you pulled too few daily
+  bars — refetch with more history before ranking.
 
 Use `scripts/relative_strength.py` to turn the OHLCV JSON into these metrics deterministically
 rather than eyeballing bars.

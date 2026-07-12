@@ -1,6 +1,6 @@
 # CAN SLIM Methodology — the rule set this skill enforces
 
-This is the complete rule set the `stock-recommend` skill applies — a growth-stock
+This is the complete rule set the `can-slim-recommend` skill applies — a growth-stock
 selection framework distilled from decades of study of the market's biggest winners. Read
 it fully before screening. The numbers below are the established thresholds of the method;
 do not invent softer ones.

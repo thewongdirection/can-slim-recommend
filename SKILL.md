@@ -1,5 +1,5 @@
 ---
-name: stock-recommend
+name: can-slim-recommend
 description: >-
   Generate a ranked, sector-diversified list of stock recommendations by screening the
   market with the CAN SLIM growth-investing methodology against live Interactive Brokers
@@ -15,7 +15,7 @@ description: >-
   analysis and decision support, never personalized investment advice and never trading.
 ---
 
-# stock-recommend — CAN SLIM stock screener over IBKR
+# can-slim-recommend — CAN SLIM stock screener over IBKR
 
 Produces a **ranked, sector-diversified watchlist of buy candidates** that fit the CAN SLIM
 growth-investing system, verified against live IBKR price/volume/leadership data and web
@@ -75,9 +75,11 @@ sectors), plus the user's watchlist if asked. Resolve each to a `contract_id` wi
 
 ### 4 — Gather technicals (IBKR) and fundamentals (preferred data connectors)
 For each candidate: `get_price_snapshot` (52-week high/low, price) and `get_price_history`
-(weekly ~1–2 yr for base shape; daily ~6 mo for breakout volume & RS). Run
-`scripts/relative_strength.py` on the collected bars to compute the RS proxy, % off 52-week
-high, base depth/length, and breakout volume deterministically. Then gather fundamentals
+(weekly ~1–2 yr for base shape; **daily ~14 months** — `step_count ~300` or `TWO_YEARS`, **not**
+`SIX_MONTHS`/`ONE_YEAR`, or the 12-month leg of the RS ranking comes back `null` — for breakout
+volume & RS; pull the same daily range for SPY). Run `scripts/relative_strength.py` on the
+collected bars to compute the RS proxy, % off 52-week high, base depth/length, and breakout
+volume deterministically. Then gather fundamentals
 (C, A, N, I) for the names that survive the technical cut — don't waste research on names
 already failing on price action / RS. **Prefer real financial-data connectors over generic
 web search** for the fundamental letters, following the source-priority ladder in

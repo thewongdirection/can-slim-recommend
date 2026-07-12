@@ -1,4 +1,4 @@
-# stock-recommend
+# can-slim-recommend
 
 A Claude skill that generates a **ranked, sector-diversified watchlist of stock
 recommendations** using the **CAN SLIM** growth-investing methodology, screened against
