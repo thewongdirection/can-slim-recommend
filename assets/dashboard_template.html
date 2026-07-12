@@ -13,6 +13,10 @@
       institutional sponsorship, market direction). No generic market chatter, no non-method
       rationale. If a name can't be justified in CAN SLIM terms, it does not belong here.
     - `scores` uses exactly "pass" | "partial" | "fail" for each of C,A,N,S,L,I.
+    - M (market direction) is deliberately NOT a per-row scorecard column. M is a single
+      market-wide gate, identical for every name at a given moment, so it lives in the
+      market-verdict banner at the top (CONFIG.market) - not repeated down a column.
+      Do not add a per-row M cell.
     - Never put account-bound data (IDs, balances, positions) anywhere in CONFIG.
 
   ENCODING: keep CONFIG text ASCII where practical (use "-" not an em-dash, "vs" not a

@@ -151,6 +151,12 @@ shortfall note when fewer than requested qualify, the **portfolio / loss-cutting
 powerful leaders), and the **disclaimer** (informational only, not advice, as-of timestamp,
 nothing is an order). **Never** write account-bound data into the file — it may be shared.
 
+**Why the scorecard is C·A·N·S·L·I and not C·A·N·S·L·I·M:** M (market direction) is a single
+market-wide gate that is identical for every stock at a given moment, so it belongs in the
+**market-verdict banner at the top**, not as a per-row column that would repeat the same value
+down every row. The per-stock scorecard covers only the six letters that actually vary by
+company. This is deliberate — do not add an M column to the table.
+
 ## Delegating for deeper financials & required companion skills
 This skill screens breadth; for depth on a single name, hand off to a specialized skill
 rather than doing a shallow web dig. Use these when a candidate is borderline, when a
