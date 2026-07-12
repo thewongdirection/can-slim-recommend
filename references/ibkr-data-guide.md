@@ -26,8 +26,14 @@ access are entirely out of scope, even if asked mid-run.
 
 ## Step 0 — Candidate generation (the hardest part)
 
-There is no bulk market screener in this connector, so build a candidate universe from
+The **IBKR** connector has no bulk market screener, so build a candidate universe from
 several sources, then filter it down. Aim to *start* with 60–120 names so ~20 survive.
+**FMP does have a screener** (`search` → `search-company-screener`: filter by market cap,
+price, volume, sector, country, `isEtf`/`isFund`/`isActivelyTrading`) — use it to pull a
+liquid starting universe by sector, but note it ranks by market cap, not growth/RS, so it
+surfaces mega-caps first and still needs the near-high + earnings filter below. In practice
+the most CAN-SLIM-aligned candidates come from **web new-high/leaders lists + IBKR leading
+themes**, with the FMP screener as a breadth cross-check.
 
 1. **Leading themes/groups (primary, most CAN-SLIM-aligned).** The user may name a theme,
    or you infer the current leading areas. For each leading trend/sector:
@@ -130,13 +136,27 @@ research only for finalists that already survived the technical cut.
    fundamentals: next-year EPS estimate (part of **A**), plus estimate revisions and surprise
    history (the acceleration signal in **C**).
 4. **Financial Modeling Prep (FMP)** — a structured fundamentals MCP (deferred; load its tools
-   with `ToolSearch`). Broad, fast coverage of the exact CAN SLIM inputs. Preferred tools:
-   `statements` (income / balance / cash-flow history → **EPS & revenue growth** for **C**,
-   multi-year annuals, **margins / ROE / debt** for **A**/**S**), `analyst` / `tipranks`
-   (forward estimates & consensus → forward **A**), `form13F` + `insiderTrades` (institutional
-   & management ownership → **I**/**S**), `company` (profile, float, sector), `calendar`
-   (next-earnings date → **N**/timing), `secFilings`, `discountedCashFlow`, `earningsTranscript`.
-   Requires the user's FMP API key / connector.
+   with `ToolSearch`). Broad, fast coverage of the exact CAN SLIM inputs, **but endpoint
+   availability depends on the user's FMP plan** — some calls return `ACCESS DENIED ... requires
+   a higher plan`. Probe cheaply and drop to the next rung for whatever's gated. What tends to
+   work on lower tiers, and how to use it:
+   - **`quote` → `batch-quote`** (the workhorse): one call takes a symbol array and returns, per
+     name, `price`, `yearHigh`/`yearLow`, `priceAvg50`/`priceAvg200`, `volume`, `marketCap`.
+     That single call gives you **% off 52-wk high** and **50/200-day trend** for a whole
+     candidate list — a very token-efficient first-pass screen (compute off-high = `(yearHigh -
+     price)/yearHigh`; require price above both MAs). Use it before spending per-name IBKR calls.
+   - **`search` → `search-company-screener`** — the sector/size/liquidity screener (see Step 0).
+   - **`company` → `profile-symbol`** — sector, industry, **IPO date** (New America / **N**),
+     employees, market cap, business description (the **N** story). Usually available.
+   - **`quote` → `quote-change`** — 1M/3M/6M/1Y/… performance windows; when available this is a
+     cheap RS input (compare each name's 6-/12-mo change to SPY's). **Often premium-gated** — if
+     denied, get RS from IBKR weekly/daily bars via `scripts/relative_strength.py` instead.
+   - **Premium / commonly gated:** `statements` (income / growth / ratios), `analyst`
+     (estimates, grades, targets), `form13F` + `insiderTrades`, `earningsTranscript`,
+     `discountedCashFlow`. When these are gated, the **C**/**A** earnings figures and **I**
+     ownership come from web research (rung 6) or `securities-filings-lookup` (rung 5) instead.
+   IBKR tickers vs FMP symbols line up for US names; IBKR name-search is unreliable, so resolve
+   IBKR `contract_id`s by **ticker**, not company name.
 5. **SEC EDGAR / official filings** — the authoritative primary statements (10-K / 10-Q /
    20-F / annual reports). Reach them via the **`securities-filings-lookup`** skill, which
    resolves the ticker's exchange/regulator and pulls the official filing (also covers non-US

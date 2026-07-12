@@ -11,8 +11,11 @@ description: >-
   they ask for stocks in a theme/sector ("recommend AI stocks", "best energy names") and
   want them vetted, or ask how many strong setups exist right now. Asks how many names to
   return (default 20) and diversifies across non-overlapping industry groups. Prefer this
-  skill over ad-hoc picking for any "recommend / screen / find me stocks" request. This is
-  analysis and decision support, never personalized investment advice and never trading.
+  skill over ad-hoc picking for any "recommend / screen / find me stocks" request. This is the
+  ranked-LIST / screener lens and the sister skill of `can-slim-grader`; when the user instead
+  names ONE ticker and wants it judged (a letter-by-letter C-A-N-S-L-I-M scorecard with a
+  BUY-RANGE / WATCH / AVOID verdict), use `can-slim-grader` instead. Output is a PDF by default.
+  This is analysis and decision support, never personalized investment advice and never trading.
 ---
 
 # can-slim-recommend — CAN SLIM stock screener over IBKR
@@ -20,7 +23,16 @@ description: >-
 Produces a **ranked, sector-diversified watchlist of buy candidates** that fit the CAN SLIM
 growth-investing system, verified against live IBKR price/volume/leadership data and web
 research for fundamentals. Output is a decision-support shortlist with a per-name rationale,
-buy point, and loss-cutting stop — **not investment advice, and never an order.**
+buy point, and loss-cutting stop, delivered as a **PDF by default** — **not investment advice,
+and never an order.**
+
+> **Sister skill — `can-slim-grader`.** This skill is the **LIST / screener** lens: a whole
+> market → a ranked shortlist of many names. Its sister, **`can-slim-grader`**, is the
+> **single-ticker GRADER**: one specified ticker in → a letter-by-letter C·A·N·S·L·I·M
+> scorecard with a BUY-RANGE / WATCH / AVOID verdict. Same methodology, opposite direction.
+> If the user names one ticker and wants it judged, hand off to `can-slim-grader`; if they want
+> ideas/picks/a screen, stay here. (For a data-rich single-stock dashboard, use
+> `ibkr-review-ticker`.)
 
 ## What CAN SLIM is (the standard this skill enforces)
 CAN SLIM is a growth-stock selection framework built on how the market actually behaves
@@ -94,7 +106,7 @@ survivors on C-A-N-S-L-I-M (weight earnings C/A and leadership L most). Use
 `get_company_themes` per finalist to tag industry group/sector, and **cap names per group
 (≤ ~2–3)** so the final list spans **non-overlapping sectors**. Rank by CAN SLIM score.
 
-### 6 — Deliver: an HTML dashboard by default (offer PDF)
+### 6 — Deliver: a PDF dashboard by default (HTML source kept alongside)
 Return the requested count (default 20). **If fewer qualify, return fewer and say why** —
 never pad with weak names (that is the whole point of the method).
 
@@ -111,8 +123,8 @@ analyst price targets, no "it's a good company," no personal vibe. If a name can
 defended in CAN SLIM terms, it does not belong on the list. Keep each reason concrete (cite
 the actual EPS/sales %, the RS figure, the base and pivot).
 
-**Default output format = a self-contained HTML dashboard**, rendered from
-`assets/dashboard_template.html`:
+**Default deliverable = a PDF**, rendered from the self-contained HTML dashboard template
+`assets/dashboard_template.html`. Build the HTML, then convert it to PDF and present the PDF:
 1. Copy the template to an output file (e.g. `canslim-recommendations-<date>.html`).
 2. Fill the `CONFIG` object — the *only* thing you edit; the page renders itself. Populate:
    `market` (verdict + tone + the M implication), `picks[]` (each with `scores` = `pass` /
@@ -122,8 +134,15 @@ the actual EPS/sales %, the RS figure, the base and pivot).
    `watch[]` (leaders repairing bases — not yet buyable), `speculative[]` (strong charts that
    fail the earnings test), `excluded[]` (groups with no leaders at highs), `rationale[]`
    (optional longer per-name cards), `portfolioNote`, `disclaimer`, `sources[]`.
-3. Present the file (SendUserFile / present_files, or give the path). Keep the chat reply
-   short: the market read, the headline picks, and why the count is what it is.
+3. **Convert the filled HTML to PDF** (headless Chrome `--headless --print-to-pdf=out.pdf
+   file.html`, or the `pdf` skill, or `weasyprint`) — the template's print CSS is A4/Letter-
+   ready. **Present the PDF as the default deliverable** (SendUserFile / present_files), and
+   keep the saved HTML next to it. Keep the chat reply short: the market read, the headline
+   picks, and why the count is what it is.
+4. **Offer the interactive HTML** — the sortable table, clickable-ticker review windows, and
+   hover states are HTML-only and are flattened in the PDF, so when the user wants to sort,
+   click through to per-ticker reports, or explore, hand them the HTML file instead (e.g.
+   *"Want the interactive HTML version too — sortable, with clickable tickers?"*).
 
 **Built-in interactivity (no work needed):** the table is **sortable** — clicking any column
 header sorts by it (alphabetical for Stock/Group, numeric for Price/RS/% off high/scorecard),
@@ -156,10 +175,9 @@ ticker is plain text. If `ibkr-review-ticker` isn't installed, prompt the user t
 
 The template is a complete UTF-8 document written in **pure-ASCII source** (special glyphs are
 HTML entities, so no mojibake even if a viewer ignores the charset), theme-aware, and
-print-optimized (A4/Letter).
-**Always offer PDF** — e.g. *"Want this as a PDF too?"* — and on request convert the saved
-HTML to PDF (headless Chrome `--headless --print-to-pdf=out.pdf file.html`, or the `pdf`
-skill, or `weasyprint`) and deliver that file as well.
+print-optimized (A4/Letter) — which is why it renders cleanly to the default PDF. The
+interactive HTML (sortable columns, clickable-ticker review modal) remains available on
+request per step 4 above.
 
 The dashboard must always include: header (timestamp + data source), the **market-direction
 verdict**, the ranked table (basic info + C·A·N·S·L·I scorecard + CAN-SLIM reason), the
@@ -222,8 +240,9 @@ skill, but it isn't installed. You can add it from https://github.com/thewongdir
 - `scripts/relative_strength.py` — computes RS proxy, % off 52-week high, base depth/length,
   and breakout volume from IBKR OHLCV bars. Pure standard library; feed it the collected
   bars rather than eyeballing charts.
-- `assets/dashboard_template.html` — the default output. A self-contained, theme-aware,
-  print-optimized (PDF-ready) dashboard driven entirely by a `CONFIG` object you fill each
+- `assets/dashboard_template.html` — the source for the output. A self-contained, theme-aware,
+  print-optimized dashboard that is **rendered to PDF as the default deliverable** (and handed
+  over as interactive HTML on request), driven entirely by a `CONFIG` object you fill each
   run: market verdict, the ranked table with the C·A·N·S·L·I scorecard and CAN-SLIM reasons,
   watch/speculative/excluded tiers, and the portfolio note + disclaimer. Pure-ASCII source
   (entity glyphs — no mojibake). The table **sorts** on any column header; a pick's

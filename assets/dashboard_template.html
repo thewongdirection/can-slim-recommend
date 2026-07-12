@@ -428,19 +428,22 @@ function buildLeadMap(){
 
   const W=720, H=320, mL=46, mR=18, mT=18, mB=42;
   const pw=W-mL-mR, ph=H-mT-mB;
-  let xs=pts.map(d=>d.x), ys=pts.map(d=>d.y);
-  let xMin=Math.min(...xs,0), xMax=Math.max(...xs,0);
+  // signed-sqrt x-scale so one extreme-RS outlier doesn't compress the rest of the field
+  const tx=(v)=> Math.sign(v)*Math.sqrt(Math.abs(v));
+  let xsR=pts.map(d=>d.x), ys=pts.map(d=>d.y);
+  let xMinR=Math.min(...xsR,0), xMaxR=Math.max(...xsR,0);
   let yMin=0, yMax=Math.max(...ys, 8);
-  const xpad=(xMax-xMin||1)*0.08, ypad=(yMax-yMin||1)*0.08;
-  xMin-=xpad; xMax+=xpad; yMax+=ypad;                 // yMin stays 0 (at the high)
-  const X=(v)=> mL + (v-xMin)/(xMax-xMin)*pw;
-  const Y=(v)=> mT + (v-yMin)/(yMax-yMin)*ph;          // 0% -> top
+  const xPadR=(xMaxR-xMinR||1)*0.08, ypad=(yMax-yMin||1)*0.08;
+  xMinR-=xPadR; xMaxR+=xPadR; yMax+=ypad;              // yMin stays 0 (at the high)
+  const txMin=tx(xMinR), txMax=tx(xMaxR);
+  const X=(v)=> mL + (tx(v)-txMin)/((txMax-txMin)||1)*pw;
+  const Y=(v)=> mT + (v-yMin)/((yMax-yMin)||1)*ph;      // 0% -> top
 
   const buyBand=8;                                     // within 8% of high = buyable zone
-  const yBuy=Y(Math.min(buyBand,yMax)), xZero=X(Math.max(0,xMin));
+  const yBuy=Y(Math.min(buyBand,yMax)), xZero=X(Math.max(0,xMinR));
   let svg='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="RS vs percent off 52-week high scatter">';
   // buyable-leaders zone: RS>=0 and within buy band of the high (top-right)
-  if (xMax>0){
+  if (xMaxR>0){
     svg+='<rect class="lm-zone" x="'+xZero.toFixed(1)+'" y="'+mT+'" '+
          'width="'+(mL+pw-xZero).toFixed(1)+'" height="'+(yBuy-mT).toFixed(1)+'"/>'+
          '<text class="lm-zone-lab" x="'+(mL+pw-4)+'" y="'+(mT+13)+'" text-anchor="end">buyable leaders</text>';
@@ -449,19 +452,19 @@ function buildLeadMap(){
   svg+='<line class="lm-axis" x1="'+mL+'" y1="'+(mT+ph)+'" x2="'+(mL+pw)+'" y2="'+(mT+ph)+'"/>'+
        '<line class="lm-axis" x1="'+mL+'" y1="'+mT+'" x2="'+mL+'" y2="'+(mT+ph)+'"/>';
   // reference lines: RS=0 (vs SPY) and the buy band
-  if (xMin<0 && xMax>0) svg+='<line class="lm-ref" x1="'+X(0).toFixed(1)+'" y1="'+mT+'" x2="'+X(0).toFixed(1)+'" y2="'+(mT+ph)+'"/>';
+  if (xMinR<0 && xMaxR>0) svg+='<line class="lm-ref" x1="'+X(0).toFixed(1)+'" y1="'+mT+'" x2="'+X(0).toFixed(1)+'" y2="'+(mT+ph)+'"/>';
   if (buyBand<yMax) svg+='<line class="lm-ref" x1="'+mL+'" y1="'+yBuy.toFixed(1)+'" x2="'+(mL+pw)+'" y2="'+yBuy.toFixed(1)+'"/>';
   // axis labels
-  svg+='<text class="lm-axlab" x="'+(mL+pw/2)+'" y="'+(H-8)+'" text-anchor="middle">Relative strength (12-mo vs SPY, proxy) &#8594; stronger</text>'+
+  svg+='<text class="lm-axlab" x="'+(mL+pw/2)+'" y="'+(H-8)+'" text-anchor="middle">Relative strength (12-mo vs SPY, proxy; sqrt scale) &#8594; stronger</text>'+
        '<text class="lm-axlab" transform="translate(13,'+(mT+ph/2)+') rotate(-90)" text-anchor="middle">&#8592; nearer 52-wk high (% below)</text>';
   // y ticks (0 at top, yMax at bottom)
   [0, buyBand, Math.round(yMax)].forEach(t=>{ if(t<=yMax){
     svg+='<text class="lm-tick" x="'+(mL-6)+'" y="'+(Y(t)+3).toFixed(1)+'" text-anchor="end">'+t+'%</text>';
   }});
-  // x ticks
-  [xMin, (xMin+xMax)/2, xMax].forEach(t=>{
-    svg+='<text class="lm-tick" x="'+X(t).toFixed(1)+'" y="'+(mT+ph+15)+'" text-anchor="middle">'+(t>0?'+':'')+Math.round(t)+'</text>';
-  });
+  // x ticks: evenly spaced in transformed space, labeled with the actual (nonlinear) RS value
+  for(let i=0;i<=4;i++){ const txv=txMin+i/4*(txMax-txMin), raw=Math.sign(txv)*txv*txv, px=mL+i/4*pw;
+    svg+='<text class="lm-tick" x="'+px.toFixed(1)+'" y="'+(mT+ph+15)+'" text-anchor="middle">'+(raw>0?'+':'')+Math.round(raw)+'</text>';
+  }
   // dots + labels
   pts.forEach(d=>{
     const cx=X(d.x), cy=Y(d.y);
