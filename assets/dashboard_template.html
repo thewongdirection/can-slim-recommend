@@ -341,9 +341,11 @@ $("market").innerHTML =
   '<div class="imp"><b>M &mdash; market direction:</b> '+esc(m.implication||'')+'</div>'+
   (m.distributionDays?'<div class="dd">Distribution days: '+esc(m.distributionDays)+'</div>':'');
 
-// data provenance (which sources actually contributed) + a warning when any is stale/gated
-if (CONFIG.dataProvenance){
-  $("dataProvenance").innerHTML = '<div class="provenance"><b>Data sources used:</b> '+esc(CONFIG.dataProvenance)+'</div>';
+// data provenance (which sources actually contributed) + a warning when any is stale/gated.
+// Falls back to dataSource so the "data sources used" line is never silently absent.
+const prov = CONFIG.dataProvenance || CONFIG.dataSource;
+if (prov){
+  $("dataProvenance").innerHTML = '<div class="provenance"><b>Data sources used:</b> '+esc(prov)+'</div>';
 }
 if (CONFIG.dataWarning){
   $("dataWarning").innerHTML = '<div class="callout warn">&#9888; <b>Data caveat:</b> '+esc(CONFIG.dataWarning)+'</div>';
