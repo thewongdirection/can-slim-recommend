@@ -128,6 +128,9 @@
 
   .callout{background:var(--accent-soft);border:1px solid var(--line);border-left:3px solid var(--accent);
     border-radius:8px;padding:12px 15px;font-size:13px;margin:14px 0}
+  .callout.warn{background:var(--partial-bg);border-left-color:var(--partial)}
+  .provenance{font-family:var(--mono);font-size:12px;color:var(--muted);margin:10px 0 2px}
+  .provenance b{color:var(--ink)}
   footer{margin-top:28px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:11.5px}
   footer a{color:var(--accent)}
   .sources a{margin-right:12px;white-space:nowrap}
@@ -193,6 +196,8 @@
   </header>
 
   <div class="market" id="market"></div>
+  <div id="dataWarning"></div>
+  <div id="dataProvenance"></div>
   <div id="shortfall"></div>
 
   <div id="leadmapWrap" style="display:none">
@@ -267,6 +272,18 @@ const CONFIG = {
   dataSource: "IBKR (delayed/live) + fundamental sources",
   requested: 20,
 
+  // One line naming which data sources ACTUALLY contributed to this run (renders as a
+  // "Data sources used:" line under the market banner). Be specific about which letters came
+  // from where, e.g. "IBKR weekly bars (N/S/L/M + RS via relative_strength.py); C/A/I from
+  // SEC filings + web (FMP fundamentals gated on this plan)".
+  dataProvenance: "",
+  // Set a short warning whenever any source was STALE or GATED and the analysis leaned on a
+  // fallback (renders an amber caveat banner). Say what was gated/stale and what filled the
+  // gap, e.g. "FMP quote-change/statements gated & throttled; RS computed from IBKR bars and
+  // C/A taken from web research, which can lag the latest quarter." Leave "" if everything
+  // resolved from the preferred sources with fresh data.
+  dataWarning: "",
+
   market: {
     verdict: "Confirmed uptrend - narrow & selective",   // badge text
     tone: "pressure",                                     // "up" | "pressure" | "down"
@@ -323,6 +340,14 @@ $("market").innerHTML =
   '<span class="verdict '+esc(m.tone||'up')+'">'+esc(m.verdict||'')+'</span>'+
   '<div class="imp"><b>M &mdash; market direction:</b> '+esc(m.implication||'')+'</div>'+
   (m.distributionDays?'<div class="dd">Distribution days: '+esc(m.distributionDays)+'</div>':'');
+
+// data provenance (which sources actually contributed) + a warning when any is stale/gated
+if (CONFIG.dataProvenance){
+  $("dataProvenance").innerHTML = '<div class="provenance"><b>Data sources used:</b> '+esc(CONFIG.dataProvenance)+'</div>';
+}
+if (CONFIG.dataWarning){
+  $("dataWarning").innerHTML = '<div class="callout warn">&#9888; <b>Data caveat:</b> '+esc(CONFIG.dataWarning)+'</div>';
+}
 
 const picks = (CONFIG.picks||[]).slice();
 $("countnote").textContent = CONFIG.requested ? "- "+picks.length+" of "+CONFIG.requested+" requested qualified" : "- "+picks.length;

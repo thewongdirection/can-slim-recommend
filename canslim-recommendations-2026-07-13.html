@@ -267,6 +267,9 @@ const CONFIG = {
   dataSource: "IBKR price/volume + FMP fundamentals + web research",
   requested: 8,
 
+  dataProvenance: "N/S/L/M and relative strength: IBKR weekly bars run through scripts/relative_strength.py (weekly-mode). C/A/I fundamentals: web research (Arista/CrowdStrike/Cloudflare/Lilly earnings releases + SEC 8-Ks); ROE for AMD/GE from FMP key-metrics. FMP batch-quote gave the first-pass % off high / 50-200-day trend.",
+  dataWarning: "FMP quote-change and statements endpoints were intermittently gated/throttled on this plan ('requires a higher plan'), so C/A came from web research (which can lag the latest reported quarter) rather than a structured fundamentals feed, and RS was computed from IBKR bars. Prices are 2026-07-13 intraday and approximate.",
+
   market: {
     verdict: "Confirmed uptrend - under mild pressure",
     tone: "pressure",
