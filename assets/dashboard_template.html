@@ -12,11 +12,10 @@
       bases/pivots, relative strength, new highs, volume/accumulation, leadership,
       institutional sponsorship, market direction). No generic market chatter, no non-method
       rationale. If a name can't be justified in CAN SLIM terms, it does not belong here.
-    - `scores` uses exactly "pass" | "partial" | "fail" for each of C,A,N,S,L,I.
-    - M (market direction) is deliberately NOT a per-row scorecard column. M is a single
-      market-wide gate, identical for every name at a given moment, so it lives in the
-      market-verdict banner at the top (CONFIG.market) - not repeated down a column.
-      Do not add a per-row M cell.
+    - `scores` grades each of C,A,N,S,L,I as an INTEGER 0-10 (be granular: e.g. C:7, A:5).
+    - M (market direction) is graded ONCE for the whole market via CONFIG.market.mScore (0-10)
+      and applied to every row (same value), so the per-row scorecard shows C,A,N,S,L,I + an
+      M cell (dashed = market-wide). Total = C+A+N+S+L+I + M, out of 70.
     - Never put account-bound data (IDs, balances, positions) anywhere in CONFIG.
 
   ENCODING: keep CONFIG text ASCII where practical (use "-" not an em-dash, "vs" not a
@@ -105,13 +104,17 @@
   td.num{font-family:var(--mono);white-space:nowrap;text-align:right}
   .pos{color:var(--pass)} .neg{color:var(--fail)}
   .scorecells{white-space:nowrap}
-  .sc{display:inline-flex;flex-direction:column;align-items:center;width:22px;margin-right:3px}
+  .sc{display:inline-flex;flex-direction:column;align-items:center;width:22px;margin-right:2px}
   .sc .lab{font-size:11px;color:var(--muted);font-family:var(--mono)}
-  .sc .mk{width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;
-    font-size:14px;font-weight:700;margin-top:2px}
-  .mk.pass{background:var(--pass-bg);color:var(--pass)}
-  .mk.partial{background:var(--partial-bg);color:var(--partial)}
-  .mk.fail{background:var(--fail-bg);color:var(--fail)}
+  .sc .mk{width:21px;height:21px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:700;margin-top:2px;font-family:var(--mono)}
+  .mk.s-hi{background:var(--pass-bg);color:var(--pass)}
+  .mk.s-mid{background:var(--partial-bg);color:var(--partial)}
+  .mk.s-lo{background:var(--fail-bg);color:var(--fail)}
+  .sc.mcol .mk{outline:1px dashed var(--line);outline-offset:-1px}   /* M = market-wide component */
+  .sc-total{display:inline-flex;flex-direction:column;align-items:center;margin-left:7px;vertical-align:top}
+  .sc-total .lab{font-size:11px;color:var(--muted);font-family:var(--mono)}
+  .sc-total .val{font-family:var(--mono);font-weight:700;font-size:15px;margin-top:1px;color:var(--ink)}
   .reason{font-size:15px;color:var(--ink);min-width:260px;max-width:420px}
 
   .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
@@ -203,10 +206,10 @@
 
   <div class="section-title">Recommended stocks <span id="countnote" style="font-weight:400;text-transform:none;letter-spacing:0"></span></div>
   <div class="legend">
-    <span><span class="dot pass"></span>meets CAN SLIM threshold</span>
-    <span><span class="dot partial"></span>partial</span>
-    <span><span class="dot fail"></span>fails</span>
-    <span style="color:var(--muted)">Scorecard: C&middot;A&middot;N&middot;S&middot;L&middot;I &nbsp;|&nbsp; RS = 12-mo return vs. SPY (proxy)</span>
+    <span><span class="dot pass"></span>8-10 strong</span>
+    <span><span class="dot partial"></span>4-7 partial</span>
+    <span><span class="dot fail"></span>0-3 weak</span>
+    <span style="color:var(--muted)">Each letter graded <b>0-10</b>; Total = C&middot;A&middot;N&middot;S&middot;L&middot;I + <b>M</b> (market, same for every row) out of <b>70</b>. RS = relative strength vs. SPY.</span>
   </div>
   <div class="legend"><span class="hint">Click a column header to sort. Click a ticker to open its ibkr-review-ticker report.</span></div>
   <div class="tablewrap">
@@ -287,6 +290,7 @@ const CONFIG = {
   market: {
     verdict: "Confirmed uptrend - narrow & selective",   // badge text
     tone: "pressure",                                     // "up" | "pressure" | "down"
+    mScore: 6,                                            // M graded 0-10 (feeds every row's /70 total): confirmed uptrend ~8-10, under pressure ~5-7, correction ~0-4
     distributionDays: "SPY 5 / QQQ 7 over ~5 weeks",
     implication: "Indices near highs above the 50-day, but leadership is narrow (M intact but late-stage). Buy only genuine leaders emerging from sound bases; normal 7-8% stops."
   },
@@ -300,7 +304,7 @@ const CONFIG = {
     // {
     //   rank:1, symbol:"ANET", company:"Arista Networks", group:"AI networking",
     //   price:"186.96", rs:"+51", offHigh:"0%", buyPoint:"~178 pivot", stop:"~172",
-    //   scores:{C:"pass",A:"pass",N:"pass",S:"partial",L:"pass",I:"pass"},
+    //   scores:{C:9,A:8,N:9,S:6,L:9,I:8},   // each 0-10; M comes from market.mScore
     //   reason:"C: Q EPS +32% / sales +35% accelerating. A: 3-yr growth + high ROE. N: new AI-cluster product at a new high off a sound base. L: RS +51, #1 in a leading group. I: heavy institutional sponsorship.",
     //   reviewUrl:"reviews/ANET-review.html"
     // }
@@ -325,10 +329,14 @@ const CONFIG = {
 const $ = (id)=>document.getElementById(id);
 const esc = (s)=> (s==null?"":String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const rsClass = (v)=> /^[-\u2212]/.test(String(v).trim()) ? "neg" : "pos";
-const MK = {pass:"&#10003;", partial:"~", fail:"&#10007;"};   // check / tilde / cross as ASCII entities
 // parse a messy numeric string ("+51","-14%","1,188",">1,220 breakout","~178 pivot") -> number|NaN
 const num = (s)=>{ if(s==null) return NaN; const m=String(s).replace(/,/g,'').match(/-?\d+(\.\d+)?/); return m?parseFloat(m[0]):NaN; };
-const passCount = (sc={})=> ["C","A","N","S","L","I"].reduce((n,k)=> n + (sc[k]==="pass"?1:sc[k]==="partial"?0.5:0), 0);
+// --- 0-10 per-letter grading; total = C+A+N+S+L+I + M (market, same for all rows) out of 70 ---
+const LETTERS6 = ["C","A","N","S","L","I"];
+const clamp10 = (v)=>{ v=Number(v); return isFinite(v)?Math.max(0,Math.min(10,Math.round(v))):0; };
+const gradeCls = (v)=> v>=8?"s-hi":v>=4?"s-mid":"s-lo";
+const mScore = ()=> clamp10((CONFIG.market||{}).mScore);
+const scoreTotal = (p)=> LETTERS6.reduce((n,k)=> n+clamp10((p.scores||{})[k]), 0) + mScore();
 
 document.title = CONFIG.title || "CAN SLIM Recommendations";
 $("title").textContent = CONFIG.title || document.title;
@@ -365,7 +373,7 @@ const COLS = [
   {key:"price",  label:"Price",        type:"num",  cls:"num",  get:p=>num(p.price)},
   {key:"rs",     label:"RS",           type:"num",  cls:"num",  get:p=>num(p.rs)},
   {key:"offHigh",label:"% off 52w hi", type:"num",  cls:"num",  get:p=>num(p.offHigh)},
-  {key:"score",  label:"C&middot;A&middot;N&middot;S&middot;L&middot;I", type:"num", cls:"", get:p=>passCount(p.scores)},
+  {key:"score",  label:"C&middot;A&middot;N&middot;S&middot;L&middot;I&middot;M (/70)", type:"num", cls:"", get:p=>scoreTotal(p)},
   {key:"buyPoint",label:"Buy point",   type:"text", cls:"num",  get:p=>(p.buyPoint||""), noSort:true},
   {key:"stop",   label:"Stop",         type:"text", cls:"num",  get:p=>(p.stop||""),      noSort:true},
   {key:"reason", label:"Why (CAN SLIM read)", type:"text", cls:"", get:p=>(p.reason||""), noSort:true},
@@ -383,10 +391,12 @@ function renderRows(list){
     const tk = p.reviewUrl
       ? '<a class="sym" data-review="'+esc(p.reviewUrl)+'" data-sym="'+esc(p.symbol)+'">'+esc(p.symbol)+'</a>'
       : '<span class="sym">'+esc(p.symbol)+'</span>';
-    const sc = ["C","A","N","S","L","I"].map(k=>{
-      const t=(p.scores&&p.scores[k])||'fail';
-      return '<span class="sc"><span class="lab">'+k+'</span><span class="mk '+t+'">'+MK[t]+'</span></span>';
-    }).join('');
+    const ms = mScore();
+    const sc = LETTERS6.map(k=>{ const v=clamp10((p.scores||{})[k]);
+      return '<span class="sc"><span class="lab">'+k+'</span><span class="mk '+gradeCls(v)+'">'+v+'</span></span>';
+    }).join('')
+      + '<span class="sc mcol" title="M = market direction (same for every row)"><span class="lab">M</span><span class="mk '+gradeCls(ms)+'">'+ms+'</span></span>'
+      + '<span class="sc-total"><span class="lab">/70</span><span class="val">'+scoreTotal(p)+'</span></span>';
     return '<tr>'+
       '<td class="rk">'+esc(p.rank)+'</td>'+
       '<td>'+tk+'<div class="co">'+esc(p.company)+'</div></td>'+
@@ -423,7 +433,7 @@ renderRows(picks);
 // ---- leadership map: RS (x) vs % off 52-wk high (y, 0 at top) ----
 function buildLeadMap(){
   const pts = picks.map(p=>({sym:p.symbol, x:num(p.rs), y:num(p.offHigh),
-                             lead:passCount(p.scores)>=4}))
+                             lead:scoreTotal(p)>=50}))
                    .filter(d=> isFinite(d.x) && isFinite(d.y));
   if (pts.length < 2) return;   // nothing meaningful to plot
   $("leadmapWrap").style.display='block';

@@ -31,6 +31,26 @@ and never an order.**
 > ideas/picks/a screen, stay here. (For a data-rich single-stock dashboard, use
 > `ibkr-review-ticker`.)
 
+## Operating stance — a highly experienced professional's judgment
+Run this the way a seasoned professional trader would: **disciplined, risk-first, evidence-driven,
+and opinionated about conviction.** Bring the price/valuation discipline of a veteran value
+investor to CAN SLIM's growth/momentum engine — i.e. still buy leaders breaking out of sound
+bases, but refuse to justify a name on multiple-expansion or hype alone, and flag when a leader
+is discounting implausible growth. Go **beyond the original 1988 book** and factor in modern,
+up-to-date market knowledge — refresh it with web research each run rather than relying on memory:
+- **Market structure that didn't exist in O'Neil's era** — passive / ETF flows and index
+  rebalances, sector rotation, options positioning (dealer gamma, 0DTE, max-pain), and how they
+  amplify or fade moves; concentration in mega-cap leadership; liquidity/volatility regime (VIX).
+- **Event & macro overlay** — Fed path and CPI/jobs prints, earnings-season dispersion, and
+  geopolitics/commodity shocks that reprice sectors intraday. Let these shape the M read and stops.
+- **Factor evidence** — the momentum and quality factors (Fama-French/Jegadeesh-Titman momentum,
+  AQR quality-minus-junk) that later research validated as the engine behind CAN SLIM's edge;
+  use them to sanity-check that a "leader" is a genuine momentum+quality name, not a junk rip.
+- **Modern risk management** — position sizing to a fixed % account risk, the 7-8% stop (tighter
+  when M is under pressure), pyramiding into strength, taking partial gains, and never averaging
+  down. State plainly what would invalidate each idea.
+Be direct and professional in the write-up: lead with the read, quantify it, and name the risks.
+
 ## What CAN SLIM is (the standard this skill enforces)
 CAN SLIM is a growth-stock selection framework built on how the market actually behaves
 (supply/demand and crowd psychology) rather than on opinion or valuation "cheapness." Each
@@ -117,10 +137,14 @@ see "Delegating for deeper financials" below.
 
 ### 5 — Score, filter, diversify
 Apply `ibkr-data-guide.md` Step 4: hard-disqualify the failures (cheap/illiquid, near
-52-week lows, RS lagging SPY, declining or no earnings, wide-loose/late-stage bases). Score
-survivors on C-A-N-S-L-I-M (weight earnings C/A and leadership L most). Use
-`get_company_themes` per finalist to tag industry group/sector, and **cap names per group
-(≤ ~2–3)** so the final list spans **non-overlapping sectors**. Rank by CAN SLIM score.
+52-week lows, RS lagging SPY, declining or no earnings, wide-loose/late-stage bases). **Grade
+each survivor 0-10 on every CAN SLIM letter** — be granular, not just pass/fail (use the 0-10
+rubric in `canslim-methodology.md`): C, A, N, S, L, I per stock, plus **M graded once for the
+whole market** (0-10: confirmed uptrend ~8-10, under pressure ~5-7, correction ~0-4). The
+**total is out of 70** (= C+A+N+S+L+I + M); weight earnings (C/A) and leadership (L) most in the
+qualitative read. Use `get_company_themes` per finalist to tag industry group/sector, and
+**cap names per group (≤ ~2-3)** so the final list spans **non-overlapping sectors**. Rank by
+the /70 total (RS and distance-to-high as tiebreakers).
 
 ### 6 — Deliver: a self-contained HTML dashboard by default (offer PDF)
 Return the requested count (default 20). **If fewer qualify, return fewer and say why** —
@@ -143,9 +167,9 @@ the actual EPS/sales %, the RS figure, the base and pivot).
 straight in a browser, rendered from `assets/dashboard_template.html`:
 1. Copy the template to an output file (e.g. `canslim-recommendations-<date>.html`).
 2. Fill the `CONFIG` object — the *only* thing you edit; the page renders itself. Populate:
-   `market` (verdict + tone + the M implication), `picks[]` (each with `scores` = `pass` /
-   `partial` / `fail` for every one of C·A·N·S·L·I, the basic info fields, and the CAN-SLIM-only
-   `reason`), and, when they apply,
+   `market` (verdict + tone + **`mScore` 0-10** + the M implication), `picks[]` (each with
+   `scores` = an **integer 0-10 for every one of C·A·N·S·L·I**, the basic info fields, and the
+   CAN-SLIM-only `reason`), and, when they apply,
    `shortfall` (fewer than requested),
    `watch[]` (leaders repairing bases — not yet buyable), `speculative[]` (strong charts that
    fail the earnings test), `excluded[]` (groups with no leaders at highs), `rationale[]`
@@ -207,11 +231,13 @@ nothing is an order), and an auto-rendered **acronym glossary** at the end (the 
 SLIM + finance acronyms; extend with run-specific terms via `CONFIG.glossary` = `[{term, def}]`).
 **Never** write account-bound data into the file — it may be shared.
 
-**Why the scorecard is C·A·N·S·L·I and not C·A·N·S·L·I·M:** M (market direction) is a single
-market-wide gate that is identical for every stock at a given moment, so it belongs in the
-**market-verdict banner at the top**, not as a per-row column that would repeat the same value
-down every row. The per-stock scorecard covers only the six letters that actually vary by
-company. This is deliberate — do not add an M column to the table.
+**Scoring — 0-10 per letter, /70 total (incl. M):** Grade each of C·A·N·S·L·I from 0 to 10 per
+stock, and grade **M once for the whole market** (0-10) via `CONFIG.market.mScore`. The template
+renders the six per-stock letters plus a dashed **M cell** (the market score, identical on every
+row) and a **/70 total** (= C+A+N+S+L+I + M). M is scored once because market direction is a
+single market-wide gate — it contributes equally to every name's total rather than being
+re-judged per row. Grade honestly and granularly (e.g. C:7 for solid-but-not-accelerating
+earnings, L:9 for a clear RS leader); do not collapse everything to 0/5/10.
 
 ## Delegating for deeper financials & required companion skills
 This skill screens breadth; for depth on a single name, hand off to a specialized skill

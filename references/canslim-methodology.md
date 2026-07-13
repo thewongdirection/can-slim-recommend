@@ -276,3 +276,59 @@ A candidate should satisfy as many as possible:
 21. Read the market daily; know tops and bottoms.
 22. Watch for buybacks (5–10%+) and new management.
 23. Don't buy at the bottom / on the way down / average down.
+
+## The 0-10 grading rubric (how to score each letter)
+Grade each letter as an integer **0-10** (10 = textbook-perfect, 0 = absent / red flag). Be honest
+and granular. The dashboard total /70 = C+A+N+S+L+I + M. Anchors:
+
+- **C — current quarterly EPS & sales:** 10 = EPS +100%+ and accelerating with sales +25%+; 8 =
+  EPS +40-100% accelerating; 6 = +25-40% steady; 4 = +10-25% or decelerating; 2 = flat/slowing;
+  0 = negative / none. Dock 2+ if sales lag EPS (buyback-driven) or margins fall.
+- **A — annual earnings & ROE:** 10 = 3 yrs EPS +25%+ each and ROE 25%+; 8 = solid multi-yr
+  growth, ROE 17%+; 6 = growing but ROE < 17% or one soft year; 4 = erratic; 2 = one good year on
+  a weak base; 0 = declining. Newly public (< 2 yrs) with strong quarters caps at ~7.
+- **N — new + new high off a base:** 10 = major new driver AND breaking out of a sound base at a
+  proper pivot, <=5% extended; 8 = at/near a new high off a good base; 6 = 5-10% off / slightly
+  extended; 4 = 10-15% off / base repairing; 2 = wide-loose or 15-25% off; 0 = no new driver or
+  > 25% off / below base.
+- **S — supply & demand:** 10 = breakout volume >= +50%, tight float, active buyback; 8 = above the
+  50/200-day with accumulation; 6 = above the MAs on average volume; 4 = just above/below the
+  50-day, thin confirmation; 2 = heavy distribution/dilution; 0 = below the 200-day / illiquid.
+- **L — leader not laggard (map RS):** 10 = RS >= 95 (proxy: far outperforming SPY, #1 in group);
+  8 = RS ~85-95; 6 = RS ~75-85; 4 = roughly in line with SPY; 2 = lagging; 0 = clear laggard /
+  negative relative trend. Prefer the #1-2 name in a top group.
+- **I — institutional sponsorship:** 10 = rising ownership, top-tier funds recently added, not
+  over-owned; 8 = solid/improving; 6 = adequate; 4 = thin or flat; 2 = funds distributing; 0 =
+  neglected / fund-dumping.
+- **M — market direction (scored ONCE, applied to every row via `CONFIG.market.mScore`):** 10 =
+  confirmed uptrend, few distribution days, broad leadership; 8 = healthy uptrend; 6 = uptrend
+  under pressure (a few distribution days, narrowing); 4 = choppy rally attempt, no follow-through;
+  2 = downtrend with failed rallies; 0 = confirmed correction / bear.
+
+Rough total read: **60-70** = table-pounding leader in a strong tape; **48-59** = solid, buyable on
+a proper pivot; **35-47** = watch (needs the market or a letter to improve); **< 35** = pass.
+
+## Modern refinements & professional practice (beyond the 1988 book)
+CAN SLIM's core is durable, but apply it with current, professionally-informed judgment — and
+refresh the specifics with web research each run rather than from memory:
+- **Why it works (factor evidence):** the edge is the *momentum* factor (Jegadeesh-Titman;
+  6-12 mo cross-sectional relative strength) combined with *quality* (profitability/ROE — Fama-
+  French RMW, AQR "quality-minus-junk"). A genuine leader is a momentum+quality name, not a
+  low-quality junk rip — down-weight L/S when the strength is purely speculative.
+- **Market structure O'Neil didn't have:** passive/ETF flows, index add/deletes and quarterly
+  rebalances, and dealer options positioning (gamma, 0DTE, max-pain) can extend or reverse moves
+  fast; mega-cap concentration means the index (M) can mask narrow leadership — check breadth
+  (advance/decline, % of stocks above their 50-day), not just the index level.
+- **Macro & event overlay:** Fed path, CPI/jobs prints, earnings-season dispersion, and
+  commodity/geopolitical shocks reprice whole sectors intraday — reflect them in the M score and
+  in stop width.
+- **Volatility regime & sizing:** in high-VIX / under-pressure tapes, cut size, tighten stops
+  toward 3-5%, demand cleaner bases, and require a follow-through day before buying breakouts.
+- **Valuation-sanity overlay (the value-investor lens):** CAN SLIM ignores P/E on purpose, but a
+  professional still flags a leader discounting implausible growth (extreme EV/Sales or P/E vs. its
+  own history and peers) as elevated risk — never *reject* on valuation alone, but note it.
+- **Data hygiene:** prefer as-reported / GAAP-reconciled figures; treat heavily-adjusted non-GAAP,
+  one-time gains, and buyback-inflated EPS skeptically (that is the C/A quality check).
+
+Keep every pick's written reason in CAN SLIM terms; use these refinements to grade more accurately
+and to frame risk, not to smuggle in off-method rationale.
