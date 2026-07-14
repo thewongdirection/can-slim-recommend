@@ -41,6 +41,11 @@ discover paths, then `call_api`:
   for one date in a single call (bulk breadth / candidate generation).
 - **`store_as` + `query_data`** — save a pull as an in-memory table and run SQL (returns, %
   off high, ranking) across many names without dumping raw bars into context.
+- **Rate limit — throttle to AT MOST 5 Massive calls per minute.** Space them out (~12s apart);
+  do not fire large parallel bursts. Design the run to need few calls: prefer **grouped-daily**
+  (all US stocks for a date in ONE call) + **`store_as`/`query_data`** over per-ticker pulls —
+  e.g. two grouped-daily calls (year-ago + latest) cover the entire universe's RS. If you must
+  pull many per-ticker series, batch the work across minutes and stay under the cap.
 - **Plan boundary (this account):** historical **aggregates + indicators WORK**; the
   **real-time snapshot** endpoints (`/v2/snapshot/...`, `/v3/snapshot`) return **403
   NOT_AUTHORIZED**. Daily aggregates also lag live by up to one session. So: use **Massive for

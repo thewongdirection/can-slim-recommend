@@ -71,8 +71,9 @@ letter (IBKR covers N/S/L/M; web research covers C/A and ownership).
 - **Market-data connector(s)** for the technical letters — any of:
   - **Massive Market Data** (Polygon-style; *preferred for price history / RS / MAs*) — ticker-
     based, gives clean OHLC aggregates (true 12-mo RS) + SMA/EMA/MACD endpoints. Tools deferred;
-    load with `ToolSearch`. On lower plans the real-time *snapshot* is gated (403) but aggregates
-    + indicators work — see `ibkr-data-guide.md`.
+    load with `ToolSearch`. **Throttle to at most 5 calls/min** (space ~12s; prefer grouped-daily
+    + `store_as`/`query_data` over per-ticker bursts). On lower plans the real-time *snapshot* is
+    gated (403) but aggregates + indicators work — see `ibkr-data-guide.md`.
   - **IBKR MCP connector** — live price/volume, 52-wk stats, sector/theme groupings (and the
     theme lists for candidate generation). Read-only market data only; never orders/account.
     Tools deferred — load with `ToolSearch`. 
