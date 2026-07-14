@@ -132,6 +132,11 @@
   .callout.warn{background:var(--partial-bg);border-left-color:var(--partial)}
   .provenance{font-family:var(--mono);font-size:14px;color:var(--muted);margin:10px 0 2px}
   .provenance b{color:var(--ink)}
+  /* historical / point-in-time badge */
+  .asof-badge{display:inline-flex;align-items:center;gap:8px;margin:14px 0 0;padding:8px 14px;
+    border-radius:10px;background:var(--partial-bg);color:var(--partial);border:1px solid var(--line);
+    font-weight:700;font-size:14px}
+  .asof-badge .sub2{font-weight:400;color:var(--muted)}
 
   /* glossary of acronyms (auto-rendered at the end) */
   .glossary{display:grid;grid-template-columns:max-content 1fr;gap:7px 18px;font-size:16px;margin-top:4px}
@@ -194,6 +199,7 @@
     <div class="meta" id="meta"></div>
   </header>
 
+  <div id="asof"></div>
   <div class="market" id="market"></div>
   <div id="dataWarning"></div>
   <div id="dataProvenance"></div>
@@ -274,6 +280,10 @@ const CONFIG = {
   generatedAt: "2026-07-11 (market close)",
   dataSource: "IBKR (delayed/live) + fundamental sources",
   requested: 20,
+  // Historical / point-in-time mode: set to a past date (e.g. "2023-01-31") to mark the whole
+  // page as an as-of reconstruction (renders an "AS OF ..." badge). Leave "" for a live run.
+  // In as-of mode, also set generatedAt to the date and spell out the biases in dataWarning.
+  asOf: "",
 
   // One line naming which data sources ACTUALLY contributed to this run (renders as a
   // "Data sources used:" line under the market banner). Be specific about which letters came
@@ -342,6 +352,10 @@ document.title = CONFIG.title || "CAN SLIM Recommendations";
 $("title").textContent = CONFIG.title || document.title;
 if (CONFIG.subtitle) $("subtitle").textContent = CONFIG.subtitle;
 $("meta").innerHTML = "As of " + esc(CONFIG.generatedAt||"") + "<br>" + esc(CONFIG.dataSource||"");
+if (CONFIG.asOf){
+  $("asof").innerHTML = '<div class="asof-badge">&#9203; AS OF ' + esc(CONFIG.asOf) +
+    ' <span class="sub2">- historical reconstruction (point-in-time), not a survivorship-free backtest</span></div>';
+}
 
 const m = CONFIG.market||{};
 $("market").innerHTML =

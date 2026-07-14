@@ -101,6 +101,41 @@ Work in order. Scale research depth to the request; keep the user informed as yo
 > `expires` timestamp in the past, or a stale market timestamp), refetch and, if it is still
 > stale, flag it in `dataWarning`.
 
+### As-of / historical mode (optional) — "run it as of <past date>"
+If the user asks for the screen **as of a past date** ("recommend stocks as if it were Jan 2023",
+"what did CAN SLIM flag in <month/year>"), switch to **point-in-time reconstruction**. This is a
+**best-effort historical view, NOT a survivorship-bias-free backtest** — say so, and stamp the
+output as a reconstruction.
+
+- **Pick the as-of date.** A bare month → use its **last trading day** (e.g. "Jan 2023" →
+  2023-01-31). Everything below is computed as it would have looked at that date's close.
+- **Fresh-vs-historical: still re-issue every call this run** (the fresh-data rule holds — no
+  reusing prior figures), but reconstruct as of the date. **Massive** is the clean path here — its
+  Custom Bars take an explicit range (`/v2/aggs/ticker/{T}/range/1/day/{from}/{to}` with `to` = the
+  as-of date), so you get **native point-in-time** OHLC with no truncation. **IBKR**
+  `get_price_history` has no as-of parameter and always ends *now*, so pull a long series
+  (**`period: "FIVE_YEARS"`**, which spans the date) and **use only bars dated ≤ the as-of date**;
+  its `get_price_snapshot` and FMP `batch-quote` are **live-only — do not use them for history**;
+  take "price as of then", the 52-wk high, and % off-high from the in-window bars. Pass the as-of
+  cutoff to `scripts/relative_strength.py` via `--asof <epoch>` (or an `asof` key in the JSON) so
+  RS / base / breakout are computed only from in-window bars.
+- **M, N, S, L** reconstruct cleanly from the truncated SPY/QQQ + candidate bars (distribution
+  days, 50/200-day trend, RS-vs-SPY over the 12 months ending the date, base shape, breakout
+  volume — all as of then).
+- **C, A, I (avoid look-ahead):** use only the most recent quarter/annual **reported ON OR BEFORE
+  the as-of date** — e.g. for Jan 2023 that is **Q3 2022** (filed Oct–Nov 2022), **not** Q4 2022
+  (filed Feb 2023). SEC EDGAR / FMP filings are dated: confirm the filing date is ≤ the as-of date
+  before using a figure; if you cannot confirm it, drop to "n/a" rather than risk look-ahead.
+- **Universe caveat (the real limit):** IBKR `get_theme_details` and "current leaders" web
+  searches reflect **today**, not the as-of date, and screening only today's tickers drops names
+  that later delisted/merged — **survivorship bias**. Prefer a universe the user supplies for the
+  date, or a fixed broad list, and **flag** that group membership/leadership is present-day.
+- **Output:** set `CONFIG.asOf` to the date (renders an "AS OF … - historical reconstruction"
+  badge), set `generatedAt` to the as-of date, and make `dataWarning` state the three biases
+  plainly — **survivorship** (delisted names missing), **look-ahead** (only pre-date filings
+  used; theme/leader lists are still present-day), and that prices are bar-derived (snapshot is
+  live-only). Keep the standard "not advice / no orders" disclaimer.
+
 ### 1 — Set the count and scope
 Confirm **how many names** to return (**default 20**) and any scope the user gave (a theme
 like "AI"/"energy", their watchlist, market-cap preference). Default universe: **US-listed

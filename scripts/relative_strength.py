@@ -42,6 +42,25 @@ def volumes(bars):
     return [float(b[5]) for b in bars if b and b[5] is not None]
 
 
+def _le(t, asof):
+    """Is bar-timestamp `t` on/before the as-of cutoff? Numeric when both parse as numbers;
+    otherwise ISO-date-aware string compare - a bare YYYY-MM-DD cutoff matches by date prefix so
+    the whole as-of day is inclusive (e.g. '2023-01-31T20:00Z' <= '2023-01-31')."""
+    try:
+        return float(t) <= float(asof)
+    except (TypeError, ValueError):
+        ts, a = str(t), str(asof)
+        return (ts[:10] <= a) if len(a) <= 10 else (ts <= a)
+
+
+def truncate_asof(bars, asof):
+    """Point-in-time: keep only bars dated on/before `asof` (same units as the bar timestamp).
+    `asof=None` (the default) keeps everything - i.e. the normal 'as of now' run."""
+    if asof is None:
+        return bars
+    return [b for b in bars if b and _le(b[0], asof)]
+
+
 def ret_over(series, lookback):
     """Return fractional price change over the last `lookback` bars (e.g. ~63=3mo daily)."""
     if len(series) <= lookback or series[-lookback - 1] == 0:
@@ -114,11 +133,13 @@ def breakout_volume(daily, avg_window=50):
 
 
 def analyze(data):
-    bench = data.get("benchmark", {}).get("daily", [])
+    # Point-in-time cutoff (optional): compute every metric as of this date, ignoring later bars.
+    asof = data.get("asof")
+    bench = truncate_asof(data.get("benchmark", {}).get("daily", []), asof)
     out = []
     for cand in data.get("candidates", []):
-        daily = cand.get("daily", [])
-        weekly = cand.get("weekly", [])
+        daily = truncate_asof(cand.get("daily", []), asof)
+        weekly = truncate_asof(cand.get("weekly", []), asof)
         rel, blend = rs_proxy(daily, bench) if bench and daily else ({}, None)
         out.append({
             "symbol": cand.get("symbol"),
@@ -136,11 +157,27 @@ def analyze(data):
 
 
 def main():
-    if len(sys.argv) > 1:
-        with open(sys.argv[1], "r", encoding="utf-8") as f:
+    # Optional: --asof <cutoff> for a point-in-time (historical) run. The cutoff must be in the
+    # same units as the bar timestamps (epoch, or an ISO date/datetime); a bare YYYY-MM-DD is
+    # inclusive of that whole day. Overrides any "asof" key already in the input JSON.
+    args = sys.argv[1:]
+    asof = None
+    path = None
+    i = 0
+    while i < len(args):
+        if args[i] == "--asof" and i + 1 < len(args):
+            asof = args[i + 1]
+            i += 2
+        else:
+            path = args[i]
+            i += 1
+    if path:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     else:
         data = json.load(sys.stdin)
+    if asof is not None:
+        data["asof"] = asof
     json.dump(analyze(data), sys.stdout, indent=2)
     sys.stdout.write("\n")
 

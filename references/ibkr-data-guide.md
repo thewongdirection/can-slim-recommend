@@ -60,6 +60,19 @@ previous run, from earlier in the conversation, from memory, or from a cached ou
 `get_price_history` responses carry an `expires` field; if it is already in the past, or a
 snapshot's timestamp is stale, refetch. Timestamp the output with the actual pull time.
 
+**As-of / point-in-time mode (optional):** when the user wants the screen *as of a past date*,
+still re-issue every call this run, but reconstruct as of that date (see SKILL.md "As-of /
+historical mode"). **Massive** does this natively — its Custom Bars take an explicit range
+(`/v2/aggs/ticker/{T}/range/1/day/{from}/{to}` with `to` = the as-of date), so no truncation is
+needed. **IBKR** `get_price_history` has **no as-of parameter** and always ends now, so pull
+`period: "FIVE_YEARS"` (it spans the date) and use only bars dated **≤ the as-of date**;
+`get_price_snapshot` / FMP `batch-quote` are **live-only — skip them** and take price / 52-wk
+high / % off-high from the in-window bars. Feed the cutoff to `scripts/relative_strength.py` with `--asof <cutoff>` (same
+units as the bar timestamps; a bare `YYYY-MM-DD` is inclusive of that day) so RS, base, and
+breakout are computed only from in-window bars. For **C/A/I**, use only filings dated **on/before**
+the as-of date (no look-ahead), and remember `get_theme_details` / web "current leaders" are
+**present-day** — flag the survivorship/look-ahead limits in `dataWarning`.
+
 ## Step 0 — Candidate generation (the hardest part)
 
 The **IBKR** connector has no bulk market screener, so build a candidate universe from
