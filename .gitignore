@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Generated sample outputs (never commit run results)
+canslim-*.html
