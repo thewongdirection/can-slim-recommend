@@ -6,8 +6,9 @@ strategy. The IBKR connector here exposes **live price/volume, 52-week stats, an
 sector/theme groupings — but NOT company fundamentals** (EPS growth, ROE, margins, annual
 earnings, institutional ownership). So:
 
-- **IBKR** covers the technical/positioning letters: **N** (new highs, bases), **S**
-  (volume/liquidity), **L** (relative strength, leadership/groups), **M** (market direction).
+- **Massive Market Data** (Polygon-style; preferred for **price history & RS**) and/or **IBKR**
+  cover the technical/positioning letters: **N** (new highs, bases), **S** (volume/liquidity),
+  **L** (relative strength, leadership/groups), **M** (market direction).
 - **Fundamental-data connectors** (preferred) or web research cover the fundamental letters:
   **C** (quarterly EPS & sales), **A** (annual EPS, ROE, margins), and the ownership half of
   **I**. Prefer connected financial sources over generic web search — see Step 3 for the
@@ -22,6 +23,29 @@ snapshot investment topics company themes"`) before use — they are deferred. T
 and optionally `get_watchlists`/`get_watchlist`. **Never** call order tools or account
 tools (balances, positions, orders, trades, summary, PA analytics) — trading and account
 access are entirely out of scope, even if asked mid-run.
+
+### Massive Market Data connector (preferred for price history / RS / MAs)
+A Polygon.io-style market-data MCP (tools `mcp__Massive_Market_Data__search_endpoints` /
+`call_api` / `query_data`; deferred — load with `ToolSearch` first). It is **ticker-based (no
+`contract_id` resolution)** and gives clean, deterministic OHLC — the best source here for the
+technical letters. Use `search_endpoints` (`market` must be capitalized, e.g. `"Stocks"`) to
+discover paths, then `call_api`:
+- **Custom Bars (OHLC)** — `/v2/aggs/ticker/{TICKER}/range/1/day/{from}/{to}` → feed daily
+  closes to `scripts/relative_strength.py` for a **true 12-month RS** (point-to-point return vs
+  SPY over the same window) and the base shape. This is materially better than a 200-day-MA
+  proxy — e.g. a name that round-tripped through a base can show a weak 200-day proxy yet a
+  strong true 12-mo RS. Pull ~14 months (or `2025-...`→today) for candidate **and SPY**.
+- **SMA / EMA / MACD** — `/v1/indicators/sma/{TICKER}?timespan=day&window=50` (and `window=200`)
+  → 50/200-day MAs directly (matches other feeds to the cent), for the N/S trend gate.
+- **Grouped daily** — `/v2/aggs/grouped/locale/us/market/stocks/{date}` → all US stocks' OHLC
+  for one date in a single call (bulk breadth / candidate generation).
+- **`store_as` + `query_data`** — save a pull as an in-memory table and run SQL (returns, %
+  off high, ranking) across many names without dumping raw bars into context.
+- **Plan boundary (this account):** historical **aggregates + indicators WORK**; the
+  **real-time snapshot** endpoints (`/v2/snapshot/...`, `/v3/snapshot`) return **403
+  NOT_AUTHORIZED**. Daily aggregates also lag live by up to one session. So: use **Massive for
+  history / RS / MAs**, and get the **live last price** from **FMP `batch-quote`** or **IBKR
+  `get_price_snapshot`**. If a Massive call 403s, fall through to IBKR/FMP for that datum.
 
 ---
 
@@ -117,7 +141,11 @@ keys are **hyphenated**; vol values are fractions (×100 for %). From this:
   bars — refetch with more history before ranking.
 
 Use `scripts/relative_strength.py` to turn the OHLCV JSON into these metrics deterministically
-rather than eyeballing bars.
+rather than eyeballing bars. **Prefer the Massive connector's `/v2/aggs` daily bars (by ticker,
+no `contract_id`) as the RS input** — it yields a true point-to-point 12-month RS; the 200-day-MA
+ratio some quote feeds expose is only a rough proxy and can badly understate a leader that
+round-tripped through a base (e.g. ANET measured +47 true vs +18 on the proxy). See the Massive
+subsection above.
 
 ---
 
