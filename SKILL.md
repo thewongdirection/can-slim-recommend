@@ -30,6 +30,14 @@ and never an order.**
 > If the user names one ticker and wants it judged, hand off to `can-slim-grader`; if they want
 > ideas/picks/a screen, stay here. (For a data-rich single-stock dashboard, use
 > `ibkr-review-ticker`.)
+>
+> **Kept in step with it.** `references/canslim-methodology.md` and
+> `scripts/relative_strength.py` are shared **verbatim** with `can-slim-grader`, and
+> `scripts/html_to_pdf.py` is the same helper. The two skills use one **shared verdict
+> vocabulary** — **BUY-RANGE / WATCH / AVOID** — and one grading scale at two resolutions:
+> this skill's per-letter **0-10** maps to the grader's pass/partial/fail as **8-10 = pass,
+> 4-7 = partial, 0-3 = fail**. Grade so the same stock never reads as a buy here and a fail
+> there.
 
 ## Operating stance — a highly experienced professional's judgment
 Run this the way a seasoned professional trader would: **disciplined, risk-first, evidence-driven,
@@ -81,6 +89,10 @@ letter (IBKR covers N/S/L/M; web research covers C/A and ownership).
     a stock screener; the handiest source for the *live last price* when Massive lags a session.
   Use the best combination available; get **history/RS/MAs from Massive**, **live last price**
   from FMP/IBKR, and **candidate themes** from IBKR.
+- **Fundamental data** for C/A/I via the source ladder in `ibkr-data-guide.md` Step 3 (Daloopa →
+  bigdata.com → LSEG → **Massive** → SEC EDGAR via `securities-filings-lookup` → FMP → web).
+  **Prefer Massive over FMP** when its financials are plan-entitled — dropping to FMP only when
+  Massive returns 403 — and count those calls against the same ≤ 5/min throttle.
 - **Web search** available (for fundamentals, current leaders, market status).
 - If a connector is missing/unauthorized/gated/times out, fall through to another (or web) and
   say so — don't block the run.
@@ -189,6 +201,15 @@ qualitative read. Use `get_company_themes` per finalist to tag industry group/se
 **cap names per group (≤ ~2-3)** so the final list spans **non-overlapping sectors**. Rank by
 the /70 total (RS and distance-to-high as tiebreakers).
 
+**Then sort every survivor into one of the three shared verdict tiers** (same vocabulary as
+`can-slim-grader`, so a name reads identically in both skills): **BUY-RANGE** → the ranked
+`picks` table (core C, A and L pass, valid N at/near a proper pivot); **WATCH** → `watch[]`
+(strong fundamentals, no valid buy point yet — extended, base repairing, or M weak; say what
+must happen); **AVOID** → `speculative[]` (strong chart failing the earnings test) and
+`excluded[]` (groups with no leader at highs). Remember the scale bridge — **8-10 = pass,
+4-7 = partial, 0-3 = fail** — so a letter you would call a "fail" in the grader must not be
+sitting at 6 here.
+
 ### 6 — Deliver: a self-contained HTML dashboard by default (offer PDF)
 Return the requested count (default 20). **If fewer qualify, return fewer and say why** —
 never pad with weak names (that is the whole point of the method).
@@ -212,11 +233,18 @@ straight in a browser, rendered from `assets/dashboard_template.html`:
 2. Fill the `CONFIG` object — the *only* thing you edit; the page renders itself. Populate:
    `market` (verdict + tone + **`mScore` 0-10** + the M implication), `picks[]` (each with
    `scores` = an **integer 0-10 for every one of C·A·N·S·L·I**, the basic info fields, and the
-   CAN-SLIM-only `reason`), and, when they apply,
+   CAN-SLIM-only `reason`), **`entryStop`** (the list-wide entry/stop rule band — entry = the
+   pivot buy point, don't chase >5% past it; stop = 7-8% below the buy, tightened to 3% when M
+   is under pressure or in a correction; per-name prices still live in each pick's `buyPoint` /
+   `stop`), and, when they apply,
    `shortfall` (fewer than requested),
    `watch[]` (leaders repairing bases — not yet buyable), `speculative[]` (strong charts that
    fail the earnings test), `excluded[]` (groups with no leaders at highs), `rationale[]`
-   (optional longer per-name cards), `portfolioNote`, `disclaimer`, `sources[]`, and the
+   (optional longer per-name cards — each may carry an optional **`essentials`** block of
+   reference stats: P/E, forward P/E, market cap, EPS, yield, beta, shares, avg $ volume, next
+   earnings. It renders fenced off and labelled **reference only, not a CAN SLIM input** — the
+   method deliberately ignores P/E and valuation — so it must **never** leak into a `reason`;
+   omit it to hide the block), `portfolioNote`, `disclaimer`, `sources[]`, and the
    provenance fields **`dataProvenance`** (one line naming which data sources actually
    contributed — e.g. which letters came from IBKR bars vs. filings vs. web) and
    **`dataWarning`** (a short amber caveat set **whenever any source was gated, throttled, or
@@ -226,11 +254,14 @@ straight in a browser, rendered from `assets/dashboard_template.html`:
    self-contained (all CONFIG inline, no external assets) so it opens directly in any browser
    with the sortable table, clickable-ticker review windows, and hover states all live. Keep
    the chat reply short: the market read, the headline picks, and why the count is what it is.
-4. **Offer a PDF on request** — e.g. *"Want a PDF version too?"* — and on request convert the
-   saved HTML (headless Chrome `--headless --print-to-pdf=out.pdf file.html`, or the `pdf`
-   skill, or `weasyprint`); the template's print CSS is A4/Letter-ready and keeps the dark
-   design via `print-color-adjust:exact`. Note the sortable/clickable interactivity is HTML-only
-   and flattens in the PDF, so the HTML remains the richer deliverable.
+4. **Offer a PDF on request** — e.g. *"Want a PDF version too?"* — and on request run
+   **`python scripts/html_to_pdf.py <saved>.html <saved>.pdf`** (the same multi-engine helper
+   `can-slim-grader` uses: headless Chrome/Chromium/Edge with the browser header/footer
+   suppressed → Playwright → WeasyPrint → wkhtmltopdf; it prints which engine it used). The
+   template's print CSS is A4/Letter-ready and keeps the dark design via
+   `print-color-adjust:exact`. Note the sortable/clickable interactivity is HTML-only and
+   flattens in the PDF, so the HTML remains the richer deliverable. Don't block on the export if
+   no PDF engine is present — say so and ship the HTML.
 
 **Built-in interactivity (no work needed):** the table is **sortable** — clicking any column
 header sorts by it (alphabetical for Stock/Group, numeric for Price/RS/% off high/scorecard),
@@ -295,12 +326,17 @@ sell-off needs explaining, or when the user asks to "look closer at X":
   20-F / annual reports) from the right regulator (SEC EDGAR and non-US equivalents). Use it
   when you need the ground-truth reported statements behind **C**/**A**, or 13F/Form 4 data
   for **I**.
+- **`can-slim-grader` (sister skill)** — the single-ticker grading lens. Hand off when the user
+  narrows from the list to "so is X actually a buy?" — it returns the letter-by-letter
+  scorecard and a BUY-RANGE / WATCH / AVOID verdict on that one name, using this same
+  methodology and RS script.
 
 **If a companion skill you need is not installed**, do not silently fall back — tell the user
 it's missing and prompt them to install it from its GitHub repo, then continue with the best
 available source (the connector ladder in `ibkr-data-guide.md`, or web search):
 - `ibkr-review-ticker` → **https://github.com/thewongdirection/ibkr-review-ticker**
 - `securities-filings-lookup` → **https://github.com/thewongdirection/securities-filings-lookup**
+- `can-slim-grader` → **https://github.com/thewongdirection/can-slim-grader**
 
 (Example prompt: *"For a deeper financial dive on NVDA I'd normally use the `ibkr-review-ticker`
 skill, but it isn't installed. You can add it from https://github.com/thewongdirection/ibkr-review-ticker
@@ -324,14 +360,24 @@ skill, but it isn't installed. You can add it from https://github.com/thewongdir
 
 ## Files in this skill
 - `references/canslim-methodology.md` — the full CAN SLIM rules, thresholds, base patterns,
-  sell rules, money management, and mistake list. Read before screening.
+  sell rules, money management, the 0-10 rubric (with the pass/partial/fail bridge), and the
+  mistake list. Read before screening. **Shared verbatim with `can-slim-grader`.**
 - `references/ibkr-data-guide.md` — candidate generation + the exact IBKR calls and formulas
-  to compute each letter. Read before gathering data.
+  to compute each letter, the fundamental source ladder, and the verdict tiers. Read before
+  gathering data.
 - `scripts/relative_strength.py` — computes RS proxy, % off 52-week high, base depth/length,
   and breakout volume from IBKR OHLCV bars. Pure standard library; feed it the collected
-  bars rather than eyeballing charts.
+  bars rather than eyeballing charts. Short windows are clamped to the oldest available bar
+  when ≥ 90% of the requested lookback is present (so a ~251-bar `ONE_YEAR` pull still yields
+  a 12-month RS leg), and `--asof <cutoff>` computes everything point-in-time.
+  **Shared with `can-slim-grader`** (plus this skill's as-of extension).
+- `scripts/html_to_pdf.py` — **optional** export of the filled dashboard to PDF for
+  sharing/printing (not the default deliverable). Multi-engine: headless Chrome/Chromium/Edge
+  with header/footer suppressed → Playwright → WeasyPrint → wkhtmltopdf; prints the engine
+  used. Pure standard library. Shared with `can-slim-grader`.
 - `assets/dashboard_template.html` — the default output (full behavior in Step 6): a
   self-contained, dark-themed (light opt-in via `data-theme="light"`), print-optimized,
   pure-ASCII dashboard driven by a `CONFIG` object. Delivered as interactive HTML by default
-  (PDF on request); sortable table, clickable-ticker review modal, and an auto-rendered
-  leadership-map scatter + acronym glossary.
+  (PDF on request); sortable table, clickable-ticker review modal, an entry/stop rule band,
+  optional reference-only per-name essentials, and an auto-rendered leadership-map scatter +
+  acronym glossary.

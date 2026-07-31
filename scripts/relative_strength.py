@@ -61,11 +61,20 @@ def truncate_asof(bars, asof):
     return [b for b in bars if b and _le(b[0], asof)]
 
 
-def ret_over(series, lookback):
-    """Return fractional price change over the last `lookback` bars (e.g. ~63=3mo daily)."""
-    if len(series) <= lookback or series[-lookback - 1] == 0:
+def ret_over(series, lookback, tol=0.9):
+    """Return fractional price change over the last `lookback` bars (e.g. ~63=3mo daily).
+
+    If the series is a little shorter than `lookback` (e.g. IBKR's ONE_YEAR returns ~251
+    daily bars but the 12-month window wants 252+1), clamp to the oldest available bar as
+    long as we still have >= `tol` of the requested window. Below that, return None rather
+    than pass off, say, 3 months of data as a 12-month return."""
+    n = len(series)
+    if n < 2:
         return None
-    return series[-1] / series[-lookback - 1] - 1.0
+    lb = lookback if n > lookback else n - 1
+    if lb < lookback * tol or series[-lb - 1] == 0:
+        return None
+    return series[-1] / series[-lb - 1] - 1.0
 
 
 def rs_proxy(cand_daily, bench_daily):

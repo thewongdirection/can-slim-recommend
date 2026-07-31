@@ -16,6 +16,14 @@
     - M (market direction) is graded ONCE for the whole market via CONFIG.market.mScore (0-10)
       and applied to every row (same value), so the per-row scorecard shows C,A,N,S,L,I + an
       M cell (dashed = market-wide). Total = C+A+N+S+L+I + M, out of 70.
+    - VERDICT VOCABULARY (shared with the can-slim-grader sister skill): `picks` = BUY-RANGE,
+      `watch` = WATCH, `speculative` + `excluded` = AVOID. A per-letter 8-10 is that skill's
+      "pass", 4-7 "partial", 0-3 "fail" - so a name graded here and there reads the same.
+    - `entryStop` states the list-wide entry/stop RULE (pivot; cut at 7-8%, 3% in a correction)
+      in a prominent band; per-name prices stay in each pick's `buyPoint` / `stop`.
+    - `rationale[].essentials` is an OPTIONAL reference block (P/E, market cap, yield, ...).
+      It is NOT a CAN SLIM input - the method ignores valuation - so it renders fenced off and
+      must never appear in a pick's `reason`.
     - Never put account-bound data (IDs, balances, positions) anywhere in CONFIG.
 
   ENCODING: keep CONFIG text ASCII where practical (use "-" not an em-dash, "vs" not a
@@ -80,6 +88,9 @@
     color:var(--muted);margin:26px 0 10px}
   .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:14px;color:var(--muted);margin:2px 0 10px;align-items:center}
   .legend span{display:inline-flex;align-items:center;gap:6px}
+  /* prose notes inside a legend must flow as text, not as flex items (else inline <b> tags
+     get spaced apart by the gap and the line wraps raggedly) */
+  .legend span.note{display:block;flex:1 1 100%;gap:0}
   .dot{width:10px;height:10px;border-radius:3px;display:inline-block}
   .dot.pass{background:var(--pass)} .dot.partial{background:var(--partial)} .dot.fail{background:var(--fail)}
   .hint{font-size:14px;color:var(--muted);font-style:italic}
@@ -126,6 +137,25 @@
   .tier{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 15px;margin-bottom:10px}
   .tier b{font-family:var(--mono)}
   .tier .why{color:var(--muted);font-size:15px}
+
+  /* entry & stop rule band (shared vocabulary with the can-slim-grader sister skill) */
+  .plan-band{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0 4px}
+  .plan-band .cell{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 15px}
+  .plan-band .cell.entry{border-left:3px solid var(--accent)}
+  .plan-band .cell.stop{border-left:3px solid var(--fail)}
+  .plan-band .l{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  .plan-band .v{font-family:var(--mono);font-size:18px;font-weight:700;margin-top:3px}
+  .plan-band .cell.stop .v{color:var(--fail)}
+  .plan-band .n{font-size:13px;color:var(--muted);margin-top:4px}
+  @media (max-width:520px){ .plan-band{grid-template-columns:1fr} }
+  .section-note{font-weight:400;text-transform:none;letter-spacing:0;opacity:.75;font-size:13px}
+
+  /* reference-only company essentials inside a per-name card (never a CAN SLIM input) */
+  .ess{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
+  .ess .esslab{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:5px}
+  .ess .essgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:6px 10px}
+  .ess .l{font-size:12px;color:var(--muted)}
+  .ess .v{font-family:var(--mono);font-size:14px;font-weight:700}
 
   .callout{background:var(--accent-soft);border:1px solid var(--line);border-left:3px solid var(--accent);
     border-radius:8px;padding:12px 15px;font-size:16px;margin:14px 0}
@@ -203,6 +233,7 @@
   <div class="market" id="market"></div>
   <div id="dataWarning"></div>
   <div id="dataProvenance"></div>
+  <div class="plan-band" id="planband"></div>
   <div id="shortfall"></div>
 
   <div id="leadmapWrap" style="display:none">
@@ -215,7 +246,12 @@
     <span><span class="dot pass"></span>8-10 strong</span>
     <span><span class="dot partial"></span>4-7 partial</span>
     <span><span class="dot fail"></span>0-3 weak</span>
-    <span style="color:var(--muted)">Each letter graded <b>0-10</b>; Total = C&middot;A&middot;N&middot;S&middot;L&middot;I + <b>M</b> (market, same for every row) out of <b>70</b>. RS = relative strength vs. SPY.</span>
+    <span class="note" style="color:var(--muted)">Each letter graded <b>0-10</b>; Total = C&middot;A&middot;N&middot;S&middot;L&middot;I + <b>M</b> (market, same for every row) out of <b>70</b>. RS = relative strength vs. SPY.</span>
+  </div>
+  <div class="legend">
+    <span class="note" style="color:var(--muted)">Verdict tiers (same vocabulary as the <b>can-slim-grader</b> sister skill):
+      the table below is <b>BUY-RANGE</b> &middot; "Watch" is <b>WATCH</b> &middot; the failed-earnings and
+      excluded-group sections are <b>AVOID</b>. Per-letter 8-10 = pass, 4-7 = partial, 0-3 = fail.</span>
   </div>
   <div class="legend"><span class="hint">Click a column header to sort. Click a ticker to open its ibkr-review-ticker report.</span></div>
   <div class="tablewrap">
@@ -305,6 +341,18 @@ const CONFIG = {
     implication: "Indices near highs above the 50-day, but leadership is narrow (M intact but late-stage). Buy only genuine leaders emerging from sound bases; normal 7-8% stops."
   },
 
+  // The entry & stop RULE the framework applies to every pick on this list (rendered as a
+  // prominent two-cell band under the market banner). Per-name prices live in each pick's
+  // `buyPoint` / `stop`; this band states the convention behind them, in the same words the
+  // can-slim-grader sister skill uses. Set `stop` to the 3% wording when M is a correction.
+  // Leave the object out (or blank both fields) to hide the band.
+  entryStop: {
+    entry: "Each pick's pivot buy point (see the Entry column)",
+    entryNote: "Buy the breakout above the base high on volume +40-50%; do not chase more than ~5% past the pivot.",
+    stop: "7-8% below your buy (see the Stop column)",
+    stopNote: "Cut every loss at 7-8%; tighten to 3% while the market is under pressure or in a correction. No exceptions."
+  },
+
   // Set when fewer than requested qualify (never pad).
   shortfall: "Only the names below cleared the full filter; the rest of the market's leadership has broken down or is extended. Per the method, returning the qualifiers rather than padding to 20.",
 
@@ -320,7 +368,12 @@ const CONFIG = {
     // }
   ],
 
-  rationale: [ /* { symbol, company, text } */ ],
+  // Optional longer per-name cards. `essentials` is an OPTIONAL reference block per card
+  // (P/E, forward P/E, market cap, EPS, yield, beta, shares, avg $ volume, next earnings).
+  // It is NOT part of the CAN SLIM grade - the method explicitly ignores P/E and valuation -
+  // so it renders clearly fenced off as "reference only" and must NEVER leak into a `reason`.
+  // Omit it to hide that block on the card.
+  rationale: [ /* { symbol, company, text, essentials:[{l:"P/E (TTM)", v:"36"}, ...] } */ ],
   watch: [ /* { symbol, company, group, offHigh, note } */ ],
   speculative: [ /* { symbol, company, reason } */ ],
   excluded: [ /* { group, names, reason } */ ],
@@ -373,6 +426,16 @@ if (CONFIG.dataWarning){
   $("dataWarning").innerHTML = '<div class="callout warn">&#9888; <b>Data caveat:</b> '+esc(CONFIG.dataWarning)+'</div>';
 }
 
+// entry & stop rule band - the framework's buy point / loss-cutting convention for the list
+const es = CONFIG.entryStop||null;
+if (es && (es.entry || es.stop)){
+  $("planband").innerHTML =
+    '<div class="cell entry"><div class="l">Entry &mdash; buy point</div><div class="v">'+esc(es.entry||"-")+'</div>'+
+      (es.entryNote?'<div class="n">'+esc(es.entryNote)+'</div>':'')+'</div>'+
+    '<div class="cell stop"><div class="l">Stop &mdash; cut loss</div><div class="v">'+esc(es.stop||"-")+'</div>'+
+      (es.stopNote?'<div class="n">'+esc(es.stopNote)+'</div>':'')+'</div>';
+} else { const pb=$("planband"); if(pb) pb.style.display='none'; }
+
 const picks = (CONFIG.picks||[]).slice();
 $("countnote").textContent = CONFIG.requested ? "- "+picks.length+" of "+CONFIG.requested+" requested qualified" : "- "+picks.length;
 if (CONFIG.shortfall && picks.length < (CONFIG.requested||Infinity)){
@@ -388,8 +451,8 @@ const COLS = [
   {key:"rs",     label:"RS",           type:"num",  cls:"num",  get:p=>num(p.rs)},
   {key:"offHigh",label:"% off 52w hi", type:"num",  cls:"num",  get:p=>num(p.offHigh)},
   {key:"score",  label:"C&middot;A&middot;N&middot;S&middot;L&middot;I&middot;M (/70)", type:"num", cls:"", get:p=>scoreTotal(p)},
-  {key:"buyPoint",label:"Buy point",   type:"text", cls:"num",  get:p=>(p.buyPoint||""), noSort:true},
-  {key:"stop",   label:"Stop",         type:"text", cls:"num",  get:p=>(p.stop||""),      noSort:true},
+  {key:"buyPoint",label:"Entry (pivot)",type:"text",cls:"num",  get:p=>(p.buyPoint||""), noSort:true},
+  {key:"stop",   label:"Stop (-7-8%)", type:"text", cls:"num",  get:p=>(p.stop||""),      noSort:true},
   {key:"reason", label:"Why (CAN SLIM read)", type:"text", cls:"", get:p=>(p.reason||""), noSort:true},
 ];
 let sortState = {key:null, dir:1};
@@ -523,8 +586,16 @@ document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeReview(); })
 // ---- optional sections ----
 if ((CONFIG.rationale||[]).length){
   $("rationaleWrap").style.display='block';
+  // `essentials` (P/E, market cap, yield, ...) is reference-only context, fenced off from the
+  // CAN SLIM read above it - the method ignores valuation, so it never justifies a pick.
+  const essBlock = (list)=> (list&&list.length)
+    ? '<div class="ess"><div class="esslab">Essentials &mdash; reference only, not a CAN SLIM input</div>'+
+      '<div class="essgrid">'+list.map(s=>
+        '<div><div class="l">'+esc(s.l)+'</div><div class="v">'+esc(s.v)+'</div></div>').join('')+'</div></div>'
+    : '';
   $("cards").innerHTML = CONFIG.rationale.map(r=>
-    '<div class="card"><h3>'+esc(r.symbol)+'</h3><div class="co">'+esc(r.company||'')+'</div><p>'+esc(r.text)+'</p></div>').join('');
+    '<div class="card"><h3>'+esc(r.symbol)+'</h3><div class="co">'+esc(r.company||'')+'</div><p>'+esc(r.text)+'</p>'+
+    essBlock(r.essentials)+'</div>').join('');
 }
 if ((CONFIG.watch||[]).length){
   $("watchWrap").style.display='block';

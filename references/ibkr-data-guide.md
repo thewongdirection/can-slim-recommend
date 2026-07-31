@@ -12,9 +12,16 @@ earnings, institutional ownership). So:
 - **Fundamental-data connectors** (preferred) or web research cover the fundamental letters:
   **C** (quarterly EPS & sales), **A** (annual EPS, ROE, margins), and the ownership half of
   **I**. Prefer connected financial sources over generic web search — see Step 3 for the
-  source-priority ladder (Daloopa → bigdata.com → LSEG → SEC EDGAR → FMP → web; FMP is the
-  lowest-priority connector because it is commonly gated/throttled) and when to delegate
-  to the `ibkr-review-ticker` / `securities-filings-lookup` skills.
+  source-priority ladder (Daloopa → bigdata.com → LSEG → **Massive** → SEC EDGAR → FMP → web;
+  **prefer Massive over FMP**, and FMP stays the lowest-priority connector because it is
+  commonly gated/throttled) and when to delegate to the `ibkr-review-ticker` /
+  `securities-filings-lookup` skills.
+
+> **Shared with the `can-slim-grader` sister skill.** That skill grades ONE named ticker with
+> the same methodology; its `references/data-and-scoring-guide.md` is this guide's single-ticker
+> twin, and `references/canslim-methodology.md` + `scripts/relative_strength.py` are shared
+> verbatim between the two repos. Keep the source ladder, the thresholds, and the verdict
+> vocabulary below in step with it, so the same stock reads the same way in either skill.
 
 Load IBKR tools with `ToolSearch` (query e.g. `"search contracts price history price
 snapshot investment topics company themes"`) before use — they are deferred. This skill is
@@ -155,8 +162,13 @@ keys are **hyphenated**; vol values are fractions (×100 for %). From this:
   market; instead **rank candidates against each other** on 12-month (weighted toward
   recent) relative return, and keep the top performers (target the equivalent of RS ≥ 80:
   clearly outperforming SPY and in the top tier of the candidate set). Reject names lagging
-  SPY over 6–12 months. If `rs_relative_return.12m` comes back `null`, you pulled too few daily
-  bars — refetch with more history before ranking.
+  SPY over 6–12 months. The script tolerates a **slightly** short series — it clamps to the
+  oldest available bar when you have ≥ 90% of the requested window, so a ~251-bar `ONE_YEAR`
+  pull still yields a 12-month leg instead of silently returning `null` — but below that it
+  returns `null` rather than pass off a short window as a 12-month return. So if
+  `rs_relative_return.12m` comes back `null`, you pulled far too few daily bars (e.g.
+  `SIX_MONTHS`) — refetch with more history before ranking. Pull ~14 months anyway: the clamp
+  is a safety net, not a substitute for a full window.
 
 Use `scripts/relative_strength.py` to turn the OHLCV JSON into these metrics deterministically
 rather than eyeballing bars. **Prefer the Massive connector's `/v2/aggs` daily bars (by ticker,
@@ -188,19 +200,30 @@ research only for finalists that already survived the technical cut.
 3. **LSEG** (`lseg:*`, e.g. `lseg:equity-research`) — analyst **consensus estimates** and
    fundamentals: next-year EPS estimate (part of **A**), plus estimate revisions and surprise
    history (the acceleration signal in **C**).
-4. **SEC EDGAR / official filings** — the authoritative primary statements (10-K / 10-Q /
+4. **Massive Market Data** (`Massive_Market_Data` MCP) — **the preferred structured connector,
+   ahead of FMP.** Already the price/RS source above, so prefer it for the whole data pull when
+   its financials are entitled: `/stocks/financials/v1/income-statements` + `/ratios` cover
+   **C**/**A** (EPS & revenue growth) plus ROE / margins / debt / P/E from SEC data;
+   `/benzinga/v1/earnings` gives the latest-quarter EPS/revenue surprise and the next-earnings
+   date; `/v3/reference/tickers/{TICKER}` gives market cap, shares outstanding and industry
+   (handy for the reference-only essentials block). Endpoints and the **≤ 5-calls/min throttle**
+   are in the Massive subsection above — count these fundamental calls against the same cap.
+   **Caveat:** the financials endpoints are often plan-gated (**HTTP 403 NOT_AUTHORIZED**) even
+   when aggregates work; if so, drop to the next rung rather than retrying.
+5. **SEC EDGAR / official filings** — the authoritative primary statements (10-K / 10-Q /
    20-F / annual reports). Reach them via the **`securities-filings-lookup`** skill, which
    resolves the ticker's exchange/regulator and pulls the official filing (also covers non-US
    listings: HKEX, CNINFO, TWSE, LSE, EDINET, Frankfurt). Use for ground-truth income
    statement / balance sheet / cash flow, and for **I** (13F institutional ownership, Form 4
    management ownership).
-5. **Financial Modeling Prep (FMP)** — a structured fundamentals MCP (deferred; load its tools
-   with `ToolSearch`). **Deliberately the lowest-priority connector:** on lower-tier plans it is
+6. **Financial Modeling Prep (FMP)** — a structured fundamentals MCP (deferred; load its tools
+   with `ToolSearch`). **Deliberately the lowest-priority connector** — reach for it only once
+   Massive's financials come back gated: on lower-tier plans FMP is
    heavily gated *and* throttled — bursts of calls return `ACCESS DENIED ... requires a higher
    plan` even for endpoints that worked moments earlier — so it is unreliable as a primary
    fundamentals source. Prefer the higher rungs above; reach for FMP mainly as a **cheap breadth
    cross-check** or when the higher rungs are not connected. Probe cheaply and drop to web (rung
-   6) for whatever's gated. What tends to work on lower tiers, and how to use it:
+   7) for whatever's gated. What tends to work on lower tiers, and how to use it:
    - **`quote` → `batch-quote`** (the workhorse): one call takes a symbol array and returns, per
      name, `price`, `yearHigh`/`yearLow`, `priceAvg50`/`priceAvg200`, `volume`, `marketCap`.
      That single call gives you **% off 52-wk high** and **50/200-day trend** for a whole
@@ -215,14 +238,20 @@ research only for finalists that already survived the technical cut.
    - **Premium / commonly gated:** `statements` (income / growth / ratios), `analyst`
      (estimates, grades, targets), `form13F` + `insiderTrades`, `earningsTranscript`,
      `discountedCashFlow`. When these are gated, the **C**/**A** earnings figures and **I**
-     ownership come from the official filings (rung 4) or web research (rung 6) instead.
+     ownership come from the official filings (rung 5) or web research (rung 7) instead.
+   **C caveat — compute quarterly growth YoY yourself:** pull `statements` →
+   `income-statement` (`period="quarter"`, `limit≈8-12`) and compare each quarter to the *same
+   quarter one year earlier* (4 rows back). Do **not** read C off `income-statement-growth` at
+   `period="quarter"` — those figures are *sequential* quarter-over-quarter, not the YoY
+   same-quarter compare C requires. (Annual growth via `period="annual"` is fine — annual
+   periods aren't seasonal.)
    IBKR tickers vs FMP symbols line up for US names; IBKR name-search is unreliable, so resolve
    IBKR `contract_id`s by **ticker**, not company name.
-6. **General web search** — the universal fallback when the connected sources above cannot
+7. **General web search** — the universal fallback when the connected sources above cannot
    answer (gated, throttled, or not connected).
 
 **Handling gated / throttled / unavailable sources — fall through the ladder, never abandon a
-letter.** These connectors (Daloopa, bigdata.com, LSEG, FMP) only work if the user has
+letter.** These connectors (Daloopa, bigdata.com, LSEG, Massive, FMP) only work if the user has
 authorized/keyed them, and access is frequently **partial** (some endpoints only) or
 **intermittent** (throttling). Treat **any** of the following as "this source cannot answer
 *this* call right now" and immediately try the **next source down the ladder** for that same
@@ -278,15 +307,30 @@ than guessing.
 
 1. **Hard filters (disqualify):** price < $10; near 52-week low / RS lagging SPY; annual or
    quarterly EPS declining; no earnings; wide-loose/late-stage-only base; illiquid.
-2. **CAN SLIM score:** rate each of C, A, N, S, L, I against the thresholds in
-   `canslim-methodology.md` (e.g., pass/partial/fail), plus the M context. Rank by how many
-   criteria are strongly met, weighting C, A (earnings) and L (RS/leadership) most heavily —
-   these are the method's most predictive factors.
-3. **Sector non-overlap:** use `get_company_themes { contract_id }` to get each finalist's
+2. **CAN SLIM score:** grade each of C, A, N, S, L, I **0-10** against the thresholds and the
+   0-10 rubric in `canslim-methodology.md`, plus **M graded once** for the whole market. Rank by
+   the **/70** total (C+A+N+S+L+I+M), weighting C, A (earnings) and L (RS/leadership) most
+   heavily in the qualitative read — these are the method's most predictive factors.
+   **Bridge to the sister skill's rubric:** `can-slim-grader` scores the same letters
+   pass/partial/fail. They are the same scale at different resolution — **8-10 = pass, 4-7 =
+   partial, 0-3 = fail**. Grade so that a letter you'd call "pass" there lands 8-10 here, and a
+   name would not be a BUY-RANGE in one skill and a pick-with-a-failing-C in the other.
+3. **Verdict tiers — use the sister skill's vocabulary.** Every survivor lands in exactly one
+   tier, and the tiers mean the same thing in both skills:
+   - **BUY-RANGE** → the ranked `picks` table. Passes the core earnings letters (C, A) and L,
+     with a valid N (at/near a proper pivot). State the pivot and the 7-8% stop (3% in a
+     correction); never chase >5% past the pivot.
+   - **WATCH** → `watch[]`. Strong fundamentals but no valid buy point now (extended, base
+     repairing, or M weak). Say what has to happen (a new base + breakout, or a follow-through
+     day).
+   - **AVOID** → `speculative[]` (strong chart, failing earnings) and `excluded[]` (groups with
+     no leader at highs). Name the failing letters. High RS alone is **not** enough without the
+     earnings behind it, and a beaten-down "cheap" stock is a laggard the method avoids.
+4. **Sector non-overlap:** use `get_company_themes { contract_id }` to get each finalist's
    sectors/trends. Enforce diversification: **cap how many names share the same industry
    group/sector** (aim ≤ 2–3 per group for a 20-name list) so the watchlist isn't, e.g., 15
    semiconductors. Keep the highest-scoring name(s) per group and drop weaker duplicates.
-4. Produce the requested count (default 20). **If fewer than requested qualify, return
+5. Produce the requested count (default 20). **If fewer than requested qualify, return
    fewer and explain** — never pad with weak names (user preference; faithful to "buy only
    the best merchandise").
 

@@ -308,6 +308,16 @@ and granular. The dashboard total /70 = C+A+N+S+L+I + M. Anchors:
 Rough total read: **60-70** = table-pounding leader in a strong tape; **48-59** = solid, buyable on
 a proper pivot; **35-47** = watch (needs the market or a letter to improve); **< 35** = pass.
 
+**Bridge to the pass/partial/fail rubric.** The sister skill `can-slim-grader` grades the same
+seven letters **pass / partial / fail** for a single named ticker. It is the same scale at lower
+resolution — **8-10 = pass · 4-7 = partial · 0-3 = fail** — so a letter graded here converts
+directly, and the two skills must not contradict each other on the same stock. The verdict
+vocabulary is shared too: **BUY-RANGE** (core C, A and L pass with a valid N at/near a proper
+pivot) · **WATCH** (strong fundamentals, no valid buy point now — extended, base repairing, or M
+weak) · **AVOID** (fails the core earnings letters, or a laggard near lows). A screener list puts
+BUY-RANGE names in the ranked table, WATCH names in the watch section, and AVOID names in the
+failed-earnings / excluded-group sections.
+
 ## Modern refinements & professional practice (beyond the 1988 book)
 CAN SLIM's core is durable, but apply it with current, professionally-informed judgment — and
 refresh the specifics with web research each run rather than from memory:

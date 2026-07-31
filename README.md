@@ -66,21 +66,42 @@ base patterns, sell rules, and the classic mistakes to avoid.
 3. **Screen with CAN SLIM** — IBKR supplies the technical letters (N new highs/bases, S
    volume, L relative strength/leadership, M market); web research supplies the fundamental
    letters (C quarterly earnings & sales, A annual earnings/ROE, I institutional ownership).
-4. **Diversify & rank** — caps names per sector, ranks by CAN SLIM score, and returns a
+4. **Diversify & rank** — caps names per sector, grades every letter 0–10 (total /70 including
+   the market's M score), sorts each survivor into **BUY-RANGE / WATCH / AVOID**, and returns a
    shortlist with a per-name rationale, buy point, and 7–8% loss-cutting stop.
 
 If fewer names qualify than you asked for, it returns fewer and explains why — it never
 pads the list with weak stocks.
 
+## Sister skill — [`can-slim-grader`](https://github.com/thewongdirection/can-slim-grader)
+
+The two are a matched pair on one CAN SLIM methodology, pointed in opposite directions:
+this skill is the **market-wide screener** (a whole market in → a ranked LIST out), while
+`can-slim-grader` is the **single-ticker grading lens** (one ticker in → one verdict out).
+Ask for ideas and you get this; ask "is NVDA any good?" and you get the grader.
+
+They are deliberately kept in step: `references/canslim-methodology.md` and
+`scripts/relative_strength.py` are shared verbatim, `scripts/html_to_pdf.py` is the same
+helper, and both use one **verdict vocabulary** — **BUY-RANGE / WATCH / AVOID** — over one
+grading scale at two resolutions (this skill's per-letter **0-10** maps to the grader's
+pass/partial/fail as 8-10 = pass, 4-7 = partial, 0-3 = fail). The same stock should never
+read as a buy in one and a fail in the other.
+
 ## Contents
 - `SKILL.md` — activation + workflow.
 - `references/canslim-methodology.md` — the full distilled CAN SLIM rule set: the seven
-  criteria and thresholds, chart-base patterns, buy/sell rules, money management, and the
-  classic costly mistakes.
-- `references/ibkr-data-guide.md` — candidate generation and the exact IBKR call sequence /
-  formulas to compute each CAN SLIM letter.
+  criteria and thresholds, chart-base patterns, buy/sell rules, money management, the 0-10
+  grading rubric (and its bridge to the grader's pass/partial/fail), and the classic costly
+  mistakes.
+- `references/ibkr-data-guide.md` — candidate generation, the exact IBKR call sequence /
+  formulas to compute each CAN SLIM letter, the fundamental source ladder, and the verdict tiers.
 - `scripts/relative_strength.py` — computes the relative-strength proxy, % off 52-week high,
-  base depth/length, and breakout volume from IBKR OHLCV bars. Standard library only.
+  base depth/length, and breakout volume from IBKR OHLCV bars, with an optional `--asof`
+  point-in-time cutoff. Standard library only.
+- `scripts/html_to_pdf.py` — optional PDF export of the finished dashboard (headless
+  Chrome/Chromium/Edge → Playwright → WeasyPrint → wkhtmltopdf). Standard library only.
+- `assets/dashboard_template.html` — the default deliverable: a self-contained, dark-themed
+  interactive dashboard driven by one `CONFIG` object.
 
 ## Requirements
 - IBKR MCP connector connected and authorized (read-only market data; never trades).
