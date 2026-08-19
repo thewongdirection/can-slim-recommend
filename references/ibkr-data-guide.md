@@ -126,9 +126,18 @@ Do this before deep candidate work — it sets risk posture and the message to t
 
 ---
 
-## Step 2 — Per-candidate technical data (IBKR)
+## Step 2 — Per-candidate technical data (TradingView, or IBKR)
 
-For each candidate `contract_id`:
+**With TradingView:** `get_ohlcv(symbol, interval="1D", count=500)` and
+`get_ohlcv(symbol, interval="1W", count=104)` for the bars, plus
+`get_symbol_data(symbol, columns=["price_52_week_high","price_52_week_low",
+"float_shares_outstanding","average_volume_10d_calc","Perf.3M","Perf.6M","Perf.Y"])` for the
+52-week stats, float and average volume. Feed the `{t,o,h,l,c,v}` bars straight into
+`scripts/relative_strength.py` — it normalizes TradingView dicts and `[t,o,h,l,c,v]` rows to the
+same thing, so **never retype bars**. While a session is open the newest candle is live and
+partial: label any screen built on it provisional.
+
+**With IBKR instead**, for each candidate `contract_id`:
 
 **a) `get_price_snapshot`** — request fields incl. `last`, `change`, `year_to_date_change`,
 `misc_statistics` (52-week + 13/26-week high/low), and any average-volume fields. Response
@@ -177,24 +186,44 @@ research only for finalists that already survived the technical cut.
 
 **Fundamental source priority (use the highest one that's connected):**
 
-1. **Daloopa** (`daloopa:*` skills, e.g. `daloopa:tearsheet`, `daloopa:industry`, the model
+1. **TradingView** (`Trading_View` MCP) — **the default when connected**, and the only source
+   that also supplies the bars, so a whole candidate can be graded from one connector:
+   - `get_financial_history(symbol, period="fq", points=8)` — per-quarter revenue / EPS / net
+     income / FCF / total debt, **each with its own `yoy_pct`** → **C** and the acceleration
+     sequence.
+   - `get_financial_history(symbol, period="fy", points=5)` — the same lines per fiscal year → **A**.
+   - `get_earnings_history(symbol)` — street EPS/revenue actual vs consensus, beat rate,
+     `next_report_date`, and the last report's `price_reaction` → **C** quality and **N** timing.
+   - `get_financials(symbol)` — TTM ROE, margins, debt/equity, P/E, market cap, sector/industry
+     → **A** (ROE), **S** (debt), and the reference stats.
+
+   **Three traps that will misgrade a letter:**
+   (a) `get_financial_history`'s `eps` is **GAAP** — grade C on `get_earnings_history.eps_actual`
+   (the street figure) and treat a wide GAAP/street gap as the earnings-quality check; a
+   June-2026 example read $8.18 GAAP against $3.56 street for the same quarter.
+   (b) The **TTM** growth fields in `get_financials` break across a spin-off or divestiture —
+   one name showed `total_revenue_yoy_growth_ttm` = -2.7% while every quarter grew 25-45%.
+   Take growth from the per-period `yoy_pct`, never from TTM.
+   (c) TradingView carries **no institutional-ownership data**, so **I** still comes from
+   13F/Form 4 (#5/#6 below) or the web.
+2. **Daloopa** (`daloopa:*` skills, e.g. `daloopa:tearsheet`, `daloopa:industry`, the model
    builders) — audited, model-ready quarterly & annual financials plus operating KPIs. Best
    for the exact EPS / sales / margin / ROE growth figures and the multi-year history behind
    **C** and **A**.
-2. **bigdata.com** (`bigdata-com:*`, e.g. `company-brief`, `earnings-digest`,
+3. **bigdata.com** (`bigdata-com:*`, e.g. `company-brief`, `earnings-digest`,
    `earnings-quality-screen`, `valuation-snapshot`) — latest-quarter beat / acceleration /
    guidance for **C**, an earnings-quality read that catches the "earnings up but sales flat /
    weak cash conversion" trap, and the **N** story.
-3. **LSEG** (`lseg:*`, e.g. `lseg:equity-research`) — analyst **consensus estimates** and
+4. **LSEG** (`lseg:*`, e.g. `lseg:equity-research`) — analyst **consensus estimates** and
    fundamentals: next-year EPS estimate (part of **A**), plus estimate revisions and surprise
    history (the acceleration signal in **C**).
-4. **SEC EDGAR / official filings** — the authoritative primary statements (10-K / 10-Q /
+5. **SEC EDGAR / official filings** — the authoritative primary statements (10-K / 10-Q /
    20-F / annual reports). Reach them via the **`securities-filings-lookup`** skill, which
    resolves the ticker's exchange/regulator and pulls the official filing (also covers non-US
    listings: HKEX, CNINFO, TWSE, LSE, EDINET, Frankfurt). Use for ground-truth income
    statement / balance sheet / cash flow, and for **I** (13F institutional ownership, Form 4
    management ownership).
-5. **Financial Modeling Prep (FMP)** — a structured fundamentals MCP (deferred; load its tools
+6. **Financial Modeling Prep (FMP)** — a structured fundamentals MCP (deferred; load its tools
    with `ToolSearch`). **Deliberately the lowest-priority connector:** on lower-tier plans it is
    heavily gated *and* throttled — bursts of calls return `ACCESS DENIED ... requires a higher
    plan` even for endpoints that worked moments earlier — so it is unreliable as a primary
@@ -218,7 +247,7 @@ research only for finalists that already survived the technical cut.
      ownership come from the official filings (rung 4) or web research (rung 6) instead.
    IBKR tickers vs FMP symbols line up for US names; IBKR name-search is unreliable, so resolve
    IBKR `contract_id`s by **ticker**, not company name.
-6. **General web search** — the universal fallback when the connected sources above cannot
+7. **General web search** — the universal fallback when the connected sources above cannot
    answer (gated, throttled, or not connected).
 
 **Handling gated / throttled / unavailable sources — fall through the ladder, never abandon a

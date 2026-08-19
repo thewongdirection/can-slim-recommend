@@ -69,6 +69,15 @@ letter (IBKR covers N/S/L/M; web research covers C/A and ownership).
 
 ## Prerequisites
 - **Market-data connector(s)** for the technical letters — any of:
+  - **TradingView** (`Trading_View` MCP; *preferred — it covers the technical letters AND the
+    earnings letters, so one connector serves the whole screen*). Symbols are `EXCHANGE:TICKER`;
+    `search_symbols` resolves them. `get_ohlcv(interval="1D", count=500)` / `("1W", 104)` for
+    bars — its `{t,o,h,l,c,v}` output feeds `scripts/relative_strength.py` **unedited**;
+    `get_symbol_data` for 52-week high/low, float and average volume; `run_screener` for
+    candidate generation. Tools deferred — load with `ToolSearch`. Read-only tools only: never
+    call its portfolio/watchlist WRITE tools (`create_portfolio`, `add_portfolio_transactions`,
+    `update_portfolio`, any `delete_*`) — this skill screens stocks, it does not touch the
+    user's book.
   - **Massive Market Data** (Polygon-style; *preferred for price history / RS / MAs*) — ticker-
     based, gives clean OHLC aggregates (true 12-mo RS) + SMA/EMA/MACD endpoints. Tools deferred;
     load with `ToolSearch`. **Throttle to at most 5 calls/min** (space ~12s; prefer grouped-daily
@@ -79,8 +88,9 @@ letter (IBKR covers N/S/L/M; web research covers C/A and ownership).
     Tools deferred — load with `ToolSearch`. 
   - **FMP** — live `batch-quote` (price + 52-wk high/low + 50/200-day MA + volume, batched) and
     a stock screener; the handiest source for the *live last price* when Massive lags a session.
-  Use the best combination available; get **history/RS/MAs from Massive**, **live last price**
-  from FMP/IBKR, and **candidate themes** from IBKR.
+  Use the best combination available. With TradingView connected, take **history/RS/MAs and the
+  financials from TradingView**; otherwise history/RS/MAs from Massive, **live last price** from
+  FMP/IBKR, and **candidate themes** from IBKR.
 - **Web search** available (for fundamentals, current leaders, market status).
 - If a connector is missing/unauthorized/gated/times out, fall through to another (or web) and
   say so — don't block the run.
