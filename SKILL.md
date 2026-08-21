@@ -1,34 +1,39 @@
 ---
 name: can-slim-recommend
 description: >-
-  Generate a ranked, sector-diversified LIST of stock recommendations by screening the market
-  with the CAN SLIM growth-investing methodology against live Interactive Brokers (IBKR) data
-  plus web research. Use whenever the user wants stock ideas, picks, or a screen — "recommend
-  some stocks", "what should I buy", "find me growth stocks", "screen for CAN SLIM stocks",
-  "what to add to my watchlist", "any good stocks right now", "build me a shortlist", or a
-  themed set ("recommend AI stocks", "best energy names") — even if they don't name CAN SLIM.
-  Asks how many names (default 20) and diversifies across non-overlapping groups. This is the
-  LIST/screener lens; to judge ONE named ticker (a C-A-N-S-L-I-M scorecard with a
-  BUY-RANGE/WATCH/AVOID verdict) use the sister skill `can-slim-grader` instead. Output: a
-  self-contained interactive HTML dashboard by default (PDF on request). Analysis and decision
-  support only — never personalized investment advice and never trading.
+  Sweep the whole market sector by sector and return TWO ranked recommendation lists, graded with
+  the CAN SLIM growth-investing methodology. Pulls the top 10 performers in EVERY sector from
+  TradingView, grades each one with the sister skill `can-slim-grader` (pass/partial/fail per
+  letter, out of 7), then returns (1) every sector's leaders graded 4.5 or better and (2) the
+  overall top 10 market-wide. Use whenever the user wants stock ideas, picks, or a screen -
+  "recommend some stocks", "what should I buy", "find me growth stocks", "screen for CAN SLIM
+  stocks", "best names in each sector", "top sector performers", "what to add to my watchlist",
+  "build me a shortlist" - or a themed/scoped set ("recommend AI stocks", "just the top 5
+  sectors") - even if they don't name CAN SLIM. This is the LIST/screener lens; to judge ONE named
+  ticker (a C-A-N-S-L-I-M scorecard with a BUY-RANGE/WATCH/AVOID verdict) use `can-slim-grader`.
+  Output: a white-themed PDF report by default (the interactive HTML on request). Analysis and
+  decision support only - never personalized investment advice and never trading.
 ---
 
-# can-slim-recommend — CAN SLIM stock screener over IBKR
+# can-slim-recommend — CAN SLIM sector sweep over TradingView
 
-Produces a **ranked, sector-diversified watchlist of buy candidates** that fit the CAN SLIM
-growth-investing system, verified against live IBKR price/volume/leadership data and web
-research for fundamentals. Output is a decision-support shortlist with a per-name rationale,
-buy point, and loss-cutting stop, delivered as a self-contained **interactive HTML dashboard by
-default** (PDF on request) — **not investment advice,
-and never an order.**
+Sweeps **every sector** for its top performers, grades each survivor against CAN SLIM with the
+same rubric the sister skill uses, and delivers **two recommendation lists**:
 
-> **Sister skill — `can-slim-grader`.** This skill is the **LIST / screener** lens: a whole
-> market → a ranked shortlist of many names. Its sister, **`can-slim-grader`**, is the
-> **single-ticker GRADER**: one specified ticker in → a letter-by-letter C·A·N·S·L·I·M
-> scorecard with a BUY-RANGE / WATCH / AVOID verdict. Same methodology, opposite direction.
-> If the user names one ticker and wants it judged, hand off to `can-slim-grader`; if they want
-> ideas/picks/a screen, stay here. (For a data-rich single-stock dashboard, use
+1. **Sector leaders** — every top-of-sector performer graded **4.5 or better out of 7**, grouped
+   by sector.
+2. **Overall top 10** — the highest-graded names market-wide, regardless of sector.
+
+Both come with a per-name CAN-SLIM-only rationale, a buy point where one legitimately exists, and
+the 7-8% loss-cutting stop. The deliverable is a **white-themed PDF report by default** (the
+interactive HTML on request) — **not investment advice, and never an order.**
+
+> **Sister skill — `can-slim-grader`.** This skill is the **LIST / screener** lens: the whole
+> market → two ranked lists. Its sister, **`can-slim-grader`**, is the **single-ticker GRADER**:
+> one ticker in → a C·A·N·S·L·I·M scorecard with a BUY-RANGE / WATCH / AVOID verdict. This skill
+> **calls that one** to grade every candidate, so a 4.5 here means exactly what a 4.5 means
+> there. If the user names one ticker and wants it judged, hand off to `can-slim-grader`; if they
+> want ideas/picks/a screen, stay here. (For a data-rich single-stock dashboard, use
 > `ibkr-review-ticker`.)
 
 ## Operating stance — a highly experienced professional's judgment
@@ -62,276 +67,278 @@ highs from a sound base · **S** supply/demand (volume surge, tight float, buyba
 **L** leader not laggard (high relative strength, #1 in a strong group) · **I** increasing
 institutional sponsorship · **M** general market in a confirmed uptrend.
 
-**Read `references/canslim-methodology.md` in full before screening** — it has every
-threshold, the chart-base patterns, the sell rules, and the mistake list. **Read
-`references/ibkr-data-guide.md`** for the exact IBKR call sequence and how to compute each
-letter (IBKR covers N/S/L/M; web research covers C/A and ownership).
+**Read `references/canslim-methodology.md` in full before screening** — it has every threshold,
+the chart-base patterns, the sell rules, and the mistake list. **Read
+`references/tradingview-sector-sweep.md`** for the exact TradingView call shapes, the sector
+taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-guide.md` is the
+**fallback** path plus the shared fundamental-source ladder.
 
 ## Prerequisites
-- **Market-data connector(s)** for the technical letters — any of:
-  - **Massive Market Data** (Polygon-style; *preferred for price history / RS / MAs*) — ticker-
-    based, gives clean OHLC aggregates (true 12-mo RS) + SMA/EMA/MACD endpoints. Tools deferred;
-    load with `ToolSearch`. **Throttle to at most 5 calls/min** (space ~12s; prefer grouped-daily
-    + `store_as`/`query_data` over per-ticker bursts). On lower plans the real-time *snapshot* is
-    gated (403) but aggregates + indicators work — see `ibkr-data-guide.md`.
-  - **IBKR MCP connector** — live price/volume, 52-wk stats, sector/theme groupings (and the
-    theme lists for candidate generation). Read-only market data only; never orders/account.
-    Tools deferred — load with `ToolSearch`. 
-  - **FMP** — live `batch-quote` (price + 52-wk high/low + 50/200-day MA + volume, batched) and
-    a stock screener; the handiest source for the *live last price* when Massive lags a session.
-  Use the best combination available; get **history/RS/MAs from Massive**, **live last price**
-  from FMP/IBKR, and **candidate themes** from IBKR.
-- **Web search** available (for fundamentals, current leaders, market status).
-- If a connector is missing/unauthorized/gated/times out, fall through to another (or web) and
-  say so — don't block the run.
+- **TradingView (`Trading_View` MCP) — the primary connector.** It is the only one here that
+  covers both halves: the sector screener (`run_screener`) *and* the bars and earnings that feed
+  the letters (`get_ohlcv`, `get_symbol_data`, `get_financial_history`, `get_earnings_history`,
+  `get_financials`). Symbols are `EXCHANGE:TICKER`. Tools are deferred — load with `ToolSearch`.
+- **`can-slim-grader`** — the sister skill that grades each candidate. If it isn't installed,
+  say so, prompt the user to add it from **https://github.com/thewongdirection/can-slim-grader**,
+  and apply its rubric inline from the shared methodology rather than inventing a different scale.
+- **Institutional sponsorship (I)** is the one letter TradingView cannot answer — take it from
+  13F/Form 4 (FMP `form13F`, `securities-filings-lookup`) or the web, and say which.
+- **Web search** for the market read and the "new" in N.
+- **Fallbacks** if TradingView is missing or an endpoint is gated: IBKR MCP, Massive Market Data,
+  FMP — see the table at the end of `tradingview-sector-sweep.md`. Fall through and say so;
+  never block the run.
 
 ## Workflow
 
 Work in order. Scale research depth to the request; keep the user informed as you go.
 
 > **ALWAYS pull fresh data — every run, regardless of prior usage.** Treat every invocation as a
-> cold start. Re-pull live IBKR price snapshots, price history, and themes; **re-resolve every
-> `contract_id`**; and re-run the web research **this run**. **Never reuse** a prior run's
-> figures, candidate list, `contract_id`s, RS values, base metrics, or an already-filled
-> `CONFIG` — not from earlier in this conversation, not from memory, not from a saved/cached
-> output file. Prices, RS, and % off-high go stale within minutes during market hours, so a
-> carried-over number can be silently wrong. Always **make the connector calls again** and build
-> `CONFIG` from the values you just fetched. Stamp `generatedAt` / `dataProvenance` with the
-> actual pull time of *this* run; if a connector hands back a cached/expired snapshot (e.g. an
-> `expires` timestamp in the past, or a stale market timestamp), refetch and, if it is still
-> stale, flag it in `dataWarning`.
+> cold start. Re-run every screener call, re-pull every bar series, re-fetch every financial, and
+> re-run the web research **this run**. **Never reuse** a prior run's screener rows, sweep JSON,
+> RS values, grades, or an already-filled `CONFIG` — not from earlier in this conversation, not
+> from memory, not from a saved output file. Sector leadership rotates and prices go stale within
+> minutes during market hours, so a carried-over number can be silently wrong. **A re-check is a
+> full re-run** ("run it again", "is that still true?") — never patch one figure into an old
+> report. Stamp `generatedAt`, `dataProvenance` and every `sourceMap[].pulled` with the actual
+> pull time of *this* run; if a connector hands back a stale or cached snapshot, refetch and, if
+> it is still stale, flag it in `dataWarning`.
+
+### 1 — Set the scope
+Defaults, applied without asking when the user just said "recommend stocks":
+**all ~20 TradingView sectors · top 10 performers each · ranked on 6-month performance ·
+grade cut 4.5 of 7 · overall list of 10 · US primary listings.**
+Confirm only what the user actually scoped — a theme ("AI", "energy"), a subset of sectors, a
+different ranking window ("this year"), a different cut, or their own watchlist. Record whatever
+you changed in `CONFIG.sweep.note` so the report says what was swept.
+
+### 2 — Assess market direction (M) — first, and it gates everything
+Per `tradingview-sector-sweep.md` Step 0: pull SPY/QQQ daily bars, count distribution days,
+check the 50/200-day, cross-check with a web search. Classify **Confirmed uptrend / Under
+pressure / Correction** and set `CONFIG.market.mGrade` to `pass` / `partial` / `fail`.
+M is graded **once** for the whole market and added to every row's total, so a correction costs
+every name a full point and the 4.5 cut correctly gets harder to clear. **Do not loosen the cut
+to compensate** — state the market status prominently, switch to higher-risk framing (tighter
+3% stops, "bases to watch for the next follow-through day"), and let the lists come out short.
+Also record **SPY's performance over the sweep window** — it is the benchmark for every RS figure.
+
+### 3 — Sweep every sector for its top 10 performers (TradingView)
+One `run_screener` call per sector, sorted on the ranking window, filtered to US primary
+listings with the method's price and liquidity floors. The exact verified call shape — and the
+traps that produce wrong answers (`analyze_sector_tool` does not rank by performance;
+`average_volume_50d_calc` is silently ignored; OTC tickers poison the ranking without an
+`exchange` filter) — are in `tradingview-sector-sweep.md` Step 2. **Always read
+`ignored_filters` in each response.**
+
+### 4 — Triage the sweep down (`scripts/sector_screen.py`)
+Feed every screener row into the script exactly as it came back — never retype numbers. It
+computes % off the 52-week high, RS vs SPY, position vs the 50/200-day EMA, dollar volume, the
+**sector ranking**, and a per-name triage verdict against the method's hard disqualifiers (cheap,
+illiquid, >25% below the 52-week high, lagging SPY, below the 200-day). Its `grade_queue` is the
+list to grade. **Report the funnel** in `CONFIG.sweep` — swept, pulled, triaged, graded — so the
+reader can see what was dropped rather than reading the sweep as full coverage.
+
+### 5 — Grade every survivor with `can-slim-grader`
+Run the sister skill on each name in the grade queue (or apply its rubric inline if it isn't
+installed). Per ticker that is ~five TradingView calls plus `scripts/relative_strength.py`;
+`tradingview-sector-sweep.md` Step 4 lists them, along with the two TradingView traps that
+misgrade a letter (its `eps` is GAAP — grade **C** on the street figure from
+`get_earnings_history`; and TTM growth breaks across a spin-off — use per-period `yoy_pct`).
+
+**Grades follow their evidence.** If the actual you print concedes a miss ("just under 25%",
+"hasn't cleared the high"), the letter **cannot be pass** — call it partial. Where a threshold
+says *each* ("EPS up **each** of 3 years at >=25%"), every period must clear it. Magnitude of a
+beat, backlog, guidance or a big volume day are colour for the `reason`, never grounds to promote
+a letter. **Never leave a letter ungraded** — the dashboard's self-audit flags it.
+
+**A pivot needs both a sound base and new-high ground.** A candidate pivot more than ~10% below
+the 52-week high is not a pivot; a strong-earnings name with no valid pivot is a **WATCH** with
+"None now" plus the condition that would create an entry. Record `high52` on the pick so the
+dashboard can check any buy point you name.
+
+When a candidate needs a deeper individual dive, delegate — see "Delegating for deeper
+financials" below.
+
+### 6 — Build the two recommendation lists
+Put **every fully graded name** in `CONFIG.picks[]` with its sector, sector rank, six letter
+grades and verdict. The dashboard derives both lists — **do not hand-build them**:
+
+1. **Sector leaders** — every pick at or above `CONFIG.gradeThreshold` (**4.5 of 7**), grouped by
+   sector, best sector first. A sector with no qualifier is a finding about that sector: record
+   it in `CONFIG.excluded`, don't drop the cut to fill it.
+2. **Overall top N** — the `CONFIG.topCount` (default 10) highest grades market-wide, ties broken
+   by RS then proximity to the 52-week high. No sector cap applies, so this list may concentrate
+   in one or two leading groups; the dashboard badges the overlap with list 1.
+
+**Never lower the threshold to lengthen a list.** If only three names reach 4.5, the answer is
+three names plus `CONFIG.shortfall` saying what the rest failed on. Padding a screen with weak
+names is the exact failure the method exists to prevent.
+
+**The grade is not the verdict.** A name can clear 4.5 on C, A and L and still be a WATCH because
+N fails. Give every pick a `verdict` (BUY-RANGE / WATCH / AVOID).
+
+**The "why" must be expressed *only* in CAN SLIM concepts and rules** — the seven letters; bases /
+pivots / handles and the base type; relative strength; new highs off a sound base; volume,
+accumulation/distribution; leader-vs-laggard and group leadership; institutional sponsorship;
+market direction (distribution days / follow-through). **Do not justify a pick with anything
+outside the method** — no generic macro opinions, no analyst price targets, no "it's a good
+company," no personal vibe. If a name cannot be defended in CAN SLIM terms, it does not belong on
+either list. Keep each reason concrete (cite the actual EPS/sales %, the RS figure, the base and
+pivot).
+
+### 7 — Deliver: a white-themed PDF by default (HTML on request)
+1. **Fill the report.** Copy `assets/dashboard_template.html` to
+   `canslim-recommendations-<date>.html` and fill the `CONFIG` object — the *only* thing you
+   edit; the page renders itself. Populate `market` (verdict + tone + **`mGrade`** + implication),
+   `sweep` (the funnel), `sectors[]` (the sector ranking from `sector_screen.py`), `picks[]`
+   (every graded name), `gradeThreshold` / `topCount`, and — always — **`dataProvenance`** and
+   **`sourceMap[]`**. Add `shortfall`, `watch[]`, `speculative[]`, `excluded[]`, `rationale[]`,
+   `portfolioNote`, `disclaimer`, `sources[]` and `dataWarning` when they apply.
+2. **Check the self-audit banner.** The page audits its own CONFIG on render and prints a red
+   "Report checks failed" banner for contradictions — an ungraded letter, a buy point with N
+   failing, a pivot more than 10% below the 52-week high, a stop that isn't 7-8%, a verdict that
+   disagrees with the grade, missing provenance. **Never ship a report showing that banner** —
+   fix the grade or fix the evidence, and do not delete the check. The PDF freezes whatever the
+   page says, so verify before exporting.
+3. **Render the PDF — this is the default deliverable.**
+   `python scripts/html_to_pdf.py canslim-recommendations-<date>.html`
+   (headless Chrome/Chromium/Edge → Playwright → WeasyPrint → wkhtmltopdf; it prints the engine
+   used). The template is **white/light-themed** and print-optimized, and declares
+   `@page{size:A4 landscape}` because the pick tables are ~10 columns wide — the script detects
+   that and passes it to the fallback engines too. Hand over the PDF. If no PDF engine is
+   available, say so and hand over the HTML instead — never block the run on the export.
+4. **HTML on request only.** Give the `.html` when the user asks for the HTML, an interactive
+   version, sortable columns, or the clickable per-ticker report modal — those flatten in the PDF.
+   A dark rendering is likewise on request: set `<html lang="en" data-theme="dark">` in the filled
+   file. White/light is the default on screen and in print.
+5. Keep the chat reply short: the market read, how many cleared 4.5 and from which sectors, the
+   headline names, and why the count is what it is.
+
+**Built-in visuals (auto-rendered from CONFIG, no extra work):**
+- **Funnel tiles** — sectors swept → top performers pulled → cleared triage → fully graded →
+  graded ≥ the cut. Built from `CONFIG.sweep` plus the picks.
+- **Leadership map** — a scatter plotting every graded name by **RS (x)** vs **% off 52-week high
+  (y, 0% at top)**, straight from each pick's `rs` and `offHigh`. Leaders cluster **top-right** in
+  a shaded "buyable leaders" zone (RS ≥ 0, within ~8% of the high); names at or above the cut are
+  drawn in the leader colour. Shows only when ≥ 2 picks have numeric `rs` + `offHigh`.
+- **Sector sweep table** — the sector ranking behind the lists, from `CONFIG.sectors`.
+- **Data sources & freshness table** — from `CONFIG.sourceMap`.
+- **Acronym glossary** — the standard CAN SLIM + finance terms; extend via `CONFIG.glossary`.
+
+**Per-ticker deep dive (clickable ticker → in-page report window):** give a pick a `reviewUrl`
+and its ticker becomes a link that opens that report in a modal iframe. Save each
+`can-slim-grader` (or `ibkr-review-ticker`) report next to the dashboard as
+`reviews/<SYM>-canslim.html` and set `reviewUrl:"reviews/<SYM>-canslim.html"`. Because the modal
+loads via an iframe, the review files must be **same-origin** with the dashboard (same folder,
+served locally) — a full `https://` URL also works. Omit `reviewUrl` and the ticker is plain text.
+These links are HTML-only; they flatten in the PDF.
+
+**Data sources are not optional.** Every dashboard must carry `dataProvenance` (one line naming
+which sources actually contributed and which letters came from where) **and** `sourceMap[]` (one
+row per class of figure: what, source, pulled-at, note), plus `dataWarning` whenever any source
+was gated, throttled or stale and the analysis leaned on a fallback. The page prints a red check
+banner if either is missing.
+
+**Scoring — pass/partial/fail, /7 total (incl. M):** grade each of C·A·N·S·L·I as `pass` (1.0),
+`partial` (0.5) or `fail` (0), and grade **M once for the whole market** via
+`CONFIG.market.mGrade`. The template renders the six per-stock letters plus a dashed **M cell**
+(identical on every row) and a **/7 total**. M is scored once because market direction is a single
+market-wide gate — it contributes equally to every name rather than being re-judged per row. This
+is the sister skill's exact scale, which is what makes the **4.5 cut** portable between the two.
 
 ### As-of / historical mode (optional) — "run it as of <past date>"
-If the user asks for the screen **as of a past date** ("recommend stocks as if it were Jan 2023",
-"what did CAN SLIM flag in <month/year>"), switch to **point-in-time reconstruction**. This is a
-**best-effort historical view, NOT a survivorship-bias-free backtest** — say so, and stamp the
-output as a reconstruction.
+If the user asks for the sweep **as of a past date** ("what did CAN SLIM flag in Jan 2023"),
+switch to **point-in-time reconstruction**. This is a **best-effort historical view, NOT a
+survivorship-bias-free backtest** — say so, and stamp the output as a reconstruction.
 
-- **Pick the as-of date.** A bare month → use its **last trading day** (e.g. "Jan 2023" →
-  2023-01-31). Everything below is computed as it would have looked at that date's close.
-- **Fresh-vs-historical: still re-issue every call this run** (the fresh-data rule holds — no
-  reusing prior figures), but reconstruct as of the date. **Massive** is the clean path here — its
-  Custom Bars take an explicit range (`/v2/aggs/ticker/{T}/range/1/day/{from}/{to}` with `to` = the
-  as-of date), so you get **native point-in-time** OHLC with no truncation. **IBKR**
-  `get_price_history` has no as-of parameter and always ends *now*, so pull a long series
-  (**`period: "FIVE_YEARS"`**, which spans the date) and **use only bars dated ≤ the as-of date**;
-  its `get_price_snapshot` and FMP `batch-quote` are **live-only — do not use them for history**;
-  take "price as of then", the 52-wk high, and % off-high from the in-window bars. Pass the as-of
-  cutoff to `scripts/relative_strength.py` via `--asof <epoch>` (or an `asof` key in the JSON) so
-  RS / base / breakout are computed only from in-window bars.
-- **M, N, S, L** reconstruct cleanly from the truncated SPY/QQQ + candidate bars (distribution
-  days, 50/200-day trend, RS-vs-SPY over the 12 months ending the date, base shape, breakout
-  volume — all as of then).
+- **Pick the as-of date.** A bare month → its **last trading day** (e.g. "Jan 2023" →
+  2023-01-31). Everything is computed as it would have looked at that date's close.
+- **Still re-issue every call this run** (the fresh-data rule holds), but reconstruct as of the
+  date. TradingView `get_ohlcv` and IBKR `get_price_history` always end *now*, so pull a long
+  series and **use only bars dated ≤ the as-of date**; Massive Market Data is the clean path here
+  because its Custom Bars take an explicit range (`/v2/aggs/ticker/{T}/range/1/day/{from}/{to}`
+  with `to` = the as-of date), giving native point-in-time OHLC. Live snapshots and
+  `get_quotes_batch` are **live-only — do not use them for history**; take price, the 52-week
+  high and % off-high from the in-window bars. Pass the cutoff to `scripts/relative_strength.py`
+  via `--asof <cutoff>` so RS / base / breakout use only in-window bars.
+- **M, N, S, L** reconstruct cleanly from the truncated SPY/QQQ + candidate bars.
 - **C, A, I (avoid look-ahead):** use only the most recent quarter/annual **reported ON OR BEFORE
   the as-of date** — e.g. for Jan 2023 that is **Q3 2022** (filed Oct–Nov 2022), **not** Q4 2022
-  (filed Feb 2023). SEC EDGAR / FMP filings are dated: confirm the filing date is ≤ the as-of date
-  before using a figure; if you cannot confirm it, drop to "n/a" rather than risk look-ahead.
-- **Universe caveat (the real limit):** IBKR `get_theme_details` and "current leaders" web
-  searches reflect **today**, not the as-of date, and screening only today's tickers drops names
-  that later delisted/merged — **survivorship bias**. Prefer a universe the user supplies for the
-  date, or a fixed broad list, and **flag** that group membership/leadership is present-day.
+  (filed Feb 2023). Confirm the filing date is ≤ the as-of date before using a figure; if you
+  cannot confirm it, drop to "n/a" rather than risk look-ahead.
+- **The screener is the real limit:** `run_screener` ranks on **today's** performance columns, so
+  the sector sweep itself cannot be reconstructed natively — and screening only today's listed
+  tickers drops names that later delisted or merged (**survivorship bias**). Prefer a universe
+  the user supplies for the date, or a fixed broad list, and **flag** that sector membership and
+  leadership are present-day.
 - **Output:** set `CONFIG.asOf` to the date (renders an "AS OF … - historical reconstruction"
-  badge), set `generatedAt` to the as-of date, and make `dataWarning` state the three biases
-  plainly — **survivorship** (delisted names missing), **look-ahead** (only pre-date filings
-  used; theme/leader lists are still present-day), and that prices are bar-derived (snapshot is
-  live-only). Keep the standard "not advice / no orders" disclaimer.
-
-### 1 — Set the count and scope
-Confirm **how many names** to return (**default 20**) and any scope the user gave (a theme
-like "AI"/"energy", their watchlist, market-cap preference). Default universe: **US-listed
-common stocks** (the method's price/liquidity rules assume NYSE/Nasdaq). Don't over-ask — if
-they just said "recommend stocks", proceed with 20, US, broad market.
-
-### 2 — Assess market direction (M) — do this first, it gates the tone
-Follow `ibkr-data-guide.md` Step 1: pull SPY/QQQ daily bars, count distribution days, check
-50/200-day trend, cross-check with a web search. Classify: **Confirmed uptrend / Uptrend
-under pressure / Correction**. Per the skill's design you **still deliver the list** in a
-correction, but state the status prominently at the top and switch to higher-risk framing
-(tighter 3% stops, "bases to watch for the next follow-through day" tone). In a confirmed
-uptrend, normal 7–8% stops and buy-on-breakout tone.
-
-### 3 — Generate candidates
-Build a starting universe of ~60–120 names (`ibkr-data-guide.md` Step 0): pull relevance-
-ranked companies from leading themes via `search_investment_topics` → `get_theme_details`,
-add current leaders from web research (new-high lists, strong-earnings growth names, top
-sectors), plus the user's watchlist if asked. Resolve each to a `contract_id` with
-`search_contracts` (exact symbol, US primary listing).
-
-### 4 — Gather technicals (IBKR) and fundamentals (preferred data connectors)
-For each candidate: `get_price_snapshot` (52-week high/low, price) and `get_price_history`
-(weekly ~1–2 yr for base shape; **daily ~14 months** — `step_count ~300` or `TWO_YEARS`, **not**
-`SIX_MONTHS`/`ONE_YEAR`, or the 12-month leg of the RS ranking comes back `null` — for breakout
-volume & RS; pull the same daily range for SPY). Run `scripts/relative_strength.py` on the
-collected bars to compute the RS proxy, % off 52-week high, base depth/length, and breakout
-volume deterministically. Then gather fundamentals
-(C, A, N, I) for the names that survive the technical cut — don't waste research on names
-already failing on price action / RS. **Prefer real financial-data connectors over generic
-web search** for the fundamental letters, following the source-priority ladder in
-`ibkr-data-guide.md` Step 3 (Daloopa → bigdata.com → LSEG → SEC EDGAR via
-`securities-filings-lookup` → FMP → web; **FMP is the lowest-priority connector** because it is
-commonly gated/throttled on lower-tier plans). **If a source is gated, throttled, unauthorized,
-or empty, fall through to the next rung for that same data point rather than dropping the
-letter** —
-gating is per-endpoint and often intermittent, so keep whatever a source does answer and fill
-only the gaps from lower rungs, walking the ladder down to web before ever marking a field
-`n/a` (see "Handling gated / throttled / unavailable sources" in that step). Note the source of
-each figure. When a candidate needs a deeper individual dive, delegate to a specialized skill —
-see "Delegating for deeper financials" below.
-
-### 5 — Score, filter, diversify
-Apply `ibkr-data-guide.md` Step 4: hard-disqualify the failures (cheap/illiquid, near
-52-week lows, RS lagging SPY, declining or no earnings, wide-loose/late-stage bases). **Grade
-each survivor 0-10 on every CAN SLIM letter** — be granular, not just pass/fail (use the 0-10
-rubric in `canslim-methodology.md`): C, A, N, S, L, I per stock, plus **M graded once for the
-whole market** (0-10: confirmed uptrend ~8-10, under pressure ~5-7, correction ~0-4). The
-**total is out of 70** (= C+A+N+S+L+I + M); weight earnings (C/A) and leadership (L) most in the
-qualitative read. Use `get_company_themes` per finalist to tag industry group/sector, and
-**cap names per group (≤ ~2-3)** so the final list spans **non-overlapping sectors**. Rank by
-the /70 total (RS and distance-to-high as tiebreakers).
-
-### 6 — Deliver: a self-contained HTML dashboard by default (offer PDF)
-Return the requested count (default 20). **If fewer qualify, return fewer and say why** —
-never pad with weak names (that is the whole point of the method).
-
-**Every run must produce a well-organized, formatted table of the recommended stocks** —
-basic info per name (symbol, company, group, price, RS, % off 52-wk high, buy point, stop)
-**plus, for each stock, why it is recommended.**
-
-**The "why" must be expressed *only* in CAN SLIM concepts and rules** — the seven letters
-(C, A, N, S, L, I, M); bases / pivots / handles and the base type; relative strength; new
-highs off a sound base; volume, accumulation/distribution; leader-vs-laggard and group
-leadership; institutional sponsorship; market direction (distribution days / follow-through).
-**Do not justify a pick with anything outside the method** — no generic macro opinions, no
-analyst price targets, no "it's a good company," no personal vibe. If a name cannot be
-defended in CAN SLIM terms, it does not belong on the list. Keep each reason concrete (cite
-the actual EPS/sales %, the RS figure, the base and pivot).
-
-**Default deliverable = a self-contained, interactive HTML dashboard** the user can open
-straight in a browser, rendered from `assets/dashboard_template.html`:
-1. Copy the template to an output file (e.g. `canslim-recommendations-<date>.html`).
-2. Fill the `CONFIG` object — the *only* thing you edit; the page renders itself. Populate:
-   `market` (verdict + tone + **`mScore` 0-10** + the M implication), `picks[]` (each with
-   `scores` = an **integer 0-10 for every one of C·A·N·S·L·I**, the basic info fields, and the
-   CAN-SLIM-only `reason`), and, when they apply,
-   `shortfall` (fewer than requested),
-   `watch[]` (leaders repairing bases — not yet buyable), `speculative[]` (strong charts that
-   fail the earnings test), `excluded[]` (groups with no leaders at highs), `rationale[]`
-   (optional longer per-name cards), `portfolioNote`, `disclaimer`, `sources[]`, and the
-   provenance fields **`dataProvenance`** (one line naming which data sources actually
-   contributed — e.g. which letters came from IBKR bars vs. filings vs. web) and
-   **`dataWarning`** (a short amber caveat set **whenever any source was gated, throttled, or
-   stale and the analysis leaned on a fallback** — say what was gated/stale and what filled the
-   gap; leave `""` only if everything resolved from the preferred sources with fresh data).
-3. **Present the HTML file** (SendUserFile / present_files, or give the path) — it is fully
-   self-contained (all CONFIG inline, no external assets) so it opens directly in any browser
-   with the sortable table, clickable-ticker review windows, and hover states all live. Keep
-   the chat reply short: the market read, the headline picks, and why the count is what it is.
-4. **Offer a PDF on request** — e.g. *"Want a PDF version too?"* — and on request convert the
-   saved HTML (headless Chrome `--headless --print-to-pdf=out.pdf file.html`, or the `pdf`
-   skill, or `weasyprint`); the template's print CSS is A4/Letter-ready and keeps the dark
-   design via `print-color-adjust:exact`. Note the sortable/clickable interactivity is HTML-only
-   and flattens in the PDF, so the HTML remains the richer deliverable.
-
-**Built-in interactivity (no work needed):** the table is **sortable** — clicking any column
-header sorts by it (alphabetical for Stock/Group, numeric for Price/RS/% off high/scorecard),
-toggling ascending/descending. Keep `price`, `rs`, and `offHigh` as clean values (e.g.
-`"186.96"`, `"+51"`, `"8%"`) so numeric sort parses them.
-
-**Built-in visuals (auto-rendered from CONFIG):**
-- **Leadership map** — a scatter at the top of the page plotting every pick by **RS (x)** vs.
-  **% off 52-week high (y, 0% at top)**, built straight from each pick's `rs` and `offHigh`
-  (no extra data). Leaders cluster **top-right** in a shaded "buyable leaders" zone (RS ≥ 0 and
-  within ~8% of the high); dots for picks scoring ≥ 4 of C·A·N·S·L·I are drawn in the leader
-  colour. It shows only when ≥ 2 picks have numeric `rs` + `offHigh`, else hides itself. This is
-  the L/N read made visual — it needs nothing beyond the fields you already fill.
-
-**Per-ticker deep dive (clickable ticker → in-page report window):** give a pick a
-`reviewUrl` and its ticker becomes a link that opens that report in a modal iframe. To wire
-this up, run the **`ibkr-review-ticker`** skill for the picks (all of them, or on request),
-save each report next to the dashboard as `reviews/<SYM>-review.html`, and set
-`reviewUrl:"reviews/<SYM>-review.html"` on the pick. Because the modal loads via an iframe,
-the review files must be **same-origin** with the dashboard (same folder, opened via a local
-server or a viewer that allows it); a full `https://` URL also works. Omit `reviewUrl` and the
-ticker is plain text. If `ibkr-review-ticker` isn't installed, prompt the user to install it
-(see "Delegating for deeper financials…") and ship the dashboard without the links.
-
-The template is a complete UTF-8 document written in **pure-ASCII source** (special glyphs are
-HTML entities, so no mojibake even if a viewer ignores the charset), **dark-themed by default**
-(a light palette is opt-in via `<html data-theme="light">`), and print-optimized (A4/Letter)
-with `print-color-adjust:exact` so the dark design also carries through cleanly **if** the user
-asks for the optional PDF (step 4). The default deliverable is the interactive HTML itself
-(sortable columns, clickable-ticker review modal), opened straight in the browser.
-
-The dashboard must always include: header (timestamp + data source), the **market-direction
-verdict**, a **"data sources used" provenance line** (`dataProvenance`) naming which sources
-fed the analysis **plus a stale/gated warning** (`dataWarning`) whenever any source was gated,
-throttled, or lagging and a fallback was used, the ranked table (basic info + C·A·N·S·L·I
-scorecard + CAN-SLIM reason), the
-shortfall note when fewer than requested qualify, the **portfolio / loss-cutting note**
-(concentration 4–6; cut losses 7–8%; average up never down; take 20–25% gains but hold the
-powerful leaders), the **disclaimer** (informational only, not advice, as-of timestamp,
-nothing is an order), and an auto-rendered **acronym glossary** at the end (the standard CAN
-SLIM + finance acronyms; extend with run-specific terms via `CONFIG.glossary` = `[{term, def}]`).
-**Never** write account-bound data into the file — it may be shared.
-
-**Scoring — 0-10 per letter, /70 total (incl. M):** Grade each of C·A·N·S·L·I from 0 to 10 per
-stock, and grade **M once for the whole market** (0-10) via `CONFIG.market.mScore`. The template
-renders the six per-stock letters plus a dashed **M cell** (the market score, identical on every
-row) and a **/70 total** (= C+A+N+S+L+I + M). M is scored once because market direction is a
-single market-wide gate — it contributes equally to every name's total rather than being
-re-judged per row. Grade honestly and granularly (e.g. C:7 for solid-but-not-accelerating
-earnings, L:9 for a clear RS leader); do not collapse everything to 0/5/10.
+  badge), set `generatedAt` to the as-of date, and make `dataWarning` state the biases plainly —
+  **survivorship**, **look-ahead**, that the sector ranking is present-day, and that prices are
+  bar-derived. Keep the standard "not advice / no orders" disclaimer.
 
 ## Delegating for deeper financials & required companion skills
-This skill screens breadth; for depth on a single name, hand off to a specialized skill
-rather than doing a shallow web dig. Use these when a candidate is borderline, when a
-sell-off needs explaining, or when the user asks to "look closer at X":
+This skill screens breadth; for depth on a single name, hand off to a specialized skill rather
+than doing a shallow web dig:
 
-- **`ibkr-review-ticker`** — the primary deep-dive. Generates a full single-stock dashboard
-  (fundamentals vs. peers, valuation, options/volatility positioning, probability outlook)
-  and pulls the official financials for further analysis. Invoke it for any candidate that
-  needs an individual financial review before it earns a spot on the list.
-- **`securities-filings-lookup`** — retrieves the official filing **PDFs** (10-K / 10-Q /
-  20-F / annual reports) from the right regulator (SEC EDGAR and non-US equivalents). Use it
-  when you need the ground-truth reported statements behind **C**/**A**, or 13F/Form 4 data
-  for **I**.
+- **`can-slim-grader`** — **required**: it produces the per-ticker grade this skill's lists are
+  built from. Its report also makes a good `reviewUrl` target for the clickable tickers.
+- **`ibkr-review-ticker`** — the fullest single-stock dashboard (fundamentals vs. peers,
+  valuation, options/volatility positioning, probability outlook). Invoke it for a candidate that
+  needs an individual financial review before it earns a spot on either list.
+- **`securities-filings-lookup`** — the official filing **PDFs** (10-K / 10-Q / 20-F / annual
+  reports) from the right regulator. Use it for the ground-truth statements behind **C**/**A**,
+  and for 13F/Form 4 data for **I**.
 
-**If a companion skill you need is not installed**, do not silently fall back — tell the user
-it's missing and prompt them to install it from its GitHub repo, then continue with the best
-available source (the connector ladder in `ibkr-data-guide.md`, or web search):
+**If a companion skill you need is not installed**, do not silently fall back — tell the user it's
+missing and prompt them to install it from its GitHub repo, then continue with the best available
+source (the connector ladder in `tradingview-sector-sweep.md`, or web search):
+- `can-slim-grader` → **https://github.com/thewongdirection/can-slim-grader**
 - `ibkr-review-ticker` → **https://github.com/thewongdirection/ibkr-review-ticker**
 - `securities-filings-lookup` → **https://github.com/thewongdirection/securities-filings-lookup**
 
-(Example prompt: *"For a deeper financial dive on NVDA I'd normally use the `ibkr-review-ticker`
-skill, but it isn't installed. You can add it from https://github.com/thewongdirection/ibkr-review-ticker
-— install it and I'll re-run the deep dive. For now I'll use the connected data sources / web."*)
+(Example prompt: *"I'd normally grade each candidate with the `can-slim-grader` skill so the 4.5
+cut matches its scale, but it isn't installed. You can add it from
+https://github.com/thewongdirection/can-slim-grader — install it and I'll re-run. For now I'll
+apply the same rubric inline from the shared methodology."*)
 
 ## Guardrails
-- **Read-only, market data only.** Allowed IBKR tools: `search_contracts`,
-  `get_price_snapshot`, `get_price_history`, `search_investment_topics`, `get_theme_details`,
-  `get_company_themes`, and `get_watchlists`/`get_watchlist` if the user asks to screen their
-  list. **Never** call order tools (`create_order_instruction`, `delete_order_instruction`)
-  or account tools (balances, positions, orders, trades, summary, PA analytics), even if
-  asked mid-run — trading and account access are out of scope.
-- **Never** display or store contract IDs, expiration IDs, account numbers, or any
-  account-bound data. Present stocks by symbol/name only.
+- **Read-only, market data only.** TradingView: `search_symbols`, `run_screener`, `get_ohlcv`,
+  `get_symbol_data`, `get_quotes_batch`, `get_technicals`, `get_financials`,
+  `get_financial_history`, `get_earnings_history`, `get_news`, and the user's own watchlists if
+  they ask. **Never** call the portfolio-write or delete tools. IBKR (fallback):
+  `search_contracts`, `get_price_snapshot`, `get_price_history`, `search_investment_topics`,
+  `get_theme_details`, `get_company_themes`, and `get_watchlists`/`get_watchlist` on request —
+  **never** order tools or account tools (balances, positions, orders, trades, summary, PA
+  analytics), even if asked mid-run. Trading and account access are out of scope.
+- **Never** display or store contract IDs, expiration IDs, account numbers, or any account-bound
+  data — the report may be shared. Present stocks by symbol/name only.
 - **No personalized advice or directives.** Give the factual CAN SLIM setup and let the user
   decide. If asked "should I buy X", present the scorecard and risks, not a yes/no.
-- Timestamp everything; flag approximations (RS is a proxy, not a full-market 1–99 rating; web
-  fundamentals may lag). Obey copyright in research (paraphrase; short quotes only).
-- The methodology is a probability edge, not a guarantee — always pair a recommendation
-  with its exit rule.
+- Timestamp everything; flag approximations (RS is a proxy — window performance vs SPY, not a
+  full-market 1-99 rating; fundamentals may lag). Obey copyright in research (paraphrase; short
+  quotes only).
+- The methodology is a probability edge, not a guarantee — always pair a recommendation with its
+  exit rule.
 
 ## Files in this skill
-- `references/canslim-methodology.md` — the full CAN SLIM rules, thresholds, base patterns,
-  sell rules, money management, and mistake list. Read before screening.
-- `references/ibkr-data-guide.md` — candidate generation + the exact IBKR calls and formulas
-  to compute each letter. Read before gathering data.
-- `scripts/relative_strength.py` — computes RS proxy, % off 52-week high, base depth/length,
-  and breakout volume from IBKR OHLCV bars. Pure standard library; feed it the collected
-  bars rather than eyeballing charts.
-- `assets/dashboard_template.html` — the default output (full behavior in Step 6): a
-  self-contained, dark-themed (light opt-in via `data-theme="light"`), print-optimized,
-  pure-ASCII dashboard driven by a `CONFIG` object. Delivered as interactive HTML by default
-  (PDF on request); sortable table, clickable-ticker review modal, and an auto-rendered
-  leadership-map scatter + acronym glossary.
+- `references/canslim-methodology.md` — the full CAN SLIM rules, thresholds, base patterns, sell
+  rules, money management, and mistake list. **Shared verbatim with `can-slim-grader`** — any
+  material change to the method has to land on both sides. Read before screening.
+- `references/tradingview-sector-sweep.md` — **the primary data guide**: the verified TradingView
+  call shapes, the sector taxonomy, the triage filters, the grader hand-off, and how the two
+  lists are built. Read before gathering data.
+- `references/ibkr-data-guide.md` — the fallback path (IBKR / Massive / FMP) plus the shared
+  fundamental source ladder.
+- `scripts/sector_screen.py` — turns the per-sector `run_screener` rows into % off the 52-week
+  high, RS vs SPY, EMA position, dollar volume, the sector ranking and the triage verdict, and
+  emits the grade queue. Pure standard library.
+- `scripts/relative_strength.py` — computes the RS proxy, % off 52-week high, base depth/length
+  and breakout volume from OHLCV bars (TradingView / IBKR / Polygon shapes). Shared with
+  `can-slim-grader`. Feed it the collected bars rather than eyeballing charts.
+- `scripts/html_to_pdf.py` — renders the filled dashboard to the default PDF deliverable
+  (Chrome → Playwright → WeasyPrint → wkhtmltopdf; honours the template's `@page` size). Shared
+  with `can-slim-grader`.
+- `assets/dashboard_template.html` — the report (full behavior in Step 7): a self-contained,
+  **white-themed** (dark opt-in via `data-theme="dark"`), print-optimized, pure-ASCII dashboard
+  driven by a `CONFIG` object. Derives both recommendation lists from one `picks[]` array,
+  self-audits its own CONFIG, and renders the funnel tiles, leadership map, sector sweep table,
+  data-sources table and glossary automatically.

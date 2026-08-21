@@ -1,61 +1,81 @@
 <!--
-  can-slim-recommend - CAN SLIM dashboard template.
+  can-slim-recommend - CAN SLIM sector-sweep dashboard template.
 
   HOW TO USE (per run):
-    1. Copy this file to the output location, e.g. canslim-recommendations.html
-    2. Fill the CONFIG object below with the screen's results. That is the ONLY thing you
+    1. Copy this file to the output location, e.g. canslim-recommendations-<date>.html
+    2. Fill the CONFIG object below with the run's results. That is the ONLY thing you
        edit - the page renders itself from CONFIG. Do not hand-edit the DOM.
-    3. Open / present the file. For PDF, print-to-PDF (the print CSS is A4/Letter-friendly).
+    3. Render the PDF (the DEFAULT deliverable):
+         python scripts/html_to_pdf.py canslim-recommendations-<date>.html
+       Hand over the HTML itself only when the user asks for it.
+
+  WHAT THE PAGE BUILDS FOR YOU - fill ONE list, get BOTH recommendation lists:
+    You fill `picks[]` with EVERY name that was fully graded (each carrying its sector, its
+    rank inside that sector, and its C-A-N-S-L-I grades). The page then derives:
+      1. "Sector leaders" - every pick whose grade reaches CONFIG.gradeThreshold (default 4.5
+         of 7), grouped by sector, best sector first.
+      2. "Overall top N"  - the CONFIG.topCount (default 10) highest-graded names market-wide,
+         regardless of sector. Overlap with list 1 is expected and is badged, not hidden.
+    Never hand-build those two lists - if a name is missing from one, its grade is the reason.
 
   RULES THE TEMPLATE ENFORCES BY CONVENTION:
     - Every pick MUST carry a `reason` expressed ONLY in CAN SLIM terms (the seven letters,
       bases/pivots, relative strength, new highs, volume/accumulation, leadership,
-      institutional sponsorship, market direction). No generic market chatter, no non-method
-      rationale. If a name can't be justified in CAN SLIM terms, it does not belong here.
-    - `scores` grades each of C,A,N,S,L,I as an INTEGER 0-10 (be granular: e.g. C:7, A:5).
-    - M (market direction) is graded ONCE for the whole market via CONFIG.market.mScore (0-10)
-      and applied to every row (same value), so the per-row scorecard shows C,A,N,S,L,I + an
-      M cell (dashed = market-wide). Total = C+A+N+S+L+I + M, out of 70.
+      institutional sponsorship, market direction). No generic market chatter, no analyst
+      targets, no non-method rationale. If a name can't be justified in CAN SLIM terms, it
+      does not belong here.
+    - `scores` grades each of C,A,N,S,L,I as "pass" | "partial" | "fail" - the SAME rubric the
+      sister skill `can-slim-grader` applies, so a grade means the same thing in both reports.
+    - M (market direction) is graded ONCE for the whole market via CONFIG.market.mGrade and
+      applied to every row, so each scorecard shows C,A,N,S,L,I + a dashed M cell.
+      Total = pass 1 + partial 0.5 + fail 0, out of 7. The 4.5 cut lives on that scale.
+    - Every pick needs a `verdict` - BUY-RANGE / WATCH / AVOID, exactly as can-slim-grader
+      issues it. The verdict is NOT the grade: a name can clear the 4.5 cut on C/A/L and still
+      be a WATCH because N fails (no sound base at new-high ground, so no pivot to buy).
+    - Data sources are NOT optional: fill `dataProvenance` AND `sourceMap[]`. The page prints
+      a red check banner if provenance is missing - never ship a report showing that banner.
     - Never put account-bound data (IDs, balances, positions) anywhere in CONFIG.
+
+  THEME: white/light by default, on screen and in print (this is a PDF-first report).
+    A dark rendering is opt-in: set <html lang="en" data-theme="dark"> in the filled file.
 
   ENCODING: keep CONFIG text ASCII where practical (use "-" not an em-dash, "vs" not a
     special glyph). The page is UTF-8, but ASCII content is bulletproof across viewers/PDF.
 
   VISUALS (auto-rendered from CONFIG, no extra work):
-    - Leadership map: a top-of-page scatter of RS (x) vs % off 52-wk high (y, 0 at top) built
-      from each pick's `rs` and `offHigh` - leaders cluster top-right in the shaded "buyable"
-      zone. Shows only when >=2 picks have numeric rs+offHigh; otherwise it hides itself.
+    - Leadership map: a scatter of RS (x) vs % off 52-wk high (y, 0 at top) built from each
+      pick's `rs` and `offHigh` - leaders cluster top-right in the shaded "buyable" zone.
+      Shows only when >=2 picks have numeric rs+offHigh; otherwise it hides itself.
+    - Sector sweep table: rendered from `sectors[]` - the sector ranking behind the sweep.
 
-  PER-TICKER DEEP DIVE: give a pick a `reviewUrl` (path/URL to the HTML produced by the
-    `ibkr-review-ticker` skill for that symbol, saved next to this file). The ticker then
-    becomes a link that opens that report in an in-page window (modal iframe). Omit it and
-    the ticker is plain text. For the iframe to load a local file, serve the dashboard and
-    the review files from the same folder (same origin) or open via a local server.
+  PER-TICKER DEEP DIVE: give a pick a `reviewUrl` (path/URL to that symbol's can-slim-grader
+    or ibkr-review-ticker HTML, saved next to this file). The ticker then becomes a link that
+    opens the report in an in-page window (modal iframe). Omit it and the ticker is plain
+    text. The links are interactive-HTML only - they flatten in the PDF.
 -->
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CAN SLIM Stock Recommendations</title>
+<title>CAN SLIM Sector Recommendations</title>
 <style>
-  /* enhanced-larger-fonts */
-  /* Dark is the committed design of this dashboard (incl. the default PDF). A light palette
-     remains available via <html data-theme="light"> for anyone who wants it. */
+  /* White/light is the committed design of this dashboard (screen AND the default PDF).
+     A dark palette remains available via <html data-theme="dark"> for anyone who wants it. */
   :root{
-    --bg:#0d1017; --panel:#161b23; --ink:#e8ebf1; --muted:#9aa4b2; --line:#273040;
-    --accent:#6ea0ff; --accent-soft:#182236;
-    --pass:#3ddc91; --pass-bg:#0f2f22; --partial:#e6b04a; --partial-bg:#332711;
-    --fail:#ff6d64; --fail-bg:#3a1613; --chip:#1e2632;
+    --bg:#ffffff; --panel:#fbfcfd; --ink:#14181f; --muted:#5b6472; --line:#e3e7ec;
+    --accent:#1c5fd8; --accent-soft:#eaf1fe;
+    --pass:#0f7a45; --pass-bg:#e4f4ea; --partial:#a76300; --partial-bg:#fdf0dc;
+    --fail:#b4231f; --fail-bg:#fbe7e5; --chip:#eef1f5;
     --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     --sans:'Inter',system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
   }
+  :root[data-theme="light"]{--bg:#ffffff;--panel:#fbfcfd;--ink:#14181f;--muted:#5b6472;--line:#e3e7ec;
+      --accent:#1c5fd8;--accent-soft:#eaf1fe;--pass:#0f7a45;--pass-bg:#e4f4ea;--partial:#a76300;
+      --partial-bg:#fdf0dc;--fail:#b4231f;--fail-bg:#fbe7e5;--chip:#eef1f5;}
   :root[data-theme="dark"]{--bg:#0d1017;--panel:#161b23;--ink:#e8ebf1;--muted:#9aa4b2;--line:#273040;
       --accent:#6ea0ff;--accent-soft:#182236;--pass:#3ddc91;--pass-bg:#0f2f22;--partial:#e6b04a;
       --partial-bg:#332711;--fail:#ff6d64;--fail-bg:#3a1613;--chip:#1e2632;}
-  :root[data-theme="light"]{--bg:#f7f8fa;--panel:#ffffff;--ink:#1a1d24;--muted:#5b6472;--line:#e4e7ec;
-      --accent:#1c64f2;--accent-soft:#e8f0fe;--pass:#0f9d58;--pass-bg:#e6f4ea;--partial:#c77700;
-      --partial-bg:#fdf1dd;--fail:#c5221f;--fail-bg:#fce8e6;--chip:#eef1f5;}
 
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;
@@ -78,14 +98,24 @@
 
   .section-title{font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
     color:var(--muted);margin:26px 0 10px}
+  .section-title .n{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)}
   .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:14px;color:var(--muted);margin:2px 0 10px;align-items:center}
   .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend span.note{display:block;flex-basis:100%;align-items:initial}
   .dot{width:10px;height:10px;border-radius:3px;display:inline-block}
   .dot.pass{background:var(--pass)} .dot.partial{background:var(--partial)} .dot.fail{background:var(--fail)}
   .hint{font-size:14px;color:var(--muted);font-style:italic}
 
+  .funnel{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 4px}
+  .fstep{flex:1;min-width:150px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:11px 14px}
+  .fstep .v{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--ink)}
+  .fstep .k{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .fstep .s{font-size:13px;color:var(--muted);margin-top:2px}
+
   .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
   table{border-collapse:collapse;width:100%;min-width:900px;font-size:16px}
+  table.compact{min-width:520px;font-size:15px}
   thead th{text-align:left;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);
     padding:11px 10px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--panel);position:sticky;top:0}
   thead th.sortable{cursor:pointer;user-select:none}
@@ -94,7 +124,12 @@
   th.sorted .arrow{opacity:1;color:var(--accent)}
   th.num{text-align:right}
   tbody td{padding:11px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  td.stock{min-width:132px}
+  td.grp{min-width:150px}
   tbody tr:last-child td{border-bottom:none}
+  tr.grouphead td{background:var(--chip);font-size:13px;text-transform:uppercase;letter-spacing:.05em;
+    font-weight:700;color:var(--ink);padding:8px 10px}
+  tr.grouphead .gmeta{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)}
   .rk{font-family:var(--mono);color:var(--muted)}
   .sym{font-family:var(--mono);font-weight:700;font-size:17px}
   a.sym{color:var(--accent);text-decoration:none;cursor:pointer;border-bottom:1px dotted var(--accent)}
@@ -103,19 +138,32 @@
   .grp{font-size:14px}
   td.num{font-family:var(--mono);white-space:nowrap;text-align:right}
   .pos{color:var(--pass)} .neg{color:var(--fail)}
+  .badge{display:inline-block;font-size:11px;font-family:var(--mono);font-weight:700;padding:1px 6px;
+    border-radius:999px;background:var(--accent-soft);color:var(--accent);margin-left:6px;vertical-align:1px}
+  .badge.warn{background:var(--partial-bg);color:var(--partial)}
+  .vd{display:inline-block;font-family:var(--mono);font-size:12px;font-weight:700;white-space:nowrap;
+    padding:3px 8px;border-radius:999px}
+  .vd-buy{background:var(--pass-bg);color:var(--pass)}
+  .vd-watch{background:var(--partial-bg);color:var(--partial)}
+  .vd-avoid{background:var(--fail-bg);color:var(--fail)}
   .scorecells{white-space:nowrap}
   .sc{display:inline-flex;flex-direction:column;align-items:center;width:22px;margin-right:2px}
   .sc .lab{font-size:11px;color:var(--muted);font-family:var(--mono)}
   .sc .mk{width:21px;height:21px;border-radius:6px;display:flex;align-items:center;justify-content:center;
     font-size:12px;font-weight:700;margin-top:2px;font-family:var(--mono)}
-  .mk.s-hi{background:var(--pass-bg);color:var(--pass)}
-  .mk.s-mid{background:var(--partial-bg);color:var(--partial)}
-  .mk.s-lo{background:var(--fail-bg);color:var(--fail)}
+  .mk.g-pass{background:var(--pass-bg);color:var(--pass)}
+  .mk.g-partial{background:var(--partial-bg);color:var(--partial)}
+  .mk.g-fail{background:var(--fail-bg);color:var(--fail)}
   .sc.mcol .mk{outline:1px dashed var(--line);outline-offset:-1px}   /* M = market-wide component */
   .sc-total{display:inline-flex;flex-direction:column;align-items:center;margin-left:7px;vertical-align:top}
   .sc-total .lab{font-size:11px;color:var(--muted);font-family:var(--mono)}
   .sc-total .val{font-family:var(--mono);font-weight:700;font-size:15px;margin-top:1px;color:var(--ink)}
-  .reason{font-size:15px;color:var(--ink);min-width:260px;max-width:420px}
+  .sc-total .val.hit{color:var(--pass)}
+  tr.whyrow td{border-bottom:1px solid var(--line);padding-top:0}
+  tr.pickrow td{border-bottom:none;padding-bottom:4px}
+  .reason{font-size:15px;color:var(--ink)}
+  .reason .wlab{display:inline-block;font-family:var(--mono);font-size:11px;text-transform:uppercase;
+    letter-spacing:.05em;color:var(--muted);margin-right:8px}
 
   .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 15px}
@@ -130,6 +178,9 @@
   .callout{background:var(--accent-soft);border:1px solid var(--line);border-left:3px solid var(--accent);
     border-radius:8px;padding:12px 15px;font-size:16px;margin:14px 0}
   .callout.warn{background:var(--partial-bg);border-left-color:var(--partial)}
+  .callout.bad{background:var(--fail-bg);border-left-color:var(--fail);color:var(--fail)}
+  .callout.bad b{color:var(--fail)}
+  .callout.bad ul{margin:6px 0 0 18px;padding:0}
   .provenance{font-family:var(--mono);font-size:14px;color:var(--muted);margin:10px 0 2px}
   .provenance b{color:var(--ink)}
   /* historical / point-in-time badge */
@@ -147,12 +198,12 @@
   footer a{color:var(--accent)}
   .sources a{margin-right:12px;white-space:nowrap}
 
-  /* modal window for the per-ticker ibkr-review-ticker report */
-  .modal{position:fixed;inset:0;background:rgba(10,14,20,.6);display:none;z-index:50;
+  /* modal window for the per-ticker report */
+  .modal{position:fixed;inset:0;background:rgba(10,14,20,.5);display:none;z-index:50;
     align-items:center;justify-content:center;padding:24px}
   .modal.open{display:flex}
   .modal-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(1200px,96vw);
-    height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+    height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25)}
   .modal-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;
     border-bottom:1px solid var(--line)}
   .modal-bar .t{font-family:var(--mono);font-weight:700}
@@ -166,7 +217,7 @@
   .lm-axis{stroke:var(--line);stroke-width:1}
   .lm-grid{stroke:var(--line);stroke-width:1;stroke-dasharray:2 4;opacity:.6}
   .lm-ref{stroke:var(--muted);stroke-width:1;stroke-dasharray:4 4;opacity:.7}
-  .lm-zone{fill:var(--accent-soft);opacity:.55}
+  .lm-zone{fill:var(--accent-soft);opacity:.75}
   .lm-zone-lab{fill:var(--accent);font-size:12px;font-family:var(--mono);opacity:.85}
   .lm-axlab{fill:var(--muted);font-size:13px;font-family:var(--sans)}
   .lm-tick{fill:var(--muted);font-size:11px;font-family:var(--mono)}
@@ -174,17 +225,32 @@
   .lm-dot.lead{fill:var(--pass)}
   .lm-lab{fill:var(--ink);font-size:12px;font-family:var(--mono);font-weight:700}
 
-  /* keep the dark design in the printed / PDF output (Chrome print-to-pdf honours exact) */
+  /* the PDF is the default deliverable - keep the white design and the colour chips exact */
   html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   @media print{
     html,body{background:var(--bg)}
-    .wrap{max-width:none;padding:14mm}
-    .tablewrap,.card,.tier,.market,.leadmap{break-inside:avoid}
+    .wrap{max-width:none;padding:12mm}
+    .card,.tier,.market,.leadmap,.funnel{break-inside:avoid}
+    tbody tr{break-inside:avoid}
+    tr.pickrow{break-after:avoid}          /* keep a pick with its CAN SLIM reason */
+    tr.grouphead{break-after:avoid}
+    .section-title{break-after:avoid}
     thead th{position:static}
+    thead{display:table-header-group}
+    .tablewrap{overflow:visible}
+    table,table.compact{min-width:0;width:100%;table-layout:auto;font-size:13px}
+    tbody td{padding:7px 7px}
+    thead th{padding:8px 7px;font-size:11px}
+    td.stock,td.grp{min-width:0}
+    .reason{font-size:13px}
+    .sc{width:19px;margin-right:1px}
+    .sc .mk{width:18px;height:18px;font-size:11px}
     .hint,th .arrow{display:none}
     a{color:var(--accent);text-decoration:none}
     .modal{display:none !important}
-    @page{margin:0}
+    /* the pick tables are ~10 columns wide - portrait clips them, so print landscape.
+       scripts/html_to_pdf.py detects this and passes it on to the fallback engines too. */
+    @page{size:A4 landscape;margin:0}
   }
 </style>
 </head>
@@ -193,36 +259,67 @@
 <div class="wrap">
   <header class="top">
     <div>
-      <h1 id="title">CAN SLIM Stock Recommendations</h1>
-      <div class="sub" id="subtitle">Screened with the CAN SLIM growth-investing methodology</div>
+      <h1 id="title">CAN SLIM Sector Recommendations</h1>
+      <div class="sub" id="subtitle">Top performers per sector, graded against CAN SLIM</div>
     </div>
     <div class="meta" id="meta"></div>
   </header>
 
   <div id="asof"></div>
   <div class="market" id="market"></div>
+  <div id="checks"></div>
   <div id="dataWarning"></div>
   <div id="dataProvenance"></div>
+  <div class="funnel" id="funnel"></div>
   <div id="shortfall"></div>
 
   <div id="leadmapWrap" style="display:none">
-    <div class="section-title">Leadership map <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">- relative strength vs. distance below 52-wk high; leaders cluster top-right</span></div>
+    <div class="section-title">Leadership map <span class="n">- relative strength vs. distance below the 52-week high; leaders cluster top-right</span></div>
     <div class="leadmap" id="leadmap"></div>
   </div>
 
-  <div class="section-title">Recommended stocks <span id="countnote" style="font-weight:400;text-transform:none;letter-spacing:0"></span></div>
-  <div class="legend">
-    <span><span class="dot pass"></span>8-10 strong</span>
-    <span><span class="dot partial"></span>4-7 partial</span>
-    <span><span class="dot fail"></span>0-3 weak</span>
-    <span style="color:var(--muted)">Each letter graded <b>0-10</b>; Total = C&middot;A&middot;N&middot;S&middot;L&middot;I + <b>M</b> (market, same for every row) out of <b>70</b>. RS = relative strength vs. SPY.</span>
-  </div>
-  <div class="legend"><span class="hint">Click a column header to sort. Click a ticker to open its ibkr-review-ticker report.</span></div>
+  <!-- ===================== LIST 1: sector leaders at/above the grade cut ===================== -->
+  <div class="section-title" id="leadersTitle">Recommendation 1 &mdash; sector leaders</div>
+  <div id="leadersIntro"></div>
+  <div class="legend" id="scoreLegend"></div>
+  <div class="legend"><span class="hint">Click a column header to sort (sorting flattens the sector grouping). Click a ticker to open its per-name report.</span></div>
   <div class="tablewrap">
     <table>
-      <thead><tr id="head"></tr></thead>
-      <tbody id="rows"></tbody>
+      <thead><tr id="leadersHead"></tr></thead>
+      <tbody id="leadersRows"></tbody>
     </table>
+  </div>
+  <div id="leadersEmpty"></div>
+
+  <!-- ===================== LIST 2: overall top N by grade ===================== -->
+  <div class="section-title" id="topTitle">Recommendation 2 &mdash; overall top performers</div>
+  <div id="topIntro"></div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr id="topHead"></tr></thead>
+      <tbody id="topRows"></tbody>
+    </table>
+  </div>
+
+  <!-- ===================== the sweep behind the lists ===================== -->
+  <div id="sweepWrap" style="display:none">
+    <div class="section-title">Sector sweep <span class="n" id="sweepNote"></span></div>
+    <div class="tablewrap">
+      <table class="compact">
+        <thead><tr id="sweepHead"></tr></thead>
+        <tbody id="sweepRows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="allWrap" style="display:none">
+    <div class="section-title">Every name graded <span class="n" id="allNote"></span></div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr id="allHead"></tr></thead>
+        <tbody id="allRows"></tbody>
+      </table>
+    </div>
   </div>
 
   <div id="rationaleWrap" style="display:none">
@@ -241,20 +338,28 @@
   </div>
 
   <div id="exclWrap" style="display:none">
-    <div class="section-title">Groups excluded (no leaders at highs)</div>
+    <div class="section-title">Sectors excluded (no leaders cleared the sweep)</div>
     <div id="excl"></div>
   </div>
 
   <div class="callout" id="portfolio"></div>
 
-  <div class="section-title">Glossary <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">- acronyms used in this dashboard</span></div>
-  <div class="glossary" id="glossary"></div>
+  <!-- ===================== data sources (always shown) ===================== -->
+  <div class="section-title">Data sources &amp; freshness <span class="n">- every figure in this report traces to one of these, pulled fresh for this run</span></div>
+  <div class="tablewrap">
+    <table class="compact">
+      <thead><tr id="srcHead"></tr></thead>
+      <tbody id="srcRows"></tbody>
+    </table>
+  </div>
 
+  <div class="section-title">Glossary <span class="n">- acronyms used in this dashboard</span></div>
+  <div class="glossary" id="glossary"></div>
 
   <footer>
     <div id="disclaimer"></div>
     <div class="sources" id="sources" style="margin-top:8px"></div>
-    <div style="margin-top:8px">Methodology: CAN SLIM (C &mdash; current quarterly earnings &amp; sales &middot; A &mdash; annual earnings &amp; ROE &middot; N &mdash; new products/management/highs off a base &middot; S &mdash; supply/demand &amp; volume &middot; L &mdash; leader not laggard / relative strength &middot; I &mdash; institutional sponsorship &middot; M &mdash; market direction). Reasons are expressed only in these terms.</div>
+    <div style="margin-top:8px">Methodology: CAN SLIM (C &mdash; current quarterly earnings &amp; sales &middot; A &mdash; annual earnings &amp; ROE &middot; N &mdash; new products/management/highs off a base &middot; S &mdash; supply/demand &amp; volume &middot; L &mdash; leader not laggard / relative strength &middot; I &mdash; institutional sponsorship &middot; M &mdash; market direction). Reasons are expressed only in these terms. Letter grades use the same pass/partial/fail rubric as the sister skill <b>can-slim-grader</b>.</div>
   </footer>
 </div>
 
@@ -268,70 +373,107 @@
         <button id="modalClose" type="button">Close &times;</button>
       </span>
     </div>
-    <iframe id="modalFrame" title="ibkr-review-ticker report"></iframe>
+    <iframe id="modalFrame" title="per-ticker CAN SLIM report"></iframe>
   </div>
 </div>
 
 <script>
 /* ============================ FILL THIS PER RUN ============================ */
 const CONFIG = {
-  title: "CAN SLIM Stock Recommendations",
-  subtitle: "Screened with the CAN SLIM growth-investing methodology - IBKR data + fundamentals",
-  generatedAt: "2026-07-11 (market close)",
-  dataSource: "IBKR (delayed/live) + fundamental sources",
-  requested: 20,
+  title: "CAN SLIM Sector Recommendations",
+  subtitle: "Top 10 performers per sector (TradingView), each graded against CAN SLIM",
+  generatedAt: "2026-08-21 (close)",
+  dataSource: "TradingView screener + bars/financials; sponsorship from filings/web",
   // Historical / point-in-time mode: set to a past date (e.g. "2023-01-31") to mark the whole
   // page as an as-of reconstruction (renders an "AS OF ..." badge). Leave "" for a live run.
-  // In as-of mode, also set generatedAt to the date and spell out the biases in dataWarning.
   asOf: "",
+
+  // --- the two recommendation lists are DERIVED from picks[] using these two knobs ---
+  gradeThreshold: 4.5,   // list 1 = every graded name at/above this score out of 7
+  topCount: 10,          // list 2 = the N highest-graded names market-wide
 
   // One line naming which data sources ACTUALLY contributed to this run (renders as a
   // "Data sources used:" line under the market banner). Be specific about which letters came
-  // from where, e.g. "IBKR weekly bars (N/S/L/M + RS via relative_strength.py); C/A/I from
-  // SEC filings + web (FMP fundamentals gated on this plan)".
+  // from where, e.g. "TradingView run_screener (sector sweep) + get_ohlcv/get_financial_history
+  // /get_earnings_history (C/A/N/S/L/M); I from SEC 13F via securities-filings-lookup".
+  // REQUIRED - the page prints a red check banner if this is empty.
   dataProvenance: "",
   // Set a short warning whenever any source was STALE or GATED and the analysis leaned on a
   // fallback (renders an amber caveat banner). Say what was gated/stale and what filled the
-  // gap, e.g. "FMP quote-change/statements gated & throttled; RS computed from IBKR bars and
-  // C/A taken from web research, which can lag the latest quarter." Leave "" if everything
-  // resolved from the preferred sources with fresh data.
+  // gap. Leave "" if everything resolved from the preferred sources with fresh data.
   dataWarning: "",
+
+  // Per-datum provenance, rendered as the "Data sources & freshness" table. REQUIRED - one
+  // row per class of figure in the report. { item, source, pulled, note }
+  sourceMap: [
+    // { item:"Sector sweep (top 10 per sector)", source:"TradingView run_screener, Perf.6M",
+    //   pulled:"2026-08-21 14:05 UTC", note:"20 sectors, US primary listings, >$20M avg $ volume" },
+    // { item:"Price / 52-wk high / volume", source:"TradingView get_ohlcv + get_symbol_data",
+    //   pulled:"2026-08-21 14:07 UTC", note:"newest daily bar 2026-08-20" },
+    // { item:"C - quarterly EPS & sales", source:"TradingView get_earnings_history (street EPS)",
+    //   pulled:"2026-08-21 14:12 UTC", note:"GAAP eps from get_financial_history cross-checked" },
+    // { item:"I - institutional sponsorship", source:"SEC 13F via securities-filings-lookup",
+    //   pulled:"2026-08-21 14:20 UTC", note:"latest filed quarter" }
+  ],
+
+  // The screening funnel - the numbers that make the sweep auditable. Rendered as stat tiles.
+  sweep: {
+    windowLabel: "6-month price performance",   // the ranking window used for "top performers"
+    benchmark: "SPY +11.2% over the same window",
+    sectorsScanned: 0,
+    perSector: 10,
+    screened: 0,        // sectors x perSector
+    triaged: 0,         // survived the CAN SLIM hard filters (sector_screen.py)
+    graded: 0,          // fully graded with can-slim-grader
+    note: ""            // e.g. "Universe: US primary listings, price >$15, avg $ volume >$20M."
+  },
 
   market: {
     verdict: "Confirmed uptrend - narrow & selective",   // badge text
     tone: "pressure",                                     // "up" | "pressure" | "down"
-    mScore: 6,                                            // M graded 0-10 (feeds every row's /70 total): confirmed uptrend ~8-10, under pressure ~5-7, correction ~0-4
+    mGrade: "partial",                                    // "pass" | "partial" | "fail" - graded ONCE, applied to every row
     distributionDays: "SPY 5 / QQQ 7 over ~5 weeks",
     implication: "Indices near highs above the 50-day, but leadership is narrow (M intact but late-stage). Buy only genuine leaders emerging from sound bases; normal 7-8% stops."
   },
 
-  // Set when fewer than requested qualify (never pad).
-  shortfall: "Only the names below cleared the full filter; the rest of the market's leadership has broken down or is extended. Per the method, returning the qualifiers rather than padding to 20.",
+  // Set when the grade cut leaves fewer names than the user hoped for (never pad).
+  shortfall: "",
 
-  // Tier-1 buy-range picks. scores = pass|partial|fail. reason = CAN SLIM terms ONLY.
-  // Optional reviewUrl = path/URL to this symbol's ibkr-review-ticker HTML (makes ticker clickable).
+  // EVERY fully graded name goes here - the page derives BOTH recommendation lists from it.
+  // scores = pass|partial|fail per letter (M comes from market.mGrade). reason = CAN SLIM terms ONLY.
+  // Optional: high52 (enables the pivot check), verdict, reviewUrl (makes the ticker clickable).
   picks: [
     // {
-    //   rank:1, symbol:"ANET", company:"Arista Networks", group:"AI networking",
-    //   price:"186.96", rs:"+51", offHigh:"0%", buyPoint:"~178 pivot", stop:"~172",
-    //   scores:{C:9,A:8,N:9,S:6,L:9,I:8},   // each 0-10; M comes from market.mScore
-    //   reason:"C: Q EPS +32% / sales +35% accelerating. A: 3-yr growth + high ROE. N: new AI-cluster product at a new high off a sound base. L: RS +51, #1 in a leading group. I: heavy institutional sponsorship.",
-    //   reviewUrl:"reviews/ANET-review.html"
+    //   symbol:"ANET", company:"Arista Networks", sector:"Electronic Technology",
+    //   group:"AI networking", sectorRank:2,
+    //   price:"186.96", rs:"+51", offHigh:"2%", high52:"190.80",
+    //   buyPoint:"178.40", stop:"164.50", verdict:"BUY-RANGE",
+    //   scores:{C:"pass", A:"pass", N:"pass", S:"partial", L:"pass", I:"pass"},
+    //   reason:"C: Q EPS +32% / sales +35%, accelerating. A: EPS up each of 3 yrs at >25% with ROE 31%. N: new AI-cluster product, breaking out of an 8-week flat base at a new high. S: breakout volume +62% vs the 50-day average. L: RS +51 vs SPY, #1 of its group's top-10. I: fund ownership up 4 quarters running.",
+    //   reviewUrl:"reviews/ANET-canslim.html"
     // }
   ],
 
   rationale: [ /* { symbol, company, text } */ ],
-  watch: [ /* { symbol, company, group, offHigh, note } */ ],
+  watch: [ /* { symbol, company, sector, offHigh, note } */ ],
   speculative: [ /* { symbol, company, reason } */ ],
   excluded: [ /* { group, names, reason } */ ],
+
+  // The sector sweep ranking behind the lists (straight from sector_screen.py output).
+  sectors: [
+    // { rank:1, sector:"Electronic Technology", medianPerf:"+34.2%", survivors:6, considered:10,
+    //   qualified:3, leaders:"ANET, AVGO, VRT", note:"Group leadership intact; three at new highs." }
+  ],
+
+  showAllGraded: true,   // render the "Every name graded" appendix table
 
   // A glossary of the standard CAN SLIM + finance acronyms auto-renders at the end of the page
   // (see DEFAULT_GLOSSARY in the script). Add run-specific terms here to EXTEND it - each entry
   // is { term, def }; anything whose term matches a default is ignored. Leave [] to use defaults.
   glossary: [ /* { term:"XYZ", def:"..." } */ ],
 
-  portfolioNote: "The method favors concentration (4-6 names), so treat this as a research shortlist to narrow, not a buy-all list. Cut every loss at 7-8% (no exceptions), average up never down, take many 20-25% gains but let a powerful leader run if it jumps 20%+ in 1-3 weeks. Re-check M - if distribution days keep building, raise cash.",
-  disclaimer: "Informational decision support, not investment advice; not a financial advisor. Figures are as-of the timestamp; RS is a relative-strength proxy (12-mo vs SPY), not a full-market 1-99 rating; fundamentals may lag. Nothing here is an order; no orders were or will be placed.",
+  portfolioNote: "The method favors concentration (4-6 names), so treat both lists as a research shortlist to narrow, not a buy-all list. Cut every loss at 7-8% (no exceptions), average up never down, take many 20-25% gains but let a powerful leader run if it jumps 20%+ in 1-3 weeks. Re-check M - if distribution days keep building, raise cash.",
+  disclaimer: "Informational decision support, not investment advice; not a financial advisor. Figures are as-of the timestamp; RS is a relative-strength proxy (window performance vs SPY), not a full-market 1-99 rating; fundamentals may lag the latest quarter. Nothing here is an order; no orders were or will be placed.",
   sources: [ /* { label, url } */ ]
 };
 /* ========================================================================== */
@@ -341,14 +483,20 @@ const esc = (s)=> (s==null?"":String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':
 const rsClass = (v)=> /^[-\u2212]/.test(String(v).trim()) ? "neg" : "pos";
 // parse a messy numeric string ("+51","-14%","1,188",">1,220 breakout","~178 pivot") -> number|NaN
 const num = (s)=>{ if(s==null) return NaN; const m=String(s).replace(/,/g,'').match(/-?\d+(\.\d+)?/); return m?parseFloat(m[0]):NaN; };
-// --- 0-10 per-letter grading; total = C+A+N+S+L+I + M (market, same for all rows) out of 70 ---
-const LETTERS6 = ["C","A","N","S","L","I"];
-const clamp10 = (v)=>{ v=Number(v); return isFinite(v)?Math.max(0,Math.min(10,Math.round(v))):0; };
-const gradeCls = (v)=> v>=8?"s-hi":v>=4?"s-mid":"s-lo";
-const mScore = ()=> clamp10((CONFIG.market||{}).mScore);
-const scoreTotal = (p)=> LETTERS6.reduce((n,k)=> n+clamp10((p.scores||{})[k]), 0) + mScore();
 
-document.title = CONFIG.title || "CAN SLIM Recommendations";
+/* ---- grading: pass/partial/fail per letter; total = C+A+N+S+L+I + M, out of 7 ----
+   Identical rubric and arithmetic to the sister skill can-slim-grader, so a 4.5 here and a
+   4.5 there mean the same thing. */
+const WEIGHT = {pass:1, partial:0.5, fail:0};
+const LETTERS6 = ["C","A","N","S","L","I"];
+const gradeOf = (v)=>{ const g=String(v||"").trim().toLowerCase(); return WEIGHT.hasOwnProperty(g)?g:"fail"; };
+const mGrade = ()=> gradeOf((CONFIG.market||{}).mGrade);
+const scoreTotal = (p)=> LETTERS6.reduce((n,k)=> n+WEIGHT[gradeOf((p.scores||{})[k])], 0) + WEIGHT[mGrade()];
+const fmtScore = (v)=> (Math.round(v*2)/2).toFixed(1).replace(/\.0$/,"");
+const THRESHOLD = Number(CONFIG.gradeThreshold)||4.5;
+const TOPN = Number(CONFIG.topCount)||10;
+
+document.title = CONFIG.title || "CAN SLIM Sector Recommendations";
 $("title").textContent = CONFIG.title || document.title;
 if (CONFIG.subtitle) $("subtitle").textContent = CONFIG.subtitle;
 $("meta").innerHTML = "As of " + esc(CONFIG.generatedAt||"") + "<br>" + esc(CONFIG.dataSource||"");
@@ -358,13 +506,13 @@ if (CONFIG.asOf){
 }
 
 const m = CONFIG.market||{};
+const M_LABEL = {pass:"PASS", partial:"PART", fail:"FAIL"};
 $("market").innerHTML =
   '<span class="verdict '+esc(m.tone||'up')+'">'+esc(m.verdict||'')+'</span>'+
-  '<div class="imp"><b>M &mdash; market direction:</b> '+esc(m.implication||'')+'</div>'+
+  '<div class="imp"><b>M &mdash; market direction ('+M_LABEL[mGrade()]+'):</b> '+esc(m.implication||'')+'</div>'+
   (m.distributionDays?'<div class="dd">Distribution days: '+esc(m.distributionDays)+'</div>':'');
 
 // data provenance (which sources actually contributed) + a warning when any is stale/gated.
-// Falls back to dataSource so the "data sources used" line is never silently absent.
 const prov = CONFIG.dataProvenance || CONFIG.dataSource;
 if (prov){
   $("dataProvenance").innerHTML = '<div class="provenance"><b>Data sources used:</b> '+esc(prov)+'</div>';
@@ -373,82 +521,260 @@ if (CONFIG.dataWarning){
   $("dataWarning").innerHTML = '<div class="callout warn">&#9888; <b>Data caveat:</b> '+esc(CONFIG.dataWarning)+'</div>';
 }
 
-const picks = (CONFIG.picks||[]).slice();
-$("countnote").textContent = CONFIG.requested ? "- "+picks.length+" of "+CONFIG.requested+" requested qualified" : "- "+picks.length;
-if (CONFIG.shortfall && picks.length < (CONFIG.requested||Infinity)){
+// ---- the screening funnel ----
+(function(){
+  const s = CONFIG.sweep||{};
+  const tiles = [
+    {k:"Sectors swept", v:s.sectorsScanned, s:s.windowLabel||""},
+    {k:"Top performers pulled", v:s.screened, s:(s.perSector? s.perSector+" per sector":"")},
+    {k:"Cleared triage", v:s.triaged, s:"CAN SLIM hard filters"},
+    {k:"Fully graded", v:s.graded, s:"can-slim-grader rubric"},
+    {k:"Graded &ge;"+fmtScore(THRESHOLD), v:null, s:"of 7 - recommendation 1"}
+  ];
+  window.__tiles = tiles;   // count filled in after picks are scored
+})();
+
+// ---- score every pick once, then DERIVE both lists ----
+const allPicks = (CONFIG.picks||[]).map(p=>{
+  const t = scoreTotal(p);
+  return Object.assign({}, p, {_total:t, _rs:num(p.rs), _off:num(p.offHigh)});
+});
+// strongest first: grade, then RS, then nearest the 52-week high
+const byGrade = (a,b)=> (b._total-a._total)
+  || ((isNaN(b._rs)?-1e9:b._rs)-(isNaN(a._rs)?-1e9:a._rs))
+  || ((isNaN(a._off)?1e9:Math.abs(a._off))-(isNaN(b._off)?1e9:Math.abs(b._off)));
+
+const qualified = allPicks.filter(p=> p._total >= THRESHOLD).sort(byGrade);   // list 1 pool
+const topOverall = allPicks.slice().sort(byGrade).slice(0, TOPN);             // list 2
+const topSet = new Set(topOverall.map(p=>p.symbol));
+const qualSet = new Set(qualified.map(p=>p.symbol));
+
+// sector order for list 1: follow CONFIG.sectors ranking when given, else best grade first
+const sectorOrder = new Map((CONFIG.sectors||[]).map((s,i)=>[s.sector, (s.rank!=null?Number(s.rank):i+1)]));
+function sectorKey(p){ return p.sector || p.group || "Unclassified"; }
+const groupedLeaders = (()=>{
+  const g = new Map();
+  qualified.forEach(p=>{ const k=sectorKey(p); if(!g.has(k)) g.set(k,[]); g.get(k).push(p); });
+  const keys = Array.from(g.keys()).sort((a,b)=>{
+    const ra = sectorOrder.has(a)?sectorOrder.get(a):9e3, rb = sectorOrder.has(b)?sectorOrder.get(b):9e3;
+    if (ra!==rb) return ra-rb;
+    return Math.max(...g.get(b).map(p=>p._total)) - Math.max(...g.get(a).map(p=>p._total));
+  });
+  return keys.map(k=>({sector:k, rows:g.get(k).sort(byGrade)}));
+})();
+
+// funnel tiles (now that the grade count is known)
+(function(){
+  const tiles = window.__tiles; tiles[4].v = qualified.length;
+  $("funnel").innerHTML = tiles.map(t=>
+    '<div class="fstep"><div class="k">'+t.k+'</div><div class="v">'+
+    (t.v==null||t.v===""?"-":esc(t.v))+'</div>'+(t.s?'<div class="s">'+esc(t.s)+'</div>':'')+'</div>').join('');
+})();
+
+// ---- table plumbing shared by all three pick tables ----
+const COLS = [
+  {key:"rank",   label:"#",            type:"num",  cls:"",     get:(p,i)=>i+1, noSort:true},
+  {key:"symbol", label:"Stock",        type:"text", cls:"",     get:p=>(p.symbol||"")},
+  {key:"sector", label:"Sector / group",type:"text",cls:"",     get:p=>sectorKey(p)},
+  {key:"price",  label:"Price",        type:"num",  cls:"num",  get:p=>num(p.price)},
+  {key:"rs",     label:"RS",           type:"num",  cls:"num",  get:p=>p._rs},
+  {key:"offHigh",label:"% off 52w hi", type:"num",  cls:"num",  get:p=>p._off},
+  {key:"score",  label:"C&middot;A&middot;N&middot;S&middot;L&middot;I&middot;M (/7)", type:"num", cls:"", get:p=>p._total},
+  {key:"verdict",label:"Verdict",      type:"text", cls:"",     get:p=>(p.verdict||"")},
+  {key:"buyPoint",label:"Buy point",   type:"text", cls:"num",  get:p=>(p.buyPoint||""), noSort:true},
+  {key:"stop",   label:"Stop",         type:"text", cls:"num",  get:p=>(p.stop||""),      noSort:true},
+];
+// The CAN SLIM reason is NOT a column - it is a full-width sub-row under each pick, so it stays
+// readable instead of being squeezed into a 400px cell (and so the table fits an A4 page).
+
+function headHtml(){
+  return COLS.map(c=>{
+    const sortable = !c.noSort;
+    return '<th class="'+c.cls+(sortable?' sortable':'')+'" data-key="'+c.key+'">'+c.label+
+      (sortable?' <span class="arrow">&#9662;</span>':'')+'</th>';
+  }).join('');
+}
+
+function scoreCells(p){
+  const ms = mGrade(), LAB = {pass:"P", partial:"~", fail:"X"};
+  const t = p._total;
+  return LETTERS6.map(k=>{ const g=gradeOf((p.scores||{})[k]);
+    return '<span class="sc" title="'+k+': '+g+'"><span class="lab">'+k+'</span><span class="mk g-'+g+'">'+LAB[g]+'</span></span>';
+  }).join('')
+    + '<span class="sc mcol" title="M = market direction (same for every row): '+ms+'"><span class="lab">M</span><span class="mk g-'+ms+'">'+LAB[ms]+'</span></span>'
+    + '<span class="sc-total"><span class="lab">/7</span><span class="val'+(t>=THRESHOLD?' hit':'')+'">'+fmtScore(t)+'</span></span>';
+}
+
+/* BUY-RANGE / WATCH / AVOID - the same three verdicts can-slim-grader issues. It is NOT the
+   grade: a name can clear 4.5/7 on C/A/L and still have no valid pivot (N fail), which is a
+   WATCH, not a buy. Showing both stops the grade being read as an entry signal. */
+function verdictChip(p){
+  const v = String(p.verdict||"").toUpperCase();
+  if (!v) return '<span class="co">-</span>';
+  const cls = v.indexOf("BUY")===0 ? "vd-buy" : (v.indexOf("AVOID")===0 ? "vd-avoid" : "vd-watch");
+  return '<span class="vd '+cls+'">'+esc(v)+'</span>';
+}
+
+function rowHtml(p, i, opts){
+  opts = opts||{};
+  const tk = p.reviewUrl
+    ? '<a class="sym" data-review="'+esc(p.reviewUrl)+'" data-sym="'+esc(p.symbol)+'">'+esc(p.symbol)+'</a>'
+    : '<span class="sym">'+esc(p.symbol)+'</span>';
+  let badge = "";
+  if (opts.markTop && topSet.has(p.symbol)) badge = '<span class="badge" title="also in the overall top '+TOPN+'">TOP '+TOPN+'</span>';
+  if (opts.markQual) badge = qualSet.has(p.symbol)
+    ? '<span class="badge" title="also a sector leader at or above the grade cut">&ge;'+fmtScore(THRESHOLD)+'</span>'
+    : '<span class="badge warn" title="in the overall top '+TOPN+' by grade but below the '+fmtScore(THRESHOLD)+' cut">below cut</span>';
+  const sect = sectorKey(p) + (p.sectorRank? ' <span class="co">#'+esc(p.sectorRank)+' in sector</span>' : '');
+  return '<tr class="pickrow">'+
+    '<td class="rk">'+(i+1)+'</td>'+
+    '<td class="stock">'+tk+badge+'<div class="co">'+esc(p.company)+'</div></td>'+
+    '<td class="grp">'+sect+(p.group&&p.group!==p.sector?'<div class="co">'+esc(p.group)+'</div>':'')+'</td>'+
+    '<td class="num">'+esc(p.price)+'</td>'+
+    '<td class="num '+rsClass(p.rs)+'">'+esc(p.rs)+'</td>'+
+    '<td class="num">'+esc(p.offHigh)+'</td>'+
+    '<td class="scorecells">'+scoreCells(p)+'</td>'+
+    '<td>'+verdictChip(p)+'</td>'+
+    '<td class="num">'+esc(p.buyPoint)+'</td>'+
+    '<td class="num">'+esc(p.stop)+'</td>'+
+  '</tr>'+
+  '<tr class="whyrow"><td colspan="'+COLS.length+'" class="reason">'+
+    '<span class="wlab">Why (CAN SLIM read)</span>'+esc(p.reason)+'</td></tr>';
+}
+
+function emptyRow(msg){
+  return '<tr><td colspan="'+COLS.length+'" style="padding:18px;color:var(--muted)">'+esc(msg)+'</td></tr>';
+}
+
+/* A sortable table. `groups` (optional) renders sector group headers; sorting flattens them. */
+function makeTable(headId, bodyId, flatList, opts){
+  opts = opts||{};
+  $(headId).innerHTML = headHtml();
+  const state = {key:null, dir:1};
+  function renderGrouped(){
+    if (!flatList.length){ $(bodyId).innerHTML = emptyRow(opts.emptyMsg||"No names qualified."); return; }
+    let i = 0, html = "";
+    opts.groups.forEach(g=>{
+      const meta = (CONFIG.sectors||[]).find(s=>s.sector===g.sector) || {};
+      html += '<tr class="grouphead"><td colspan="'+COLS.length+'">'+esc(g.sector)+
+        ' <span class="gmeta">- '+g.rows.length+' at or above '+fmtScore(THRESHOLD)+'/7'+
+        (meta.rank?' &middot; sector rank #'+esc(meta.rank):'')+
+        (meta.medianPerf?' &middot; median '+esc(meta.medianPerf):'')+'</span></td></tr>';
+      g.rows.forEach(p=>{ html += rowHtml(p, i++, opts); });
+    });
+    $(bodyId).innerHTML = html;
+  }
+  function renderFlat(list){
+    $(bodyId).innerHTML = list.map((p,i)=>rowHtml(p,i,opts)).join('') || emptyRow(opts.emptyMsg||"No names qualified.");
+  }
+  function draw(){
+    if (state.key===null && opts.groups) renderGrouped();
+    else {
+      const col = COLS.find(c=>c.key===state.key);
+      const list = col ? flatList.slice().sort((a,b)=>{
+        let va=col.get(a,0), vb=col.get(b,0);
+        if(col.type==="num"){ const na=isNaN(va), nb=isNaN(vb); if(na&&nb)return 0; if(na)return 1; if(nb)return -1; return (va-vb)*state.dir; }
+        return String(va).localeCompare(String(vb),undefined,{sensitivity:'base'})*state.dir;
+      }) : flatList;
+      renderFlat(list);
+    }
+    Array.from($(headId).children).forEach(th=>{
+      th.classList.toggle('sorted', th.dataset.key===state.key);
+      const ar=th.querySelector('.arrow'); if(ar) ar.innerHTML = th.dataset.key===state.key ? (state.dir>0?'&#9652;':'&#9662;') : '&#9662;';
+    });
+  }
+  $(headId).addEventListener('click', e=>{
+    const th=e.target.closest('th'); if(!th||!th.dataset.key) return;
+    const col=COLS.find(c=>c.key===th.dataset.key); if(!col||col.noSort) return;
+    state.dir = (state.key===th.dataset.key) ? -state.dir : (col.type==="num" ? -1 : 1);
+    state.key = th.dataset.key;
+    draw();
+  });
+  draw();
+}
+
+// ---- legend ----
+$("scoreLegend").innerHTML =
+  '<span><span class="dot pass"></span>P = pass (1.0)</span>'+
+  '<span><span class="dot partial"></span>~ = partial (0.5)</span>'+
+  '<span><span class="dot fail"></span>X = fail (0)</span>'+
+  '<span class="note" style="color:var(--muted)">Total = C&middot;A&middot;N&middot;S&middot;L&middot;I + <b>M</b> (market, same for every row) out of <b>7</b> - the same scale the sister skill <b>can-slim-grader</b> uses. RS = window performance vs SPY. '+
+  'The <b>verdict</b> is separate from the grade: a name can clear '+fmtScore(THRESHOLD)+'/7 on earnings and leadership and still be a <b>WATCH</b> because it has no valid pivot (N).</span>';
+
+// ---- LIST 1: sector leaders at/above the cut ----
+$("leadersTitle").innerHTML = 'Recommendation 1 &mdash; sector leaders graded &ge;'+fmtScore(THRESHOLD)+
+  '/7 <span class="n">- '+qualified.length+' name'+(qualified.length===1?'':'s')+' across '+
+  groupedLeaders.length+' sector'+(groupedLeaders.length===1?'':'s')+'</span>';
+$("leadersIntro").innerHTML = '<div class="callout">Every top-of-sector performer that reached <b>'+
+  fmtScore(THRESHOLD)+' of 7</b> on the CAN SLIM scorecard, grouped by sector and ordered by grade. '+
+  'A sector missing from this list had no name clear the cut - that is a finding about the sector, not an omission.</div>';
+makeTable("leadersHead","leadersRows", qualified, {groups:groupedLeaders, markTop:true,
+  emptyMsg:"No name from any sector's top performers reached "+fmtScore(THRESHOLD)+"/7 in this market. Per the method, that is the answer - nothing is padded in."});
+if (!qualified.length && CONFIG.shortfall){
+  $("leadersEmpty").innerHTML = '<div class="callout warn">'+esc(CONFIG.shortfall)+'</div>';
+} else if (CONFIG.shortfall){
   $("shortfall").innerHTML = '<div class="callout">'+esc(CONFIG.shortfall)+'</div>';
 }
 
-// ---- sortable header ----
-const COLS = [
-  {key:"rank",   label:"#",            type:"num",  cls:"",     get:p=>num(p.rank)},
-  {key:"symbol", label:"Stock",        type:"text", cls:"",     get:p=>(p.symbol||"")},
-  {key:"group",  label:"Group",        type:"text", cls:"",     get:p=>(p.group||"")},
-  {key:"price",  label:"Price",        type:"num",  cls:"num",  get:p=>num(p.price)},
-  {key:"rs",     label:"RS",           type:"num",  cls:"num",  get:p=>num(p.rs)},
-  {key:"offHigh",label:"% off 52w hi", type:"num",  cls:"num",  get:p=>num(p.offHigh)},
-  {key:"score",  label:"C&middot;A&middot;N&middot;S&middot;L&middot;I&middot;M (/70)", type:"num", cls:"", get:p=>scoreTotal(p)},
-  {key:"buyPoint",label:"Buy point",   type:"text", cls:"num",  get:p=>(p.buyPoint||""), noSort:true},
-  {key:"stop",   label:"Stop",         type:"text", cls:"num",  get:p=>(p.stop||""),      noSort:true},
-  {key:"reason", label:"Why (CAN SLIM read)", type:"text", cls:"", get:p=>(p.reason||""), noSort:true},
-];
-let sortState = {key:null, dir:1};
+// ---- LIST 2: overall top N by grade ----
+$("topTitle").innerHTML = 'Recommendation 2 &mdash; overall top '+TOPN+
+  ' <span class="n">- highest CAN SLIM grades market-wide, any sector</span>';
+// This list is "the top N by grade", not "the top N that qualify" - so when none of them reach
+// the cut, say it outright rather than letting the ranking read as an endorsement.
+const topBest = topOverall.length ? topOverall[0]._total : 0;
+const topQual = topOverall.filter(p=>p._total>=THRESHOLD).length;
+$("topIntro").innerHTML = '<div class="callout">The '+TOPN+' highest-graded names from the whole sweep, '+
+  'ranked by grade, then relative strength, then proximity to the 52-week high. Sector caps do <b>not</b> apply here, '+
+  'so this list can concentrate in one or two leading groups - check it against list 1 before sizing anything.</div>'+
+  (topOverall.length && !topQual
+    ? '<div class="callout warn">&#9888; <b>None of these clear the '+fmtScore(THRESHOLD)+
+      '/7 cut</b> - the best grade in the whole sweep is '+fmtScore(topBest)+'/7. This is a ranking of what scored '+
+      'highest, not a list of names the method would buy. Treat it as a watchlist of the least-weak candidates.</div>'
+    : (topQual < topOverall.length
+      ? '<div class="callout warn">&#9888; '+(topOverall.length-topQual)+' of these '+topOverall.length+
+        ' are <b>below the '+fmtScore(THRESHOLD)+'/7 cut</b> (badged "below cut") - they rank here on grade alone '+
+        'and are not sector-leader recommendations.</div>'
+      : ''));
+makeTable("topHead","topRows", topOverall, {markQual:true,
+  emptyMsg:"No names were graded in this run."});
 
-$("head").innerHTML = COLS.map(c=>{
-  const sortable = !c.noSort;
-  return '<th class="'+c.cls+(sortable?' sortable':'')+'" data-key="'+c.key+'">'+c.label+
-    (sortable?' <span class="arrow">&#9662;</span>':'')+'</th>';
-}).join('');
-
-function renderRows(list){
-  $("rows").innerHTML = list.map(p=>{
-    const tk = p.reviewUrl
-      ? '<a class="sym" data-review="'+esc(p.reviewUrl)+'" data-sym="'+esc(p.symbol)+'">'+esc(p.symbol)+'</a>'
-      : '<span class="sym">'+esc(p.symbol)+'</span>';
-    const ms = mScore();
-    const sc = LETTERS6.map(k=>{ const v=clamp10((p.scores||{})[k]);
-      return '<span class="sc"><span class="lab">'+k+'</span><span class="mk '+gradeCls(v)+'">'+v+'</span></span>';
-    }).join('')
-      + '<span class="sc mcol" title="M = market direction (same for every row)"><span class="lab">M</span><span class="mk '+gradeCls(ms)+'">'+ms+'</span></span>'
-      + '<span class="sc-total"><span class="lab">/70</span><span class="val">'+scoreTotal(p)+'</span></span>';
+// ---- sector sweep table ----
+(function(){
+  const rows = CONFIG.sectors||[];
+  if (!rows.length) return;
+  $("sweepWrap").style.display='block';
+  const s = CONFIG.sweep||{};
+  $("sweepNote").textContent = '- ranked by ' + (s.windowLabel||"window performance") +
+    (s.benchmark? ' (benchmark: '+s.benchmark+')':'') + (s.note? ' ' + s.note : '');
+  const cols = ["#","Sector","Median perf","Cleared triage","Graded &ge;"+fmtScore(THRESHOLD),"Leaders","Note"];
+  $("sweepHead").innerHTML = cols.map((c,i)=>'<th'+(i>=2&&i<=4?' class="num"':'')+'>'+c+'</th>').join('');
+  $("sweepRows").innerHTML = rows.map(r=>{
+    const q = (r.qualified!=null) ? r.qualified
+      : qualified.filter(p=>sectorKey(p)===r.sector).length;
     return '<tr>'+
-      '<td class="rk">'+esc(p.rank)+'</td>'+
-      '<td>'+tk+'<div class="co">'+esc(p.company)+'</div></td>'+
-      '<td class="grp">'+esc(p.group)+'</td>'+
-      '<td class="num">'+esc(p.price)+'</td>'+
-      '<td class="num '+rsClass(p.rs)+'">'+esc(p.rs)+'</td>'+
-      '<td class="num">'+esc(p.offHigh)+'</td>'+
-      '<td class="scorecells">'+sc+'</td>'+
-      '<td class="num">'+esc(p.buyPoint)+'</td>'+
-      '<td class="num">'+esc(p.stop)+'</td>'+
-      '<td class="reason">'+esc(p.reason)+'</td>'+
+      '<td class="rk">'+esc(r.rank)+'</td>'+
+      '<td><b>'+esc(r.sector)+'</b></td>'+
+      '<td class="num">'+esc(r.medianPerf)+'</td>'+
+      '<td class="num">'+esc(r.survivors)+(r.considered?' / '+esc(r.considered):'')+'</td>'+
+      '<td class="num">'+q+'</td>'+
+      '<td class="grp">'+esc(r.leaders||'')+'</td>'+
+      '<td class="grp">'+esc(r.note||'')+'</td>'+
     '</tr>';
-  }).join('') || '<tr><td colspan="'+COLS.length+'" style="padding:18px;color:var(--muted)">No names cleared the full CAN SLIM filter in the current market. See notes above.</td></tr>';
+  }).join('');
+})();
+
+// ---- appendix: every name graded ----
+if (CONFIG.showAllGraded !== false && allPicks.length){
+  $("allWrap").style.display='block';
+  $("allNote").textContent = '- all '+allPicks.length+' names that were fully graded, including those below the '+
+    fmtScore(THRESHOLD)+'/7 cut';
+  makeTable("allHead","allRows", allPicks.slice().sort(byGrade), {emptyMsg:"Nothing graded."});
 }
-function applySort(key){
-  const col = COLS.find(c=>c.key===key); if(!col||col.noSort) return;
-  sortState.dir = (sortState.key===key) ? -sortState.dir : 1;
-  sortState.key = key;
-  const dir = sortState.dir;
-  const sorted = picks.slice().sort((a,b)=>{
-    let va=col.get(a), vb=col.get(b);
-    if(col.type==="num"){ const na=isNaN(va), nb=isNaN(vb); if(na&&nb)return 0; if(na)return 1; if(nb)return -1; return (va-vb)*dir; }
-    return String(va).localeCompare(String(vb),undefined,{sensitivity:'base'})*dir;
-  });
-  renderRows(sorted);
-  document.querySelectorAll('th').forEach(th=>{
-    th.classList.toggle('sorted', th.dataset.key===key);
-    const ar=th.querySelector('.arrow'); if(ar) ar.innerHTML = th.dataset.key===key ? (dir>0?'&#9652;':'&#9662;') : '&#9662;';
-  });
-}
-$("head").addEventListener('click', e=>{ const th=e.target.closest('th'); if(th&&th.dataset.key) applySort(th.dataset.key); });
-renderRows(picks);
 
 // ---- leadership map: RS (x) vs % off 52-wk high (y, 0 at top) ----
 function buildLeadMap(){
-  const pts = picks.map(p=>({sym:p.symbol, x:num(p.rs), y:num(p.offHigh),
-                             lead:scoreTotal(p)>=50}))
-                   .filter(d=> isFinite(d.x) && isFinite(d.y));
+  const pts = allPicks.map(p=>({sym:p.symbol, x:p._rs, y:Math.abs(p._off), lead:p._total>=THRESHOLD}))
+                      .filter(d=> isFinite(d.x) && isFinite(d.y));
   if (pts.length < 2) return;   // nothing meaningful to plot
   $("leadmapWrap").style.display='block';
 
@@ -481,7 +807,7 @@ function buildLeadMap(){
   if (xMinR<0 && xMaxR>0) svg+='<line class="lm-ref" x1="'+X(0).toFixed(1)+'" y1="'+mT+'" x2="'+X(0).toFixed(1)+'" y2="'+(mT+ph)+'"/>';
   if (buyBand<yMax) svg+='<line class="lm-ref" x1="'+mL+'" y1="'+yBuy.toFixed(1)+'" x2="'+(mL+pw)+'" y2="'+yBuy.toFixed(1)+'"/>';
   // axis labels
-  svg+='<text class="lm-axlab" x="'+(mL+pw/2)+'" y="'+(H-8)+'" text-anchor="middle">Relative strength (12-mo vs SPY, proxy; sqrt scale) &#8594; stronger</text>'+
+  svg+='<text class="lm-axlab" x="'+(mL+pw/2)+'" y="'+(H-8)+'" text-anchor="middle">Relative strength (window performance vs SPY, proxy; sqrt scale) &#8594; stronger</text>'+
        '<text class="lm-axlab" transform="translate(13,'+(mT+ph/2)+') rotate(-90)" text-anchor="middle">&#8592; nearer 52-wk high (% below)</text>';
   // y ticks (0 at top, yMax at bottom)
   [0, buyBand, Math.round(yMax)].forEach(t=>{ if(t<=yMax){
@@ -506,13 +832,13 @@ buildLeadMap();
 
 // ---- per-ticker report modal ----
 function openReview(url, sym){
-  $("modalTitle").textContent = (sym?sym+" - ":"") + "ibkr-review-ticker report";
+  $("modalTitle").textContent = (sym?sym+" - ":"") + "CAN SLIM report";
   $("modalOpen").href = url;
   $("modalFrame").src = url;
   $("modal").classList.add('open');
 }
 function closeReview(){ $("modal").classList.remove('open'); $("modalFrame").src="about:blank"; }
-$("rows").addEventListener('click', e=>{
+document.addEventListener('click', e=>{
   const a=e.target.closest('a[data-review]'); if(!a) return;
   e.preventDefault(); openReview(a.dataset.review, a.dataset.sym);
 });
@@ -529,7 +855,7 @@ if ((CONFIG.rationale||[]).length){
 if ((CONFIG.watch||[]).length){
   $("watchWrap").style.display='block';
   $("watch").innerHTML = CONFIG.watch.map(w=>
-    '<div class="tier"><b>'+esc(w.symbol)+'</b> '+esc(w.company||'')+' &middot; '+esc(w.group||'')+' &middot; <span class="num neg">'+esc(w.offHigh||'')+'</span><div class="why">'+esc(w.note||'')+'</div></div>').join('');
+    '<div class="tier"><b>'+esc(w.symbol)+'</b> '+esc(w.company||'')+' &middot; '+esc(w.sector||w.group||'')+' &middot; <span class="num neg">'+esc(w.offHigh||'')+'</span><div class="why">'+esc(w.note||'')+'</div></div>').join('');
 }
 if ((CONFIG.speculative||[]).length){
   $("specWrap").style.display='block';
@@ -543,6 +869,51 @@ if ((CONFIG.excluded||[]).length){
 }
 $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(CONFIG.portfolioNote||'');
 
+// ---- data sources & freshness table (always rendered; never let a report ship sourceless) ----
+(function(){
+  const rows = CONFIG.sourceMap||[];
+  $("srcHead").innerHTML = ["What","Source (tool / feed)","Pulled","Note"].map(c=>'<th>'+c+'</th>').join('');
+  $("srcRows").innerHTML = rows.length
+    ? rows.map(r=>'<tr><td><b>'+esc(r.item)+'</b></td><td class="grp">'+esc(r.source)+
+        '</td><td class="grp">'+esc(r.pulled||'')+'</td><td class="grp">'+esc(r.note||'')+'</td></tr>').join('')
+    : '<tr><td colspan="4" style="padding:16px;color:var(--fail)">CONFIG.sourceMap is empty - fill it before shipping this report.</td></tr>';
+})();
+
+/* ---- self-audit: the report checks itself and shouts if CONFIG contradicts itself.
+   Never ship a report showing this banner - fix the grade or fix the evidence. ---- */
+(function(){
+  const errs = [];
+  if (!CONFIG.dataProvenance) errs.push("CONFIG.dataProvenance is empty - the report must name the data sources it used.");
+  if (!(CONFIG.sourceMap||[]).length) errs.push("CONFIG.sourceMap is empty - fill one row per class of figure (what, source, pulled).");
+  if (!allPicks.length) errs.push("CONFIG.picks is empty - nothing was graded, so neither recommendation list can be built.");
+  allPicks.forEach(p=>{
+    const sc = p.scores||{};
+    LETTERS6.forEach(k=>{ if (sc[k]==null) errs.push(p.symbol+": letter "+k+" has no grade (defaults to fail)."); });
+    const bp = num(p.buyPoint), hi = num(p.high52), st = num(p.stop);
+    if (isFinite(bp) && gradeOf(sc.N)==="fail")
+      errs.push(p.symbol+": a buy point is named but N is FAIL - the method has no entry without a sound base at new-high ground.");
+    if (isFinite(bp) && isFinite(hi) && bp < hi*0.90)
+      errs.push(p.symbol+": buy point "+p.buyPoint+" is more than 10% below the 52-week high ("+p.high52+") - that is a lower high, not a pivot.");
+    if (isFinite(bp) && isFinite(st)){
+      const d = (bp-st)/bp;
+      if (d < 0.025 || d > 0.09)
+        errs.push(p.symbol+": stop "+p.stop+" is "+(d*100).toFixed(1)+"% below the buy point - the rule is 7-8% (3% when M is a correction).");
+    }
+    const vd = String(p.verdict||"").toUpperCase();
+    if (vd==="AVOID" && p._total>=THRESHOLD)
+      errs.push(p.symbol+": verdict AVOID but the scorecard totals "+fmtScore(p._total)+"/7 - grade and verdict disagree.");
+    if (vd.indexOf("BUY")===0 && !isFinite(bp))
+      errs.push(p.symbol+": verdict BUY-RANGE but no buy point is given - name the pivot or downgrade to WATCH.");
+    if (vd.indexOf("BUY")===0 && gradeOf(sc.N)==="fail")
+      errs.push(p.symbol+": verdict BUY-RANGE with N FAIL - no sound base at new-high ground means no entry.");
+    if (!vd) errs.push(p.symbol+": no verdict - every graded name needs BUY-RANGE, WATCH or AVOID so the grade is not read as an entry signal.");
+  });
+  if (errs.length){
+    $("checks").innerHTML = '<div class="callout bad"><b>&#9888; Report checks failed ('+errs.length+
+      ') - do not ship this report:</b><ul>'+errs.map(e=>'<li>'+esc(e)+'</li>').join('')+'</ul></div>';
+  }
+})();
+
 // ---- glossary of acronyms (default set; extend via CONFIG.glossary = [{term,def}, ...]) ----
 const DEFAULT_GLOSSARY = [
   {term:"CAN SLIM", def:"Growth-stock selection framework - the seven traits (below) shared by big market winners just before their major advances."},
@@ -553,7 +924,12 @@ const DEFAULT_GLOSSARY = [
   {term:"L", def:"Leader, not laggard - high relative strength; the #1 or #2 name in a strong group."},
   {term:"I", def:"Institutional sponsorship - increasing ownership by high-quality funds."},
   {term:"M", def:"Market direction - the general market must be in a confirmed uptrend (shown in the banner at the top)."},
-  {term:"RS", def:"Relative strength - price performance vs the S&P 500. Shown here as a proxy, not a full-market 1-99 rating."},
+  {term:"P / ~ / X", def:"Letter grades - pass (1.0), partial (0.5), fail (0). Seven letters, so a scorecard totals out of 7."},
+  {term:"RS", def:"Relative strength - price performance vs the S&P 500 over the sweep window. A proxy, not a full-market 1-99 rating."},
+  {term:"Pivot / buy point", def:"The price at the top of a sound base where the breakout is bought - valid only at or very near new-high ground."},
+  {term:"Base", def:"A price consolidation (cup-with-handle, flat base, double bottom, square box) formed after a prior advance."},
+  {term:"Distribution day", def:"An index day closing down >=0.2% on heavier volume than the session before - institutional selling."},
+  {term:"Follow-through day", def:"A decisive high-volume index rally day that confirms a new uptrend after a correction."},
   {term:"EPS", def:"Earnings per share."},
   {term:"YoY", def:"Year over year - vs the same period one year earlier."},
   {term:"ROE", def:"Return on equity - profit as a percentage of shareholders' equity."},
@@ -561,13 +937,10 @@ const DEFAULT_GLOSSARY = [
   {term:"ARR", def:"Annual recurring revenue - the annualized run-rate of subscription revenue."},
   {term:"EBITDA", def:"Earnings before interest, taxes, depreciation & amortization."},
   {term:"GAAP / non-GAAP", def:"Standardized accounting results vs company-adjusted (non-standard) results."},
-  {term:"MA (50-/200-day)", def:"Moving average of price - the 50- and 200-day trend lines."},
+  {term:"EMA (50-/200-day)", def:"Exponential moving average of price - the 50- and 200-day trend lines."},
   {term:"bps", def:"Basis points - 1 bp = 0.01% (100 bps = 1%)."},
-  {term:"AI", def:"Artificial intelligence."},
-  {term:"ETF", def:"Exchange-traded fund (e.g. SPY = S&P 500, QQQ = Nasdaq-100)."},
-  {term:"IB", def:"Investment banking."},
-  {term:"GLP-1", def:"A class of weight-loss / diabetes drugs (e.g. Eli Lilly, Novo Nordisk)."},
-  {term:"NGS", def:"Next-generation security - a recurring-revenue security metric (e.g. Palo Alto Networks)."}
+  {term:"13F", def:"The quarterly SEC filing in which large institutions disclose their holdings - the source for I."},
+  {term:"ETF", def:"Exchange-traded fund (e.g. SPY = S&P 500, QQQ = Nasdaq-100)."}
 ];
 (function(){
   const el = document.getElementById("glossary"); if(!el) return;

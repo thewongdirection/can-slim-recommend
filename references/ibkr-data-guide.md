@@ -1,8 +1,14 @@
-# IBKR data guide — how to compute each CAN SLIM letter
+# IBKR data guide — the fallback path (and the shared fundamental ladder)
 
-Read this before gathering data. It maps the methodology in `canslim-methodology.md` to
-concrete IBKR connector calls plus targeted web research, and gives the candidate-generation
-strategy. The IBKR connector here exposes **live price/volume, 52-week stats, and
+> **Read `tradingview-sector-sweep.md` first — it is the primary path.** This skill's main
+> workflow sweeps every sector's top performers with the **TradingView** connector and grades
+> them with `can-slim-grader`. This document is the **fallback** for when TradingView is not
+> connected or an endpoint is gated, plus the **fundamental source ladder** (Step 3) that both
+> paths share. The candidate-generation strategy below (IBKR themes + web leaders lists) is the
+> alternative to the TradingView sector sweep, not a second run alongside it.
+
+It maps the methodology in `canslim-methodology.md` to concrete IBKR connector calls plus
+targeted web research, and gives the candidate-generation strategy. The IBKR connector here exposes **live price/volume, 52-week stats, and
 sector/theme groupings — but NOT company fundamentals** (EPS growth, ROE, margins, annual
 earnings, institutional ownership). So:
 
