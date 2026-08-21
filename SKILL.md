@@ -169,9 +169,23 @@ grades and verdict. The dashboard derives both lists — **do not hand-build the
    by RS then proximity to the 52-week high. No sector cap applies, so this list may concentrate
    in one or two leading groups; the dashboard badges the overlap with list 1.
 
+**Both lists only ever hold names at or above the cut.** A name below 4.5 is not a recommendation
+just because everything else scored worse, so it never appears in either list — it stays in the
+"Every name graded" appendix with its scorecard.
+
+**When nothing clears the cut, list 2 renders as EMPTY with an enumerated "why"** rather than
+ranking the least-weak names. The dashboard derives those reasons from the grades themselves —
+the M grade and what it costs every row, which letters failed and how often across the graded
+pool, the best score actually reached and how far short it fell, how many names the hard filters
+removed before grading, and that every sector came back empty. Add anything run-specific the
+grades cannot show on their own (an earnings season mid-flight, a connector that was gated for
+one letter) via `CONFIG.noQualifierReasons` — the page appends it. Write `CONFIG.shortfall` too;
+it carries the same message on list 1.
+
 **Never lower the threshold to lengthen a list.** If only three names reach 4.5, the answer is
-three names plus `CONFIG.shortfall` saying what the rest failed on. Padding a screen with weak
-names is the exact failure the method exists to prevent.
+three names plus `CONFIG.shortfall` saying what the rest failed on. If none do, the answer is two
+empty lists and the reasons. Padding a screen with weak names is the exact failure the method
+exists to prevent — and so is quietly re-baselining the cut so that something shows up.
 
 **The grade is not the verdict.** A name can clear 4.5 on C, A and L and still be a WATCH because
 N fails. Give every pick a `verdict` (BUY-RANGE / WATCH / AVOID).
@@ -189,14 +203,16 @@ pivot).
 1. **Fill the report.** Copy `assets/dashboard_template.html` to
    `canslim-recommendations-<date>.html` and fill the `CONFIG` object — the *only* thing you
    edit; the page renders itself. Populate `market` (verdict + tone + **`mGrade`** + implication),
-   `sweep` (the funnel), `sectors[]` (the sector ranking from `sector_screen.py`), `picks[]`
-   (every graded name), `gradeThreshold` / `topCount`, and — always — **`dataProvenance`** and
-   **`sourceMap[]`**. Add `shortfall`, `watch[]`, `speculative[]`, `excluded[]`, `rationale[]`,
+   `sweep` (the funnel — its `graded` count must equal `picks.length`), `sectors[]` (the sector
+   ranking from `sector_screen.py`), `picks[]` (every graded name), `gradeThreshold` /
+   `topCount`, and — always — **`dataProvenance`** and **`sourceMap[]`**. Add `shortfall`,
+   `noQualifierReasons`, `watch[]`, `speculative[]`, `excluded[]`, `rationale[]`,
    `portfolioNote`, `disclaimer`, `sources[]` and `dataWarning` when they apply.
 2. **Check the self-audit banner.** The page audits its own CONFIG on render and prints a red
    "Report checks failed" banner for contradictions — an ungraded letter, a buy point with N
    failing, a pivot more than 10% below the 52-week high, a stop that isn't 7-8%, a verdict that
-   disagrees with the grade, missing provenance. **Never ship a report showing that banner** —
+   disagrees with the grade, a `sweep.graded` count that doesn't match `picks[]`, missing
+   provenance. **Never ship a report showing that banner** —
    fix the grade or fix the evidence, and do not delete the check. The PDF freezes whatever the
    page says, so verify before exporting.
 3. **Render the PDF — this is the default deliverable.**
@@ -339,6 +355,7 @@ apply the same rubric inline from the shared methodology."*)
   with `can-slim-grader`.
 - `assets/dashboard_template.html` — the report (full behavior in Step 7): a self-contained,
   **white-themed** (dark opt-in via `data-theme="dark"`), print-optimized, pure-ASCII dashboard
-  driven by a `CONFIG` object. Derives both recommendation lists from one `picks[]` array,
-  self-audits its own CONFIG, and renders the funnel tiles, leadership map, sector sweep table,
-  data-sources table and glossary automatically.
+  driven by a `CONFIG` object. Derives both recommendation lists from one `picks[]` array (both
+  gated at the grade cut, with an enumerated empty state when nothing clears it), self-audits its
+  own CONFIG, and renders the funnel tiles, leadership map, sector sweep table, data-sources
+  table and glossary automatically.

@@ -16,6 +16,13 @@ Two lists, both built from the same graded pool:
    the CAN SLIM scorecard, grouped by sector, best sector first.
 2. **Overall top 10** — the highest-graded names market-wide, no sector cap.
 
+Both lists hold **only** names at or above the cut. A name that scores 4.0 is not a
+recommendation because everything else scored worse — it stays in the appendix with its
+scorecard. When nothing clears 4.5, list 2 renders as **empty with an enumerated "why"**, derived
+from the grades themselves: the market grade and what it costs every row, which letters failed
+and how often, the best score actually reached, and how many names the hard filters removed
+before grading.
+
 Each name carries a letter-by-letter scorecard, a BUY-RANGE / WATCH / AVOID verdict, a rationale
 expressed **only** in CAN SLIM terms, a buy point where a valid pivot exists, and the 7-8%
 loss-cutting stop.
@@ -35,7 +42,8 @@ loss-cutting stop.
    scored pass (1.0) / partial (0.5) / fail (0), out of 7. Same rubric, so a 4.5 here means what a
    4.5 means there.
 5. **Two lists** — derived from the grades, never hand-built. If only three names reach 4.5, you
-   get three names and an explanation, not a padded list.
+   get three names and an explanation. If none do, you get two empty lists and the reasons —
+   never a padded list, and never a quietly lowered bar.
 
 ## Core concepts & critical ideas
 

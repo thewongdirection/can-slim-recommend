@@ -229,9 +229,28 @@ hand-build them:
    broken by RS then proximity to the 52-week high. **No sector cap applies here**, so this
    list can concentrate in one or two groups; the dashboard badges the overlap with list 1.
 
+**Both lists are gated at the cut.** A name below 4.5 is not a recommendation just because
+everything else scored worse, so it appears in neither list — it stays in the "Every name graded"
+appendix with its full scorecard, where a reader can see exactly how close it came.
+
+**When nothing clears the cut, list 2 renders EMPTY with an enumerated "why".** The dashboard
+derives those reasons from the graded pool itself, so they are evidence rather than narration:
+
+- the **M grade** and what it costs every row (a correction takes a full point off all seven);
+- **which letters failed and how often** across the graded names, worst first — "C: 5 FAIL and 2
+  PARTIAL of the 8 graded (none passed)";
+- the **best score actually reached** and how far short of the cut it fell;
+- how many of the pulled top performers **never reached grading**, dropped on the hard filters;
+- that **every sector** came back empty, so it is a market-wide read rather than one weak group.
+
+Add anything run-specific the grades cannot show on their own via `CONFIG.noQualifierReasons`
+(an earnings season mid-flight, a connector gated for one letter) — the page appends it. Set
+`CONFIG.shortfall` too; it carries the same message on list 1.
+
 **Never lower the threshold to lengthen a list.** If only three names reach 4.5, the answer is
-three names plus `CONFIG.shortfall` explaining what the rest failed on. Padding a screen with
-weak names is the exact failure the method exists to prevent.
+three names plus `CONFIG.shortfall` explaining what the rest failed on. If none do, the answer is
+two empty lists and the reasons. Padding a screen with weak names is the exact failure the method
+exists to prevent — and so is quietly re-baselining the cut until something shows up.
 
 The **grade is not the verdict.** A name can clear 4.5 on C, A and L and still be a WATCH
 because N fails. Fill `verdict` on every pick (BUY-RANGE / WATCH / AVOID) — the dashboard's

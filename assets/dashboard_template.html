@@ -16,7 +16,11 @@
          of 7), grouped by sector, best sector first.
       2. "Overall top N"  - the CONFIG.topCount (default 10) highest-graded names market-wide,
          regardless of sector. Overlap with list 1 is expected and is badged, not hidden.
-    Never hand-build those two lists - if a name is missing from one, its grade is the reason.
+    Both lists only hold names at/above the cut. When nothing clears it, list 2 renders as
+    EMPTY with an enumerated, evidence-based "why" (derived from the grades themselves) rather
+    than ranking the least-weak names - a sub-cut name is not a recommendation just because
+    others scored worse. Never hand-build those two lists - if a name is missing from one, its
+    grade is the reason.
 
   RULES THE TEMPLATE ENFORCES BY CONVENTION:
     - Every pick MUST carry a `reason` expressed ONLY in CAN SLIM terms (the seven letters,
@@ -181,6 +185,9 @@
   .callout.bad{background:var(--fail-bg);border-left-color:var(--fail);color:var(--fail)}
   .callout.bad b{color:var(--fail)}
   .callout.bad ul{margin:6px 0 0 18px;padding:0}
+  ol.reasons{margin:12px 0 14px;padding-left:26px;font-size:16px}
+  ol.reasons li{margin:0 0 8px;padding-left:4px}
+  ol.reasons li::marker{font-family:var(--mono);font-weight:700;color:var(--accent)}
   .provenance{font-family:var(--mono);font-size:14px;color:var(--muted);margin:10px 0 2px}
   .provenance b{color:var(--ink)}
   /* historical / point-in-time badge */
@@ -294,7 +301,7 @@
   <!-- ===================== LIST 2: overall top N by grade ===================== -->
   <div class="section-title" id="topTitle">Recommendation 2 &mdash; overall top performers</div>
   <div id="topIntro"></div>
-  <div class="tablewrap">
+  <div class="tablewrap" id="topTable">
     <table>
       <thead><tr id="topHead"></tr></thead>
       <tbody id="topRows"></tbody>
@@ -388,9 +395,19 @@ const CONFIG = {
   // page as an as-of reconstruction (renders an "AS OF ..." badge). Leave "" for a live run.
   asOf: "",
 
-  // --- the two recommendation lists are DERIVED from picks[] using these two knobs ---
+  // --- the two recommendation lists are DERIVED from picks[] using these knobs ---
   gradeThreshold: 4.5,   // list 1 = every graded name at/above this score out of 7
   topCount: 10,          // list 2 = the N highest-graded names market-wide
+  // Both lists only ever contain names at/above the cut, so list 2 goes EMPTY (with an
+  // enumerated why) rather than ranking sub-cut names. Set false only if you deliberately want
+  // list 2 to rank the top N by grade regardless - sub-cut rows are then badged "below cut".
+  topRequiresThreshold: true,
+  // Optional run-specific reasons appended to list 2's empty state. The page already derives
+  // the evidence-based ones (the M grade, which letters failed and how often, the best score
+  // reached, what the hard filters removed, how many sectors came back empty) - add only what
+  // the grades cannot show on their own, e.g. "Earnings season is mid-flight: 14 of the 38
+  // graded names report within 10 sessions, so C is provisional across the sweep."
+  noQualifierReasons: [],
 
   // One line naming which data sources ACTUALLY contributed to this run (renders as a
   // "Data sources used:" line under the market banner). Be specific about which letters came
@@ -545,7 +562,11 @@ const byGrade = (a,b)=> (b._total-a._total)
   || ((isNaN(a._off)?1e9:Math.abs(a._off))-(isNaN(b._off)?1e9:Math.abs(b._off)));
 
 const qualified = allPicks.filter(p=> p._total >= THRESHOLD).sort(byGrade);   // list 1 pool
-const topOverall = allPicks.slice().sort(byGrade).slice(0, TOPN);             // list 2
+// List 2 is the best of the SAME qualifying pool - a name below the cut is not a
+// recommendation just because others scored worse, so it never appears here. Set
+// CONFIG.topRequiresThreshold = false to get the old ungated "top N by grade" ranking instead.
+const TOP_GATED = CONFIG.topRequiresThreshold !== false;
+const topOverall = (TOP_GATED ? qualified : allPicks).slice().sort(byGrade).slice(0, TOPN);
 const topSet = new Set(topOverall.map(p=>p.symbol));
 const qualSet = new Set(qualified.map(p=>p.symbol));
 
@@ -716,27 +737,102 @@ if (!qualified.length && CONFIG.shortfall){
   $("shortfall").innerHTML = '<div class="callout">'+esc(CONFIG.shortfall)+'</div>';
 }
 
-// ---- LIST 2: overall top N by grade ----
+// ---- LIST 2: overall top N ----
+/* Every entry here is a recommendation, so the list is EMPTY when nothing clears the cut - and
+   an empty list has to say why. The reasons are derived from the graded pool itself (the market
+   grade, which letters actually failed, the best score reached, what the hard filters removed)
+   so they are evidence, not narration; CONFIG.noQualifierReasons is appended for anything
+   run-specific the grades cannot show on their own. */
+function noQualifierReasons(){
+  const R = [], sw = CONFIG.sweep||{}, mkt = CONFIG.market||{};
+  const NAMES = {C:"C - current quarterly earnings & sales", A:"A - annual earnings & ROE",
+                 N:"N - new highs from a sound base", S:"S - supply & demand / volume",
+                 L:"L - leader, not laggard", I:"I - institutional sponsorship"};
+
+  if (!allPicks.length){
+    R.push("Nothing reached the grading stage" +
+      (sw.screened ? " - of the " + sw.screened + " top performers pulled, none cleared the CAN SLIM hard filters" +
+        " (price floor, dollar volume, within 25% of the 52-week high, ahead of SPY, above the 200-day)." : "."));
+    return R.concat(CONFIG.noQualifierReasons||[]);
+  }
+
+  const mg = mGrade();
+  if (mg !== "pass"){
+    R.push("M - market direction is " + (mkt.verdict||"not a confirmed uptrend") + ", graded " +
+      (mg==="fail" ? "FAIL" : "PARTIAL") + ". M is one of the seven letters and is scored once for the whole " +
+      "market, so every name in the sweep starts " + (mg==="fail" ? "a full point" : "half a point") +
+      " short of 7" + (mkt.distributionDays ? " (" + mkt.distributionDays + ")" : "") +
+      ". The method does not buy breakouts into this.");
+  }
+
+  // which letters actually did the damage, worst first
+  const tally = {};
+  LETTERS6.forEach(k=>{ tally[k]={pass:0, partial:0, fail:0}; });
+  allPicks.forEach(p=> LETTERS6.forEach(k=>{ tally[k][gradeOf((p.scores||{})[k])]++; }));
+  LETTERS6.slice()
+    .sort((a,b)=> (tally[b].fail - tally[a].fail) || (tally[b].partial - tally[a].partial))
+    .filter(k=> tally[k].fail || tally[k].partial)
+    .slice(0,3)
+    .forEach(k=>{
+      const t = tally[k], bits = [];
+      if (t.fail) bits.push(t.fail + " FAIL");
+      if (t.partial) bits.push(t.partial + " PARTIAL");
+      R.push(NAMES[k] + " - " + bits.join(" and ") + " of the " + allPicks.length +
+        " names graded" + (t.pass ? " (only " + t.pass + " passed)" : " (none passed)") + ".");
+    });
+
+  const best = allPicks.slice().sort(byGrade)[0];
+  R.push("The strongest scorecard in the whole sweep was " + (best.symbol||"?") + " at " +
+    fmtScore(best._total) + "/7 - still " + fmtScore(THRESHOLD - best._total) +
+    " points short of the " + fmtScore(THRESHOLD) + " cut.");
+
+  if (sw.screened && sw.graded && sw.screened > sw.graded){
+    R.push((sw.screened - sw.graded) + " of the " + sw.screened + " top performers pulled never reached grading - " +
+      "dropped on the hard filters (below the price floor, too thin, more than 25% below the 52-week high, " +
+      "lagging SPY, or under the 200-day).");
+  }
+
+  const secs = (CONFIG.sectors||[]).length || sw.sectorsScanned;
+  if (secs) R.push("All " + secs + " sectors swept produced zero qualifiers - this is a market-wide read, not one weak group.");
+
+  return R.concat(CONFIG.noQualifierReasons||[]);
+}
+
+const topEmpty = !topOverall.length;
 $("topTitle").innerHTML = 'Recommendation 2 &mdash; overall top '+TOPN+
-  ' <span class="n">- highest CAN SLIM grades market-wide, any sector</span>';
-// This list is "the top N by grade", not "the top N that qualify" - so when none of them reach
-// the cut, say it outright rather than letting the ranking read as an endorsement.
-const topBest = topOverall.length ? topOverall[0]._total : 0;
-const topQual = topOverall.filter(p=>p._total>=THRESHOLD).length;
-$("topIntro").innerHTML = '<div class="callout">The '+TOPN+' highest-graded names from the whole sweep, '+
-  'ranked by grade, then relative strength, then proximity to the 52-week high. Sector caps do <b>not</b> apply here, '+
-  'so this list can concentrate in one or two leading groups - check it against list 1 before sizing anything.</div>'+
-  (topOverall.length && !topQual
-    ? '<div class="callout warn">&#9888; <b>None of these clear the '+fmtScore(THRESHOLD)+
-      '/7 cut</b> - the best grade in the whole sweep is '+fmtScore(topBest)+'/7. This is a ranking of what scored '+
-      'highest, not a list of names the method would buy. Treat it as a watchlist of the least-weak candidates.</div>'
-    : (topQual < topOverall.length
-      ? '<div class="callout warn">&#9888; '+(topOverall.length-topQual)+' of these '+topOverall.length+
-        ' are <b>below the '+fmtScore(THRESHOLD)+'/7 cut</b> (badged "below cut") - they rank here on grade alone '+
-        'and are not sector-leader recommendations.</div>'
-      : ''));
-makeTable("topHead","topRows", topOverall, {markQual:true,
-  emptyMsg:"No names were graded in this run."});
+  (topEmpty ? ' <span class="n">- <b>empty</b>: no name in the sweep qualifies</span>'
+            : ' <span class="n">- highest CAN SLIM grades market-wide, any sector</span>');
+
+if (topEmpty){
+  $("topTable").style.display = 'none';
+  $("topIntro").innerHTML =
+    '<div class="callout bad"><b>Empty - no recommendations.</b> '+
+    (allPicks.length
+      ? 'None of the '+allPicks.length+' graded names reached '+fmtScore(THRESHOLD)+' of 7, so there is nothing to rank here. '
+      : 'Nothing in the sweep was gradeable, so there is nothing to rank here. ')+
+    'Per the method that is the answer - the list is not backfilled with the least-weak names. '+
+    'The reasons, from the grades themselves:</div>'+
+    '<ol class="reasons">'+noQualifierReasons().map(r=>'<li>'+esc(r)+'</li>').join('')+'</ol>'+
+    '<div class="callout">What would refill this list: M returning to a confirmed uptrend on a follow-through day, '+
+    'and leaders finishing sound bases into new-high ground with the earnings letters intact. '+
+    'Until then the method\'s position is cash, not a lower bar. '+
+    'Every name that was graded is still listed in the appendix below, with its scorecard.</div>';
+} else {
+  $("topIntro").innerHTML = '<div class="callout">The '+topOverall.length+' highest-graded names from the whole sweep'+
+    (TOP_GATED ? ' that cleared '+fmtScore(THRESHOLD)+' of 7' : '')+
+    ', ranked by grade, then relative strength, then proximity to the 52-week high. Sector caps do <b>not</b> apply here, '+
+    'so this list can concentrate in one or two leading groups - check it against list 1 before sizing anything.</div>'+
+    (topOverall.length < TOPN
+      ? '<div class="callout warn">&#9888; Only '+topOverall.length+' of a possible '+TOPN+' qualified. '+
+        'The list is short because the market is, not because the sweep was narrow - it is not padded out to '+TOPN+'.</div>'
+      : '')+
+    (!TOP_GATED && topOverall.filter(p=>p._total<THRESHOLD).length
+      ? '<div class="callout warn">&#9888; '+topOverall.filter(p=>p._total<THRESHOLD).length+' of these are <b>below the '+
+        fmtScore(THRESHOLD)+'/7 cut</b> (badged "below cut") - they rank here on grade alone and are not recommendations.</div>'
+      : '');
+  makeTable("topHead","topRows", topOverall, {markQual:!TOP_GATED,
+    emptyMsg:"No names were graded in this run."});
+}
 
 // ---- sector sweep table ----
 (function(){
@@ -886,6 +982,10 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
   if (!CONFIG.dataProvenance) errs.push("CONFIG.dataProvenance is empty - the report must name the data sources it used.");
   if (!(CONFIG.sourceMap||[]).length) errs.push("CONFIG.sourceMap is empty - fill one row per class of figure (what, source, pulled).");
   if (!allPicks.length) errs.push("CONFIG.picks is empty - nothing was graded, so neither recommendation list can be built.");
+  const swGraded = Number((CONFIG.sweep||{}).graded);
+  if (isFinite(swGraded) && swGraded && swGraded !== allPicks.length)
+    errs.push("CONFIG.sweep.graded says "+swGraded+" names were graded but CONFIG.picks holds "+allPicks.length+
+      " - the funnel and the lists must count the same run.");
   allPicks.forEach(p=>{
     const sc = p.scores||{};
     LETTERS6.forEach(k=>{ if (sc[k]==null) errs.push(p.symbol+": letter "+k+" has no grade (defaults to fail)."); });
