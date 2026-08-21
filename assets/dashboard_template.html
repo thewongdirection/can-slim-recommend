@@ -48,7 +48,9 @@
 
   VISUALS (auto-rendered from CONFIG, no extra work):
     - Leadership map: a scatter of RS (x) vs % off 52-wk high (y, 0 at top) built from each
-      pick's `rs` and `offHigh` - leaders cluster top-right in the shaded "buyable" zone.
+      pick's `rs` and `offHigh` - leaders cluster top-right in the shaded zone. That zone marks
+      high RS on new-high ground only; it does NOT test for a pivot, so do not read a dot inside
+      it as buyable. Dots are filled for picks at or above the grade cut.
       Shows only when >=2 picks have numeric rs+offHigh; otherwise it hides itself.
     - Sector sweep table: rendered from `sectors[]` - the sector ranking behind the sweep.
 
@@ -281,7 +283,7 @@
   <div id="shortfall"></div>
 
   <div id="leadmapWrap" style="display:none">
-    <div class="section-title">Leadership map <span class="n">- relative strength vs. distance below the 52-week high; leaders cluster top-right</span></div>
+    <div class="section-title">Leadership map <span class="n">- relative strength vs. distance below the 52-week high; leaders cluster top-right. The shaded zone marks high RS on new-high ground only - it does <b>not</b> test for a pivot, so a name can sit inside it and still be extended well past any buy point. Dots are filled when the pick clears the grade cut.</span></div>
     <div class="leadmap" id="leadmap"></div>
   </div>
 
@@ -786,7 +788,18 @@ function noQualifierReasons(){
     fmtScore(best._total) + "/7 - still " + fmtScore(THRESHOLD - best._total) +
     " points short of the " + fmtScore(THRESHOLD) + " cut.");
 
-  if (sw.screened && sw.graded && sw.screened > sw.graded){
+  // Two different reasons a pulled name never got a grade - the hard filters and a grading cap.
+  // Never merge them: "dropped on the filters" said of a name that was simply not reached is false.
+  if (sw.screened && sw.triaged && sw.screened > sw.triaged){
+    R.push((sw.screened - sw.triaged) + " of the " + sw.screened + " top performers pulled were dropped by the " +
+      "hard filters before grading (below the price floor, too thin, more than 25% below the 52-week high, " +
+      "lagging SPY, or under the 200-day).");
+  }
+  if (sw.triaged && sw.graded && sw.triaged > sw.graded){
+    R.push((sw.triaged - sw.graded) + " further names cleared triage but were never graded in this run - they are " +
+      "absent from both lists because they were not reached, not because they failed. Coverage is " +
+      sw.graded + " of " + sw.triaged + ".");
+  } else if (!sw.triaged && sw.screened && sw.graded && sw.screened > sw.graded){
     R.push((sw.screened - sw.graded) + " of the " + sw.screened + " top performers pulled never reached grading - " +
       "dropped on the hard filters (below the price floor, too thin, more than 25% below the 52-week high, " +
       "lagging SPY, or under the 200-day).");
@@ -894,7 +907,7 @@ function buildLeadMap(){
   if (xMaxR>0){
     svg+='<rect class="lm-zone" x="'+xZero.toFixed(1)+'" y="'+mT+'" '+
          'width="'+(mL+pw-xZero).toFixed(1)+'" height="'+(yBuy-mT).toFixed(1)+'"/>'+
-         '<text class="lm-zone-lab" x="'+(mL+pw-4)+'" y="'+(mT+13)+'" text-anchor="end">buyable leaders</text>';
+         '<text class="lm-zone-lab" x="'+(mL+pw-4)+'" y="'+(mT+13)+'" text-anchor="end">high RS + near the 52-wk high</text>';
   }
   // axes
   svg+='<line class="lm-axis" x1="'+mL+'" y1="'+(mT+ph)+'" x2="'+(mL+pw)+'" y2="'+(mT+ph)+'"/>'+
