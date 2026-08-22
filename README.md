@@ -23,6 +23,11 @@ from the grades themselves: the market grade and what it costs every row, which 
 and how often, the best score actually reached, and how many names the hard filters removed
 before grading.
 
+A sector that produced no qualifier is not left blank — the report shows that sector's **top 5 in
+the screener's own ranking**, banner-marked as ungraded and explicitly not recommendations, with
+each row noting whether it even cleared the hard filters. Context to pick up the thread manually,
+never a substitute for a grade.
+
 Each name carries a letter-by-letter scorecard, a BUY-RANGE / WATCH / AVOID verdict, a rationale
 expressed **only** in CAN SLIM terms, a buy point where a valid pivot exists, and the 7-8%
 loss-cutting stop.

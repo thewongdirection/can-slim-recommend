@@ -52,6 +52,7 @@ import sys
 # CAN SLIM hard filters (methodology defaults; override on the command line).
 DEFAULTS = {
     "top": 10,              # members kept per sector - "the top 10 performers in each sector"
+    "fallback": 5,          # names surfaced for a sector that produced no qualifier
     "min_price": 15.0,      # no cheap stock; the method's price floor
     "min_dollar_vol": 20e6, # average daily $ volume - institutions need liquidity (S)
     "min_market_cap": 1e9,  # skip microcaps the method's sponsorship test can't clear
@@ -211,6 +212,18 @@ def run(blob, cfg):
             "mean_perf_pct": statistics.mean(perfs) if perfs else None,
             "breadth_pass_pct": (100.0 * len(keep) / len(members)) if members else None,
             "survivors": len(keep),
+            # The sector's top `fallback` names in the screener's own ranking, ready to paste into
+            # CONFIG.sectors[].top5. The dashboard shows these ONLY for a sector that produced no
+            # qualifier, so a reader still sees what led the group - clearly marked as an ungraded
+            # performance ranking, never as a recommendation.
+            "top5": [{
+                "symbol": m["symbol"], "ticker": m["ticker"], "company": m["company"],
+                "sectorRank": m["sector_rank"], "perf": m["window_perf_pct"],
+                "rs": m["rs_vs_bench_pts"], "offHigh": m["off_high_pct"],
+                "triage": m["triage"],
+                "note": ("cleared triage" if m["triage"] == "grade"
+                         else "dropped: " + "; ".join(m["drop_reasons"])),
+            } for m in members[:cfg["fallback"]]],
         })
 
     sectors.sort(key=lambda s: (s["median_perf_pct"] is None, -(s["median_perf_pct"] or 0)))
@@ -269,6 +282,14 @@ def to_markdown(res):
                 n(m["off_high_pct"], 1, "%"), n(m["vs_ema50_pct"], 1, "%"),
                 n(m["vs_ema200_pct"], 1, "%"), note))
         L.append("")
+    dry = [s for s in res["sectors"] if not s["survivors"]]
+    if dry:
+        L.append("## Sectors with no triage survivor - top %d by screener rank (ungraded)" % res["filters"]["fallback"])
+        L.append("")
+        for s in dry:
+            L.append("**%s** - %s" % (s["sector"], ", ".join(
+                "%s (%s)" % (t["ticker"], n(t["perf"], 0, "%")) for t in s["top5"])))
+        L.append("")
     L.append("## Grade queue (hand these to can-slim-grader, strongest RS first)")
     L.append("")
     L.append(", ".join(q["symbol"] for q in res["grade_queue"]) or "(none survived triage)")
@@ -281,6 +302,8 @@ def main():
     ap.add_argument("input", nargs="?", help="sweep JSON (default: stdin)")
     ap.add_argument("--top", type=int, default=DEFAULTS["top"],
                     help="members kept per sector (default %(default)s)")
+    ap.add_argument("--fallback", type=int, default=DEFAULTS["fallback"],
+                    help="names per sector emitted as the no-qualifier fallback (default %(default)s)")
     ap.add_argument("--min-price", type=float, default=DEFAULTS["min_price"])
     ap.add_argument("--min-dollar-vol", type=float, default=DEFAULTS["min_dollar_vol"])
     ap.add_argument("--min-market-cap", type=float, default=DEFAULTS["min_market_cap"])
@@ -293,9 +316,9 @@ def main():
 
     raw = open(a.input).read() if a.input else sys.stdin.read()
     blob = json.loads(raw)
-    cfg = {"top": a.top, "min_price": a.min_price, "min_dollar_vol": a.min_dollar_vol,
-           "min_market_cap": a.min_market_cap, "max_off_high": a.max_off_high,
-           "min_rs": a.min_rs}
+    cfg = {"top": a.top, "fallback": a.fallback, "min_price": a.min_price,
+           "min_dollar_vol": a.min_dollar_vol, "min_market_cap": a.min_market_cap,
+           "max_off_high": a.max_off_high, "min_rs": a.min_rs}
     res = run(blob, cfg)
     print(to_markdown(res) if a.md else json.dumps(res, indent=2))
 

@@ -177,6 +177,21 @@
   .card .co{margin-bottom:8px}
   .card p{margin:0;font-size:16px}
 
+  .fbsec{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 15px;margin-bottom:10px}
+  .fbsec h4{margin:0 0 8px;font-size:15px;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+  .fbsec h4 .rk{font-family:var(--mono);color:var(--muted);font-weight:400}
+  .fbsec h4 .meta{font-weight:400;font-size:13px;color:var(--muted)}
+  .fbrow{display:grid;grid-template-columns:22px 62px 1fr 74px 66px 74px;gap:6px 10px;align-items:baseline;
+    font-size:14px;padding:5px 0;border-top:1px solid var(--line)}
+  .fbrow:first-of-type{border-top:none}
+  .fbrow .n{font-family:var(--mono);color:var(--muted);font-size:12px}
+  .fbrow .sym{font-family:var(--mono);font-weight:700;font-size:15px}
+  .fbrow .co{color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fbrow .num{font-family:var(--mono);text-align:right;white-space:nowrap}
+  .fbrow .st{font-size:12px;color:var(--muted);white-space:nowrap}
+  .fbrow .st.ok{color:var(--pass)}
+  .fbnote{font-size:13px;color:var(--muted);margin-top:8px}
+  @media (max-width:640px){.fbrow{grid-template-columns:20px 58px 1fr;}.fbrow .num,.fbrow .st{display:none}}
   .tier{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 15px;margin-bottom:10px}
   .tier b{font-family:var(--mono)}
   .tier .why{color:var(--muted);font-size:15px}
@@ -319,6 +334,12 @@
         <tbody id="sweepRows"></tbody>
       </table>
     </div>
+  </div>
+
+  <div id="fallbackWrap" style="display:none">
+    <div class="section-title" id="fallbackTitle"></div>
+    <div id="fallbackIntro"></div>
+    <div id="fallback"></div>
   </div>
 
   <div id="allWrap" style="display:none">
@@ -479,9 +500,15 @@ const CONFIG = {
   excluded: [ /* { group, names, reason } */ ],
 
   // The sector sweep ranking behind the lists (straight from sector_screen.py output).
+  // `top5` is the sector's highest-ranked names in the SCREENER's own order - paste it from
+  // sector_screen.py's `top5`. It renders ONLY for a sector whose `qualified` count is 0, under a
+  // clearly-marked "ungraded, not recommendations" banner, so a sector that produced nothing is
+  // not a blank page. Omit it and such a sector simply shows nothing.
   sectors: [
     // { rank:1, sector:"Electronic Technology", medianPerf:"+34.2%", survivors:6, considered:10,
-    //   qualified:3, leaders:"ANET, AVGO, VRT", note:"Group leadership intact; three at new highs." }
+    //   qualified:3, leaders:"ANET, AVGO, VRT", note:"Group leadership intact; three at new highs.",
+    //   top5:[ {sectorRank:1, ticker:"BLZE", company:"Backblaze", perf:"+275.9%", rs:"+264",
+    //           triage:"drop", note:"dropped: 32% below the 52-week high"} ] }
   ],
 
   showAllGraded: true,   // render the "Every name graded" appendix table
@@ -869,6 +896,47 @@ if (topEmpty){
       '<td class="grp">'+esc(r.leaders||'')+'</td>'+
       '<td class="grp">'+esc(r.note||'')+'</td>'+
     '</tr>';
+  }).join('');
+})();
+
+/* ---- Sectors that produced no qualifier: show what actually led the group ----
+   A sector with nothing at or above the cut would otherwise be a blank in this report. These are
+   the screener's OWN top names for the ranking window - raw performance, NOT graded and NOT
+   recommendations. They are shown so the reader can see where the strength sat and pick up the
+   thread manually, and each row carries whether it even cleared the CAN SLIM hard filters. */
+(function(){
+  const rows = (CONFIG.sectors||[]).filter(r=>{
+    const q = (r.qualified!=null) ? Number(r.qualified) : qualified.filter(p=>sectorKey(p)===r.sector).length;
+    return !q && (r.top5||[]).length;
+  });
+  if (!rows.length) return;
+  $("fallbackWrap").style.display='block';
+  const n = rows[0].top5.length;
+  $("fallbackTitle").innerHTML = 'Sectors with no qualifier &mdash; top '+n+' by screener rank '+
+    '<span class="n">- '+rows.length+' of '+(CONFIG.sectors||[]).length+' sectors produced nothing at or above '+
+    fmtScore(THRESHOLD)+'/7</span>';
+  $("fallbackIntro").innerHTML = '<div class="callout warn">&#9888; <b>Ungraded - not recommendations.</b> '+
+    'These are simply the names the TradingView screener ranked highest in each sector over '+
+    esc((CONFIG.sweep||{}).windowLabel || 'the sweep window')+'. They carry <b>no CAN SLIM scorecard</b>, '+
+    'no verdict and no buy point, and several did not even clear the hard filters (each row says which). '+
+    'They are here so a sector that produced no qualifier is not a blank page - use them as a starting '+
+    'point to research, never as a substitute for a grade.</div>';
+  $("fallback").innerHTML = rows.map(r=>{
+    const body = r.top5.map((t,i)=>{
+      const ok = String(t.triage||'').toLowerCase()==='grade';
+      return '<div class="fbrow">'+
+        '<span class="n">'+(t.sectorRank||i+1)+'</span>'+
+        '<span class="sym">'+esc(t.ticker||t.symbol)+'</span>'+
+        '<span class="co" title="'+esc(t.company||'')+'">'+esc(t.company||'')+'</span>'+
+        '<span class="num">'+esc(t.perf)+'</span>'+
+        '<span class="num '+rsClass(t.rs)+'">'+esc(t.rs)+'</span>'+
+        '<span class="st'+(ok?' ok':'')+'" title="'+esc(t.note||'')+'">'+(ok?'cleared triage':'dropped')+'</span>'+
+      '</div>';
+    }).join('');
+    return '<div class="fbsec"><h4><span class="rk">#'+esc(r.rank)+'</span>'+esc(r.sector)+
+      '<span class="meta">median '+esc(r.medianPerf)+' &middot; '+esc(r.survivors)+' of '+esc(r.considered)+
+      ' cleared triage &middot; 0 graded &ge;'+fmtScore(THRESHOLD)+'</span></h4>'+body+
+      (r.note?'<div class="fbnote">'+esc(r.note)+'</div>':'')+'</div>';
   }).join('');
 })();
 

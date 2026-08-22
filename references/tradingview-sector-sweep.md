@@ -247,10 +247,18 @@ Add anything run-specific the grades cannot show on their own via `CONFIG.noQual
 (an earnings season mid-flight, a connector gated for one letter) — the page appends it. Set
 `CONFIG.shortfall` too; it carries the same message on list 1.
 
+**A sector with no qualifier still shows its top 5.** `sector_screen.py` emits a `top5` per sector
+(override the count with `--fallback N`); paste it into `CONFIG.sectors[].top5` for every sector.
+The dashboard renders it **only** where `qualified` is 0, under an amber "ungraded - not
+recommendations" banner, and marks each row with whether it cleared the hard filters. The point is
+that a reader can still see where the strength sat in a group that produced nothing — these names
+have no scorecard, no verdict and no buy point, and must never be presented as picks.
+
 **Never lower the threshold to lengthen a list.** If only three names reach 4.5, the answer is
 three names plus `CONFIG.shortfall` explaining what the rest failed on. If none do, the answer is
-two empty lists and the reasons. Padding a screen with weak names is the exact failure the method
-exists to prevent — and so is quietly re-baselining the cut until something shows up.
+two empty lists, the reasons, and the per-sector top 5 as context. Padding a screen with weak
+names is the exact failure the method exists to prevent — and so is quietly re-baselining the cut
+until something shows up.
 
 The **grade is not the verdict.** A name can clear 4.5 on C, A and L and still be a WATCH
 because N fails. Fill `verdict` on every pick (BUY-RANGE / WATCH / AVOID) — the dashboard's

@@ -173,6 +173,13 @@ grades and verdict. The dashboard derives both lists — **do not hand-build the
 just because everything else scored worse, so it never appears in either list — it stays in the
 "Every name graded" appendix with its scorecard.
 
+**A sector that produced no qualifier still shows its top 5.** Paste `sector_screen.py`'s `top5`
+into `CONFIG.sectors[].top5` for every sector; the dashboard renders it **only** where that
+sector's `qualified` count is 0, under an amber "ungraded - not recommendations" banner, with each
+row marked whether it even cleared the hard filters. This keeps a sector from being a blank line
+in the report without implying the names are picks - they carry no scorecard, no verdict and no
+buy point. Set `--fallback N` on the script to surface a different count.
+
 **When nothing clears the cut, list 2 renders as EMPTY with an enumerated "why"** rather than
 ranking the least-weak names. The dashboard derives those reasons from the grades themselves —
 the M grade and what it costs every row, which letters failed and how often across the graded
@@ -237,6 +244,8 @@ pivot).
   a shaded "buyable leaders" zone (RS ≥ 0, within ~8% of the high); names at or above the cut are
   drawn in the leader colour. Shows only when ≥ 2 picks have numeric `rs` + `offHigh`.
 - **Sector sweep table** — the sector ranking behind the lists, from `CONFIG.sectors`.
+- **No-qualifier fallback** — for each sector with zero qualifiers, its top 5 in the screener's own
+  ranking, from `CONFIG.sectors[].top5`, banner-marked as ungraded and not recommendations.
 - **Data sources & freshness table** — from `CONFIG.sourceMap`.
 - **Acronym glossary** — the standard CAN SLIM + finance terms; extend via `CONFIG.glossary`.
 
@@ -346,7 +355,7 @@ apply the same rubric inline from the shared methodology."*)
   fundamental source ladder.
 - `scripts/sector_screen.py` — turns the per-sector `run_screener` rows into % off the 52-week
   high, RS vs SPY, EMA position, dollar volume, the sector ranking and the triage verdict, and
-  emits the grade queue. Pure standard library.
+  emits the grade queue plus each sector's `top5` fallback. Pure standard library.
 - `scripts/relative_strength.py` — computes the RS proxy, % off 52-week high, base depth/length
   and breakout volume from OHLCV bars (TradingView / IBKR / Polygon shapes). Shared with
   `can-slim-grader`. Feed it the collected bars rather than eyeballing charts.
