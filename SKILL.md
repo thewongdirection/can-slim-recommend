@@ -197,6 +197,12 @@ exists to prevent — and so is quietly re-baselining the cut so that something 
 **The grade is not the verdict.** A name can clear 4.5 on C, A and L and still be a WATCH because
 N fails. Give every pick a `verdict` (BUY-RANGE / WATCH / AVOID).
 
+**Each pick's `reason` renders as a full-width row under its stats**, not as a column, so it has
+the whole table to wrap into — write it as prose of whatever length the evidence needs, and don't
+abbreviate to fit. There is no "% off 52-week high" column: state that distance in words inside
+the reason (the leadership map still plots it on its y-axis, and the self-audit still checks any
+pivot against `high52`).
+
 **The "why" must be expressed *only* in CAN SLIM concepts and rules** — the seven letters; bases /
 pivots / handles and the base type; relative strength; new highs off a sound base; volume,
 accumulation/distribution; leader-vs-laggard and group leadership; institutional sponsorship;
@@ -226,8 +232,8 @@ pivot).
    `python scripts/html_to_pdf.py canslim-recommendations-<date>.html`
    (headless Chrome/Chromium/Edge → Playwright → WeasyPrint → wkhtmltopdf; it prints the engine
    used). The template is **white/light-themed** and print-optimized, and declares
-   `@page{size:A4 landscape}` because the pick tables are ~10 columns wide — the script detects
-   that and passes it to the fallback engines too. Hand over the PDF. If no PDF engine is
+   `@page{size:A4 landscape}` because the pick tables are wide — the script detects that and
+   passes it to the fallback engines too. Hand over the PDF. If no PDF engine is
    available, say so and hand over the HTML instead — never block the run on the export.
 4. **HTML on request only.** Give the `.html` when the user asks for the HTML, an interactive
    version, sortable columns, or the clickable per-ticker report modal — those flatten in the PDF.

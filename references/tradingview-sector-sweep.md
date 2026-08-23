@@ -260,6 +260,10 @@ two empty lists, the reasons, and the per-sector top 5 as context. Padding a scr
 names is the exact failure the method exists to prevent — and so is quietly re-baselining the cut
 until something shows up.
 
+Write each `reason` as prose of whatever length the evidence needs — it renders as a full-width
+row under the pick, not as a column. There is no "% off 52-week high" column in the report, so
+state that distance in words in the reason itself.
+
 The **grade is not the verdict.** A name can clear 4.5 on C, A and L and still be a WATCH
 because N fails. Fill `verdict` on every pick (BUY-RANGE / WATCH / AVOID) — the dashboard's
 self-audit rejects a report where the two disagree, where a buy point sits more than 10% below

@@ -97,7 +97,8 @@ rules, and the classic mistakes to avoid.
 ## Output
 
 - **Default: a white-themed PDF report** (`scripts/html_to_pdf.py`), A4 landscape so the
-  ~10-column pick tables fit. It includes the market verdict, the screening funnel, a leadership
+  pick tables fit. Each pick's CAN SLIM rationale runs as a full-width row beneath its stats
+  rather than squeezed into a column, so it always has the whole table to wrap into. It includes the market verdict, the screening funnel, a leadership
   map (RS vs distance below the 52-week high), both recommendation lists, the sector sweep
   ranking, a **data sources & freshness table**, the portfolio/loss-cutting note, the disclaimer
   and an acronym glossary.
