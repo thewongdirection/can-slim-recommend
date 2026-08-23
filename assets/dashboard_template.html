@@ -1039,9 +1039,14 @@ function buildLeadMap(){
   // y gridlines at each tick
   const yTicks=[0, 4, 8, 12, 16, 20, 25, 30].filter(t=>t<=yMax);
   if (yTicks[yTicks.length-1] < yMax-2) yTicks.push(Math.round(yMax));
+  /* Keep every tick label's box - the x-axis ticks below are checked against these so the two
+     axes never clip each other in the bottom-left corner. ~6.7px/char at the 11px tick size. */
+  const TCH=6.7, tickBoxes=[];
   yTicks.forEach(t=>{
+    const ty=Y(t)+4, lab=t+'%', tw=lab.length*TCH;
+    tickBoxes.push({x1:mL-8-tw, x2:mL-8, y1:ty-9, y2:ty+3});
     svg+='<line class="lm-grid" x1="'+mL+'" y1="'+Y(t).toFixed(1)+'" x2="'+(mL+pw)+'" y2="'+Y(t).toFixed(1)+'"/>'+
-         '<text class="lm-tick" x="'+(mL-8)+'" y="'+(Y(t)+4).toFixed(1)+'" text-anchor="end">'+t+'%</text>';
+         '<text class="lm-tick" x="'+(mL-8)+'" y="'+ty.toFixed(1)+'" text-anchor="end">'+lab+'</text>';
   });
   // axes + reference lines
   svg+='<line class="lm-axis" x1="'+mL+'" y1="'+(mT+ph)+'" x2="'+(mL+pw)+'" y2="'+(mT+ph)+'"/>'+
@@ -1052,8 +1057,14 @@ function buildLeadMap(){
   svg+='<text class="lm-axlab" x="'+(mL+pw/2)+'" y="'+(H-10)+'" text-anchor="middle">Relative strength vs SPY over the window (points, sqrt scale) &#8594; stronger</text>'+
        '<text class="lm-axlab" transform="translate(15,'+(mT+ph/2)+') rotate(-90)" text-anchor="middle">&#8592; nearer the 52-wk high (% below)</text>';
   // x ticks: evenly spaced in transformed space, labelled with the actual (nonlinear) RS value
+  const xTickY=mT+ph+26;   // clear of the y-axis tick column; the skip below is a backstop
   for(let i=0;i<=4;i++){ const txv=txMin+i/4*(txMax-txMin), raw=Math.sign(txv)*txv*txv, px=mL+i/4*pw;
-    svg+='<text class="lm-tick" x="'+px.toFixed(1)+'" y="'+(mT+ph+20)+'" text-anchor="middle">'+(raw>0?'+':'')+Math.round(raw)+'</text>';
+    const lab=(raw>0?'+':'')+Math.round(raw), lw=lab.length*TCH;
+    const box={x1:px-lw/2-2, x2:px+lw/2+2, y1:xTickY-9, y2:xTickY+3};
+    // Drop a tick label rather than let it clip a y-axis label - the axis line still marks the spot.
+    if (tickBoxes.some(b=> !(box.x2<b.x1 || b.x2<box.x1 || box.y2<b.y1 || b.y2<box.y1))) continue;
+    tickBoxes.push(box);
+    svg+='<text class="lm-tick" x="'+px.toFixed(1)+'" y="'+xTickY+'" text-anchor="middle">'+lab+'</text>';
   }
 
   /* ---- label placement: try offsets around the dot, take the first that collides with nothing
