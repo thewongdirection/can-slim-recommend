@@ -271,23 +271,53 @@ the 52-week high, or where a stop is not 7-8% below the entry.
 
 ---
 
-## Step 6 — Fallbacks when TradingView is unavailable
+## Step 6 — Source priority: what is proven, and what to fall back to
 
-Gating is per-endpoint and often intermittent: keep whatever a source *does* answer and fill only
-the gaps from the next rung — never drop a letter because one call failed.
+**Reach for the proven path first.** The ladder below is ordered by what has actually returned
+usable data in live runs of this skill, not by what looks best on paper. Prefer a call that is
+known to work over one that merely should.
+
+### Tier 1 — verified working (use these by default)
+
+Every one of these returned complete, correct data in live end-to-end runs:
+
+| Need | Call | Notes from live use |
+|---|---|---|
+| Sector top performers | `run_screener` sorted on a `Perf.*` column | 20/20 sectors returned rows; the filter shape in Step 2 is the verified one |
+| Price, 52-wk range, EMA50/200, rel. volume, liquidity, industry, next earnings | `run_screener` columns | all populated; `EMA200` is `null` for names with under ~200 sessions (recent listings) - treat as unknown, don't infer |
+| Index bars for M | `get_ohlcv` (`1D`, ~28 bars is enough for a distribution-day count) | exact OHLCV; count 300 also fine but wasteful |
+| Benchmark window performance | `get_symbol_data("AMEX:SPY", ["Perf.6M", ...])` | one small call; cheaper than deriving it from bars |
+| C - quarterly revenue & EPS with YoY | `get_financial_history` `period="fq"` | per-period `yoy_pct` is the field to grade on |
+| A - annual EPS record | `get_financial_history` `period="fy"` | 4 fiscal years back |
+| A - ROE, margins, debt, TTM growth | `get_financials` | the fastest way to screen A before spending calls on history |
+| C cross-check - street EPS vs consensus | `get_earnings_history` | grade C on `eps_actual`, not the GAAP `eps` |
+| I - institutional sponsorship | web search for published 13F ownership summaries | returns the ownership **level** reliably; the quarter-over-quarter **trend** did not come back, so I stayed capped at PARTIAL |
+
+**A cheap ordering that saves calls:** run `get_financials` on every candidate first. ROE and TTM
+EPS growth alone disqualify most names on **A**, and a name that cannot pass A cannot reach the
+cut - so only pull `fq`/`fy` history for the ones still alive. In the live run this cut the
+fundamental calls roughly in half.
+
+### Tier 2 — unverified in this environment (fall back only, and say so)
+
+These have **not** been exercised by a live run of this skill. They may work; treat a first call
+as a test, and if it is gated or empty, drop to the next rung rather than retrying:
 
 | Need | Fallback order |
 |---|---|
-| Sector top performers | FMP `search-company-screener` (ranks by market cap, not performance — re-rank yourself from quotes) → IBKR `search_investment_topics` + `get_theme_details` → web new-high/leaders lists |
-| Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period: "TWO_YEARS"`, `step: "ONE_DAY"`) |
+| Sector top performers | FMP `search-company-screener` (ranks by market cap, not performance - re-rank yourself) → IBKR `search_investment_topics` + `get_theme_details` → web new-high/leaders lists |
+| Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period:"TWO_YEARS"`, `step:"ONE_DAY"`) |
 | Live last price | FMP `batch-quote` → IBKR `get_price_snapshot` |
 | C / A fundamentals | Daloopa → bigdata.com → LSEG → SEC EDGAR via `securities-filings-lookup` → FMP → web |
-| I sponsorship | FMP `form13F` → `securities-filings-lookup` → web |
+| I sponsorship trend | FMP `form13F` → `securities-filings-lookup` (compare two consecutive quarters) → web |
 
-Whatever you fall back to, name it in `CONFIG.dataProvenance`, add a `CONFIG.sourceMap` row for
-it, and set `CONFIG.dataWarning` to say what was gated or stale and what filled the gap.
+FMP in particular has been **plan-gated** in past checks of the sister skill (`statements` and
+`quote` returned ACCESS DENIED in an August-2026 check), which is why it sits low on every rung.
 
----
+Gating is per-endpoint and often intermittent: keep whatever a source *does* answer and fill only
+the gaps from the next rung - never drop a letter because one call failed. Whatever you fall back
+to, name it in `CONFIG.dataProvenance`, add a `CONFIG.sourceMap` row for it, and set
+`CONFIG.dataWarning` to say what was gated or stale and what filled the gap.
 
 ## Guardrails
 

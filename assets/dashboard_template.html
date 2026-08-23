@@ -53,8 +53,9 @@
     - Leadership map: a scatter of RS (x) vs % off 52-wk high (y, 0 at top) built from each
       pick's `rs` and `offHigh` - leaders cluster top-right in the shaded zone. That zone marks
       high RS on new-high ground only; it does NOT test for a pivot, so do not read a dot inside
-      it as buyable. Dots are filled for picks at or above the grade cut.
-      Shows only when >=2 picks have numeric rs+offHigh; otherwise it hides itself.
+      it as buyable. Marks are coloured AND shaped by `verdict` (BUY-RANGE / WATCH / AVOID) with
+      a legend; ticker labels are placed by a collision solver, so they never overlap. Shows only
+      when >=2 picks have numeric rs+offHigh; otherwise it hides itself.
     - Sector sweep table: rendered from `sectors[]` - the sector ranking behind the sweep.
 
   PER-TICKER DEEP DIVE: give a pick a `reviewUrl` (path/URL to that symbol's can-slim-grader
@@ -242,25 +243,39 @@
   .modal iframe{border:0;width:100%;height:100%;background:#fff}
 
   /* leadership map (RS vs % off 52-wk high scatter) */
-  .leadmap{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 12px 8px}
+  .leadmap{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 12px 6px}
   .leadmap svg{display:block;width:100%;height:auto}
   .lm-axis{stroke:var(--line);stroke-width:1}
-  .lm-grid{stroke:var(--line);stroke-width:1;stroke-dasharray:2 4;opacity:.6}
-  .lm-ref{stroke:var(--muted);stroke-width:1;stroke-dasharray:4 4;opacity:.7}
-  .lm-zone{fill:var(--accent-soft);opacity:.75}
-  .lm-zone-lab{fill:var(--accent);font-size:12px;font-family:var(--mono);opacity:.85}
-  .lm-axlab{fill:var(--muted);font-size:13px;font-family:var(--sans)}
+  .lm-grid{stroke:var(--line);stroke-width:1;opacity:.55}
+  .lm-ref{stroke:var(--muted);stroke-width:1;stroke-dasharray:4 4;opacity:.65}
+  .lm-zone{fill:var(--accent-soft);opacity:.7}
+  .lm-zone-lab{fill:var(--accent);font-size:11.5px;font-family:var(--mono);opacity:.9}
+  .lm-axlab{fill:var(--muted);font-size:12.5px;font-family:var(--sans)}
   .lm-tick{fill:var(--muted);font-size:11px;font-family:var(--mono)}
-  .lm-dot{fill:var(--accent);stroke:var(--panel);stroke-width:1.5}
-  .lm-dot.lead{fill:var(--pass)}
-  .lm-lab{fill:var(--ink);font-size:12px;font-family:var(--mono);font-weight:700}
+  /* one hue per VERDICT, not per stock - a scatter can only carry a few all-pairs-safe hues.
+     Shape repeats the split so the encoding survives colourblindness and greyscale print. */
+  .lm-mark{stroke:var(--panel);stroke-width:2}          /* 2px surface ring on overlap */
+  .v-buy   .lm-mark{fill:var(--pass)}
+  .v-watch .lm-mark{fill:var(--partial)}
+  .v-avoid .lm-mark{fill:var(--fail)}
+  .v-none  .lm-mark{fill:var(--muted)}
+  .lm-leader{stroke:var(--muted);stroke-width:1;opacity:.55}
+  .lm-lab{fill:var(--ink);font-size:11.5px;font-family:var(--mono);font-weight:700}
+  .lm-legend{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;padding:10px 4px 6px;
+    font-size:13px;color:var(--muted)}
+  .lm-key{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12.5px;
+    color:var(--ink)}
+  .lm-legend .hint{font-family:var(--sans);font-style:italic}
+  .lm-zonekey{color:var(--muted)}
+  .lm-swatch{width:16px;height:12px;border-radius:3px;background:var(--accent-soft);
+    border:1px solid var(--accent);opacity:.9;display:inline-block}
 
   /* the PDF is the default deliverable - keep the white design and the colour chips exact */
   html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   @media print{
     html,body{background:var(--bg)}
     .wrap{max-width:none;padding:12mm}
-    .card,.tier,.market,.leadmap,.funnel{break-inside:avoid}
+    .card,.tier,.market,.leadmap,.funnel,#leadmapWrap{break-inside:avoid}
     tbody tr{break-inside:avoid}
     tr.pickrow{break-after:avoid}          /* keep a pick with its CAN SLIM reason */
     tr.grouphead{break-after:avoid}
@@ -304,8 +319,9 @@
   <div id="shortfall"></div>
 
   <div id="leadmapWrap" style="display:none">
-    <div class="section-title">Leadership map <span class="n">- relative strength vs. distance below the 52-week high; leaders cluster top-right. The shaded zone marks high RS on new-high ground only - it does <b>not</b> test for a pivot, so a name can sit inside it and still be extended well past any buy point. Dots are filled when the pick clears the grade cut.</span></div>
+    <div class="section-title">Leadership map <span class="n">- relative strength vs. distance below the 52-week high; leaders cluster top-right. Each mark is one graded name, coloured <b>and</b> shaped by its verdict. The shaded zone marks high RS on new-high ground only - it does <b>not</b> test for a pivot, so a name can sit inside it and still be extended well past any buy point.</span></div>
     <div class="leadmap" id="leadmap"></div>
+    <div class="lm-legend" id="leadmapLegend"></div>
   </div>
 
   <!-- ===================== LIST 1: sector leaders at/above the grade cut ===================== -->
@@ -541,7 +557,8 @@ const num = (s)=>{ if(s==null) return NaN; const m=String(s).replace(/,/g,'').ma
    4.5 there mean the same thing. */
 const WEIGHT = {pass:1, partial:0.5, fail:0};
 const LETTERS6 = ["C","A","N","S","L","I"];
-const gradeOf = (v)=>{ const g=String(v||"").trim().toLowerCase(); return WEIGHT.hasOwnProperty(g)?g:"fail"; };
+const isGrade = (v)=> WEIGHT.hasOwnProperty(String(v==null?"":v).trim().toLowerCase());
+const gradeOf = (v)=>{ const g=String(v==null?"":v).trim().toLowerCase(); return WEIGHT.hasOwnProperty(g)?g:"fail"; };
 const mGrade = ()=> gradeOf((CONFIG.market||{}).mGrade);
 const scoreTotal = (p)=> LETTERS6.reduce((n,k)=> n+WEIGHT[gradeOf((p.scores||{})[k])], 0) + WEIGHT[mGrade()];
 const fmtScore = (v)=> (Math.round(v*2)/2).toFixed(1).replace(/\.0$/,"");
@@ -683,7 +700,7 @@ function rowHtml(p, i, opts){
   if (opts.markQual) badge = qualSet.has(p.symbol)
     ? '<span class="badge" title="also a sector leader at or above the grade cut">&ge;'+fmtScore(THRESHOLD)+'</span>'
     : '<span class="badge warn" title="in the overall top '+TOPN+' by grade but below the '+fmtScore(THRESHOLD)+' cut">below cut</span>';
-  const sect = sectorKey(p) + (p.sectorRank? ' <span class="co">#'+esc(p.sectorRank)+' in sector</span>' : '');
+  const sect = esc(sectorKey(p)) + (p.sectorRank? ' <span class="co">#'+esc(p.sectorRank)+' in sector</span>' : '');
   return '<tr class="pickrow">'+
     '<td class="rk">'+(i+1)+'</td>'+
     '<td class="stock">'+tk+badge+'<div class="co">'+esc(p.company)+'</div></td>'+
@@ -839,7 +856,9 @@ function noQualifierReasons(){
       "lagging SPY, or under the 200-day).");
   }
 
-  const secs = (CONFIG.sectors||[]).length || sw.sectorsScanned;
+  // Prefer the funnel's own count: CONFIG.sectors may list only the sectors worth tabulating,
+  // and disagreeing with the "Sectors swept" tile directly above is worse than saying nothing.
+  const secs = Number(sw.sectorsScanned) || (CONFIG.sectors||[]).length;
   if (secs) R.push("All " + secs + " sectors swept produced zero qualifiers - this is a market-wide read, not one weak group.");
 
   return R.concat(CONFIG.noQualifierReasons||[]);
@@ -918,7 +937,9 @@ if (topEmpty){
   });
   if (!rows.length) return;
   $("fallbackWrap").style.display='block';
-  const n = rows[0].top5.length;
+  const lens = rows.map(r=>r.top5.length);
+  const lo = Math.min(...lens), hi = Math.max(...lens);
+  const n = (lo===hi) ? String(hi) : (lo+"-"+hi);   // sectors can return fewer than the cap
   $("fallbackTitle").innerHTML = 'Sectors with no qualifier &mdash; top '+n+' by screener rank '+
     '<span class="n">- '+rows.length+' of '+(CONFIG.sectors||[]).length+' sectors produced nothing at or above '+
     fmtScore(THRESHOLD)+'/7</span>';
@@ -956,61 +977,136 @@ if (CONFIG.showAllGraded !== false && allPicks.length){
 }
 
 // ---- leadership map: RS (x) vs % off 52-wk high (y, 0 at top) ----
+/* Colour encodes the VERDICT (three groups), not one hue per stock: a scatter cannot carry eight
+   arbitrary hues and stay colourblind-safe, and verdict is the split a reader actually needs.
+   Marker SHAPE repeats the same split as secondary encoding, the ticker beside each dot carries
+   identity, and labels wear the ink token rather than the series colour. Labels are placed by a
+   collision solver - candidate offsets around the dot, first non-overlapping in-bounds slot wins,
+   with a leader line when a label had to move off its dot. */
+const VERDICT_STYLE = {
+  buy:   {cls:"v-buy",   shape:"circle",   label:"BUY-RANGE"},
+  watch: {cls:"v-watch", shape:"diamond",  label:"WATCH"},
+  avoid: {cls:"v-avoid", shape:"triangle", label:"AVOID"},
+  none:  {cls:"v-none",  shape:"circle",   label:"ungraded verdict"}
+};
+function verdictKey(p){
+  const v = String(p.verdict||"").toUpperCase();
+  if (v.indexOf("BUY")===0) return "buy";
+  if (v.indexOf("AVOID")===0) return "avoid";
+  if (v) return "watch";
+  return "none";
+}
+function markPath(shape, cxIn, cyIn, r){
+  // Coerce first: callers pass toFixed() strings, and "539.4"+6.3 concatenates into junk path data.
+  const cx=Number(cxIn), cy=Number(cyIn), n=(v)=>v.toFixed(2);
+  if (shape==="diamond")
+    return '<path class="lm-mark" d="M'+n(cx)+' '+n(cy-r*1.15)+'L'+n(cx+r*1.15)+' '+n(cy)+
+           'L'+n(cx)+' '+n(cy+r*1.15)+'L'+n(cx-r*1.15)+' '+n(cy)+'Z"/>';
+  if (shape==="triangle")
+    return '<path class="lm-mark" d="M'+n(cx)+' '+n(cy-r*1.25)+'L'+n(cx+r*1.2)+' '+n(cy+r*0.9)+
+           'L'+n(cx-r*1.2)+' '+n(cy+r*0.9)+'Z"/>';
+  return '<circle class="lm-mark" cx="'+n(cx)+'" cy="'+n(cy)+'" r="'+r+'"/>';
+}
+
 function buildLeadMap(){
-  const pts = allPicks.map(p=>({sym:p.symbol, x:p._rs, y:Math.abs(p._off), lead:p._total>=THRESHOLD}))
+  const pts = allPicks.map(p=>({sym:p.symbol, x:p._rs, y:Math.abs(p._off), vk:verdictKey(p)}))
                       .filter(d=> isFinite(d.x) && isFinite(d.y));
   if (pts.length < 2) return;   // nothing meaningful to plot
   $("leadmapWrap").style.display='block';
 
-  const W=720, H=320, mL=46, mR=18, mT=18, mB=42;
+  const W=760, H=400, mL=54, mR=22, mT=24, mB=54;
   const pw=W-mL-mR, ph=H-mT-mB;
   // signed-sqrt x-scale so one extreme-RS outlier doesn't compress the rest of the field
   const tx=(v)=> Math.sign(v)*Math.sqrt(Math.abs(v));
-  let xsR=pts.map(d=>d.x), ys=pts.map(d=>d.y);
+  const xsR=pts.map(d=>d.x), ys=pts.map(d=>d.y);
   let xMinR=Math.min(...xsR,0), xMaxR=Math.max(...xsR,0);
   let yMin=0, yMax=Math.max(...ys, 8);
-  const xPadR=(xMaxR-xMinR||1)*0.08, ypad=(yMax-yMin||1)*0.08;
+  const xPadR=(xMaxR-xMinR||1)*0.10, ypad=(yMax-yMin||1)*0.12;
   xMinR-=xPadR; xMaxR+=xPadR; yMax+=ypad;              // yMin stays 0 (at the high)
   const txMin=tx(xMinR), txMax=tx(xMaxR);
   const X=(v)=> mL + (tx(v)-txMin)/((txMax-txMin)||1)*pw;
   const Y=(v)=> mT + (v-yMin)/((yMax-yMin)||1)*ph;      // 0% -> top
 
-  const buyBand=8;                                     // within 8% of high = buyable zone
+  const buyBand=8;                                     // within 8% of high = new-high ground
   const yBuy=Y(Math.min(buyBand,yMax)), xZero=X(Math.max(0,xMinR));
-  let svg='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="RS vs percent off 52-week high scatter">';
-  // buyable-leaders zone: RS>=0 and within buy band of the high (top-right)
+  let svg='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Relative strength versus percent below the 52-week high, one mark per graded name, coloured by verdict">';
+
+  // zone: high RS on new-high ground (NOT a pivot test - see the caption)
   if (xMaxR>0){
     svg+='<rect class="lm-zone" x="'+xZero.toFixed(1)+'" y="'+mT+'" '+
-         'width="'+(mL+pw-xZero).toFixed(1)+'" height="'+(yBuy-mT).toFixed(1)+'"/>'+
-         '<text class="lm-zone-lab" x="'+(mL+pw-4)+'" y="'+(mT+13)+'" text-anchor="end">high RS + near the 52-wk high</text>';
+         'width="'+(mL+pw-xZero).toFixed(1)+'" height="'+(yBuy-mT).toFixed(1)+'"/>';
   }
-  // axes
+  // y gridlines at each tick
+  const yTicks=[0, 4, 8, 12, 16, 20, 25, 30].filter(t=>t<=yMax);
+  if (yTicks[yTicks.length-1] < yMax-2) yTicks.push(Math.round(yMax));
+  yTicks.forEach(t=>{
+    svg+='<line class="lm-grid" x1="'+mL+'" y1="'+Y(t).toFixed(1)+'" x2="'+(mL+pw)+'" y2="'+Y(t).toFixed(1)+'"/>'+
+         '<text class="lm-tick" x="'+(mL-8)+'" y="'+(Y(t)+4).toFixed(1)+'" text-anchor="end">'+t+'%</text>';
+  });
+  // axes + reference lines
   svg+='<line class="lm-axis" x1="'+mL+'" y1="'+(mT+ph)+'" x2="'+(mL+pw)+'" y2="'+(mT+ph)+'"/>'+
        '<line class="lm-axis" x1="'+mL+'" y1="'+mT+'" x2="'+mL+'" y2="'+(mT+ph)+'"/>';
-  // reference lines: RS=0 (vs SPY) and the buy band
   if (xMinR<0 && xMaxR>0) svg+='<line class="lm-ref" x1="'+X(0).toFixed(1)+'" y1="'+mT+'" x2="'+X(0).toFixed(1)+'" y2="'+(mT+ph)+'"/>';
   if (buyBand<yMax) svg+='<line class="lm-ref" x1="'+mL+'" y1="'+yBuy.toFixed(1)+'" x2="'+(mL+pw)+'" y2="'+yBuy.toFixed(1)+'"/>';
-  // axis labels
-  svg+='<text class="lm-axlab" x="'+(mL+pw/2)+'" y="'+(H-8)+'" text-anchor="middle">Relative strength (window performance vs SPY, proxy; sqrt scale) &#8594; stronger</text>'+
-       '<text class="lm-axlab" transform="translate(13,'+(mT+ph/2)+') rotate(-90)" text-anchor="middle">&#8592; nearer 52-wk high (% below)</text>';
-  // y ticks (0 at top, yMax at bottom)
-  [0, buyBand, Math.round(yMax)].forEach(t=>{ if(t<=yMax){
-    svg+='<text class="lm-tick" x="'+(mL-6)+'" y="'+(Y(t)+3).toFixed(1)+'" text-anchor="end">'+t+'%</text>';
-  }});
-  // x ticks: evenly spaced in transformed space, labeled with the actual (nonlinear) RS value
+  // axis titles
+  svg+='<text class="lm-axlab" x="'+(mL+pw/2)+'" y="'+(H-10)+'" text-anchor="middle">Relative strength vs SPY over the window (points, sqrt scale) &#8594; stronger</text>'+
+       '<text class="lm-axlab" transform="translate(15,'+(mT+ph/2)+') rotate(-90)" text-anchor="middle">&#8592; nearer the 52-wk high (% below)</text>';
+  // x ticks: evenly spaced in transformed space, labelled with the actual (nonlinear) RS value
   for(let i=0;i<=4;i++){ const txv=txMin+i/4*(txMax-txMin), raw=Math.sign(txv)*txv*txv, px=mL+i/4*pw;
-    svg+='<text class="lm-tick" x="'+px.toFixed(1)+'" y="'+(mT+ph+15)+'" text-anchor="middle">'+(raw>0?'+':'')+Math.round(raw)+'</text>';
+    svg+='<text class="lm-tick" x="'+px.toFixed(1)+'" y="'+(mT+ph+20)+'" text-anchor="middle">'+(raw>0?'+':'')+Math.round(raw)+'</text>';
   }
-  // dots + labels (flip the label to the left of dots near the right edge so it isn't clipped)
-  pts.forEach(d=>{
-    const cx=X(d.x), cy=Y(d.y);
-    const flip = cx > mL+pw-46;
-    const lx = (flip ? cx-7 : cx+7).toFixed(1);
-    svg+='<circle class="lm-dot'+(d.lead?' lead':'')+'" cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="4.5"/>'+
-         '<text class="lm-lab" text-anchor="'+(flip?'end':'start')+'" x="'+lx+'" y="'+(cy+3.5).toFixed(1)+'">'+esc(d.sym)+'</text>';
+
+  /* ---- label placement: try offsets around the dot, take the first that collides with nothing
+     already placed and stays inside the plot. Falls back to the least-bad slot, and draws a
+     leader line whenever the label is not in its default position beside the dot. ---- */
+  const R=5.5, CH=6.7, LH=13, PAD=2.5;                 // mono ~6.7px/char at 11.5px
+  const marks=[], labels=[];
+  const OFFS=[[10,4],[-10,4],[10,-8],[-10,-8],[10,16],[-10,16],[0,-14],[0,21],[18,11],[-18,11],[0,-23],[0,30]];
+  const hit=(a,b)=> !(a.x2<b.x1 || b.x2<a.x1 || a.y2<b.y1 || b.y2<a.y1);
+  const inPlot=(b)=> b.x1>=mL-2 && b.x2<=mL+pw+2 && b.y1>=mT-2 && b.y2<=mT+ph+2;
+
+  const nodes = pts.map(d=>({d, cx:X(d.x), cy:Y(d.y)}))
+                   .sort((a,b)=> a.cy-b.cy || a.cx-b.cx);   // top-down keeps placement stable
+  /* EVERY mark is an obstacle from the start - reserving a mark only once its own label is
+     placed lets an early label land on a dot that is drawn later. `own` is skipped so a label
+     may still sit beside its own mark. */
+  const markBoxes = nodes.map(({cx,cy})=>({x1:cx-R-1.5, x2:cx+R+1.5, y1:cy-R-1.5, y2:cy+R+1.5}));
+  const placed = [];
+
+  nodes.forEach(({d,cx,cy}, idx)=>{
+    const w=d.sym.length*CH, best={score:Infinity};
+    const obstacles = placed.concat(markBoxes.filter((_,i)=> i!==idx));
+    for (let i=0;i<OFFS.length;i++){
+      const [ox,oy]=OFFS[i], anchor = ox<0 ? "end" : (ox===0 ? "middle" : "start");
+      const lx = cx+ox, ly = cy+oy;
+      const x1 = anchor==="end" ? lx-w : (anchor==="middle" ? lx-w/2 : lx);
+      const box = {x1:x1-PAD, x2:x1+w+PAD, y1:ly-LH+3-PAD, y2:ly+3+PAD};
+      const clash = obstacles.filter(b=>hit(box,b)).length;
+      const score = clash*100 + (inPlot(box)?0:50) + i;   // prefer earlier offsets
+      if (score < best.score) Object.assign(best,{score, box, lx, ly, anchor, moved:i>1});
+      if (score===i) break;                              // clean + in-bounds + first choice
+    }
+    placed.push(best.box);
+    const st = VERDICT_STYLE[d.vk];
+    marks.push('<g class="'+st.cls+'">'+markPath(st.shape, cx.toFixed(1), cy.toFixed(1), R)+'</g>');
+    if (best.moved)
+      labels.push('<line class="lm-leader" x1="'+cx.toFixed(1)+'" y1="'+cy.toFixed(1)+
+                  '" x2="'+best.lx.toFixed(1)+'" y2="'+(best.ly-3).toFixed(1)+'"/>');
+    labels.push('<text class="lm-lab" text-anchor="'+best.anchor+'" x="'+best.lx.toFixed(1)+
+                '" y="'+best.ly.toFixed(1)+'">'+esc(d.sym)+'</text>');
   });
-  svg+='</svg>';
+  svg += labels.join('') + marks.join('') + '</svg>';   // marks over leader lines
   $("leadmap").innerHTML=svg;
+
+  // legend - identity is never colour alone (shape + text label + the ticker beside each mark)
+  const present=["buy","watch","avoid","none"].filter(k=>pts.some(d=>d.vk===k));
+  $("leadmapLegend").innerHTML = present.map(k=>{
+    const st=VERDICT_STYLE[k];
+    return '<span class="lm-key"><svg class="'+st.cls+'" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">'+
+      markPath(st.shape, 8, 8, 5)+'</svg>'+esc(st.label)+' ('+pts.filter(d=>d.vk===k).length+')</span>';
+  }).join('') +
+    '<span class="lm-key lm-zonekey"><span class="lm-swatch"></span>shaded: RS &gt; 0 and within '+buyBand+'% of the 52-wk high</span>' +
+    '<span class="hint">Marks are coloured and shaped by verdict; the ticker beside each mark gives identity.</span>';
 }
 buildLeadMap();
 
@@ -1076,7 +1172,14 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
       " - the funnel and the lists must count the same run.");
   allPicks.forEach(p=>{
     const sc = p.scores||{};
-    LETTERS6.forEach(k=>{ if (sc[k]==null) errs.push(p.symbol+": letter "+k+" has no grade (defaults to fail)."); });
+    LETTERS6.forEach(k=>{
+      if (sc[k]==null) errs.push(p.symbol+": letter "+k+" has no grade (defaults to fail).");
+      else if (!isGrade(sc[k])) errs.push(p.symbol+": letter "+k+' is "'+sc[k]+
+        '", which is not pass/partial/fail - it scores as FAIL. Use the pass/partial/fail scale (an integer from the old 0-10 rubric will silently zero the letter).');
+    });
+    if (!isGrade((CONFIG.market||{}).mGrade))
+      errs.push('CONFIG.market.mGrade is "'+((CONFIG.market||{}).mGrade)+
+        '", not pass/partial/fail - M scores as FAIL for every row.');
     const bp = num(p.buyPoint), hi = num(p.high52), st = num(p.stop);
     if (isFinite(bp) && gradeOf(sc.N)==="fail")
       errs.push(p.symbol+": a buy point is named but N is FAIL - the method has no entry without a sound base at new-high ground.");

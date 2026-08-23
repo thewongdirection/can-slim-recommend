@@ -277,36 +277,53 @@ A candidate should satisfy as many as possible:
 22. Watch for buybacks (5–10%+) and new management.
 23. Don't buy at the bottom / on the way down / average down.
 
-## The 0-10 grading rubric (how to score each letter)
-Grade each letter as an integer **0-10** (10 = textbook-perfect, 0 = absent / red flag). Be honest
-and granular. The dashboard total /70 = C+A+N+S+L+I + M. Anchors:
+## The pass / partial / fail grading rubric (how to score each letter)
+Grade every letter **pass (1.0) / partial (0.5) / fail (0)**. Seven letters, so a scorecard totals
+out of **7**. Both `can-slim-recommend` and `can-slim-grader` use this one scale, which is what
+makes a score portable between a screen and a single-ticker report.
 
-- **C — current quarterly EPS & sales:** 10 = EPS +100%+ and accelerating with sales +25%+; 8 =
-  EPS +40-100% accelerating; 6 = +25-40% steady; 4 = +10-25% or decelerating; 2 = flat/slowing;
-  0 = negative / none. Dock 2+ if sales lag EPS (buyback-driven) or margins fall.
-- **A — annual earnings & ROE:** 10 = 3 yrs EPS +25%+ each and ROE 25%+; 8 = solid multi-yr
-  growth, ROE 17%+; 6 = growing but ROE < 17% or one soft year; 4 = erratic; 2 = one good year on
-  a weak base; 0 = declining. Newly public (< 2 yrs) with strong quarters caps at ~7.
-- **N — new + new high off a base:** 10 = major new driver AND breaking out of a sound base at a
-  proper pivot, <=5% extended; 8 = at/near a new high off a good base; 6 = 5-10% off / slightly
-  extended; 4 = 10-15% off / base repairing; 2 = wide-loose or 15-25% off; 0 = no new driver or
-  > 25% off / below base.
-- **S — supply & demand:** 10 = breakout volume >= +50%, tight float, active buyback; 8 = above the
-  50/200-day with accumulation; 6 = above the MAs on average volume; 4 = just above/below the
-  50-day, thin confirmation; 2 = heavy distribution/dilution; 0 = below the 200-day / illiquid.
-- **L — leader not laggard (map RS):** 10 = RS >= 95 (proxy: far outperforming SPY, #1 in group);
-  8 = RS ~85-95; 6 = RS ~75-85; 4 = roughly in line with SPY; 2 = lagging; 0 = clear laggard /
-  negative relative trend. Prefer the #1-2 name in a top group.
-- **I — institutional sponsorship:** 10 = rising ownership, top-tier funds recently added, not
-  over-owned; 8 = solid/improving; 6 = adequate; 4 = thin or flat; 2 = funds distributing; 0 =
-  neglected / fund-dumping.
-- **M — market direction (scored ONCE, applied to every row via `CONFIG.market.mScore`):** 10 =
-  confirmed uptrend, few distribution days, broad leadership; 8 = healthy uptrend; 6 = uptrend
-  under pressure (a few distribution days, narrowing); 4 = choppy rally attempt, no follow-through;
-  2 = downtrend with failed rallies; 0 = confirmed correction / bear.
+**A grade follows mechanically from the threshold and the actual printed beside it.** If the
+evidence concedes a miss ("just under the 25% mark", "hasn't cleared the high"), the letter cannot
+be pass — call it partial. Where a threshold says **each** ("EPS up each of the last 3 yrs at
+>=25%"), every period must clear it: one strong year among three below-bar years is a PARTIAL.
+Magnitude of a beat, backlog, guidance or a big volume day are colour for the write-up, never
+grounds to promote a letter.
 
-Rough total read: **60-70** = table-pounding leader in a strong tape; **48-59** = solid, buyable on
-a proper pivot; **35-47** = watch (needs the market or a letter to improve); **< 35** = pass.
+- **C — current quarterly EPS & sales:** PASS = EPS and sales both up >=25% vs the year-ago
+  quarter, accelerating rather than decelerating. PARTIAL = one of the two clears the bar, or both
+  are up but short of 25%, or growth is decelerating. FAIL = flat, negative, or a loss. Downgrade
+  if sales lag EPS (buyback-driven) or margins are falling.
+- **A — annual earnings & ROE:** PASS = EPS up **each** of the last 3 years at >=25% **and** ROE
+  >=17%. PARTIAL = a broadly rising multi-year record that misses one leg (a year below the bar,
+  or ROE under 17%). FAIL = declining EPS, no annual profit, or an ROE far below the bar. A newly
+  public company without three years of record cannot exceed PARTIAL on A.
+- **N — new + new high off a base:** PASS = a genuine new driver **and** a sound base with the
+  stock at a proper pivot, no more than ~5% extended past it. PARTIAL = at or near new-high ground
+  but with no valid pivot to buy (base incomplete, or already extended beyond it). FAIL = no new
+  driver, more than ~10% below the 52-week high (a lower high is not a pivot), or a wide-and-loose
+  / late-stage base. Extension far above the 50-day (roughly >25%) after a climax run is a FAIL,
+  not a partial — there is no entry there.
+- **S — supply & demand:** PASS = breakout volume >=40-50% above the 50-day average, manageable
+  float, buybacks, low debt. PARTIAL = institutional-grade liquidity and a constructive trend but
+  no demand surge. FAIL = heavy distribution, dilution, illiquidity, or below the 200-day.
+- **L — leader not laggard:** PASS = clearly outperforming the benchmark over the window **and**
+  the #1 or #2 name in a strong group. PARTIAL = outperforming but mid-pack within its own group,
+  or leading a group that itself lags. FAIL = in line with or behind the benchmark.
+- **I — institutional sponsorship:** PASS = ownership **rising** over recent quarters with
+  quality funds adding, and not so over-owned that new sponsorship is impossible. PARTIAL =
+  adequate ownership whose trend you could not verify, or flat sponsorship. FAIL = thin, neglected,
+  or funds distributing. Verify the trend before awarding a pass — a high ownership *level* alone
+  is a PARTIAL.
+- **M — market direction (scored ONCE for the whole market, applied to every row via
+  `CONFIG.market.mGrade`):** PASS = confirmed uptrend, few distribution days, broad leadership.
+  PARTIAL = uptrend under pressure — distribution days building (4-5+), leadership narrowing, an
+  index slipping below its 50-day. FAIL = confirmed correction or downtrend. M is scored once
+  because market direction is a single market-wide gate: it moves every total together, so a weak
+  tape correctly makes any cut harder to clear. Never loosen the cut to compensate.
+
+Rough total read: **6.0-7.0** = table-pounding leader in a strong tape; **4.5-5.5** = qualifies,
+buyable when N gives a pivot; **3.5-4.0** = watch (needs the market or a letter to improve);
+**< 3.5** = pass on it.
 
 ## Modern refinements & professional practice (beyond the 1988 book)
 CAN SLIM's core is durable, but apply it with current, professionally-informed judgment — and

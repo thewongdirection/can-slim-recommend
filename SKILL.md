@@ -74,19 +74,28 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
 **fallback** path plus the shared fundamental-source ladder.
 
 ## Prerequisites
-- **TradingView (`Trading_View` MCP) — the primary connector.** It is the only one here that
-  covers both halves: the sector screener (`run_screener`) *and* the bars and earnings that feed
-  the letters (`get_ohlcv`, `get_symbol_data`, `get_financial_history`, `get_earnings_history`,
-  `get_financials`). Symbols are `EXCHANGE:TICKER`. Tools are deferred — load with `ToolSearch`.
+- **TradingView (`Trading_View` MCP) — the primary connector, and the proven one.** It is the only
+  one here that covers both halves: the sector screener (`run_screener`) *and* the bars and
+  earnings that feed the letters (`get_ohlcv`, `get_symbol_data`, `get_financial_history`,
+  `get_earnings_history`, `get_financials`). **All six of those endpoints have returned complete
+  data in live end-to-end runs of this skill** — prefer them over any alternative that merely
+  ought to work, and see the Tier 1 table in `tradingview-sector-sweep.md` for the per-call notes.
+  Symbols are `EXCHANGE:TICKER`. Tools are deferred — load with `ToolSearch`.
+- **Screen A before spending calls on history.** `get_financials` alone (ROE + TTM EPS growth)
+  disqualifies most candidates on **A**, and a name that fails A cannot reach the cut — so pull
+  `fq`/`fy` history only for the survivors. This roughly halved the fundamental calls in the live
+  run.
 - **`can-slim-grader`** — the sister skill that grades each candidate. If it isn't installed,
   say so, prompt the user to add it from **https://github.com/thewongdirection/can-slim-grader**,
   and apply its rubric inline from the shared methodology rather than inventing a different scale.
 - **Institutional sponsorship (I)** is the one letter TradingView cannot answer — take it from
   13F/Form 4 (FMP `form13F`, `securities-filings-lookup`) or the web, and say which.
 - **Web search** for the market read and the "new" in N.
-- **Fallbacks** if TradingView is missing or an endpoint is gated: IBKR MCP, Massive Market Data,
-  FMP — see the table at the end of `tradingview-sector-sweep.md`. Fall through and say so;
-  never block the run.
+- **Fallbacks — unverified, use only when the proven path fails:** IBKR MCP, Massive Market Data,
+  FMP (commonly plan-gated) — the Tier 2 table in `tradingview-sector-sweep.md`. None has been
+  exercised by a live run of this skill, so treat a first call as a test: if it is gated or empty,
+  drop to the next rung rather than retrying. Fall through and say so in `dataWarning`; never
+  block the run.
 
 ## Workflow
 

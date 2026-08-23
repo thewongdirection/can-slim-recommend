@@ -77,6 +77,16 @@ def f(row, *keys):
     return None
 
 
+def money(v):
+    """$1.2B / $250M / $400k - so a $1e9 floor never prints as "$1000M"."""
+    v = float(v)
+    for unit, size in (("B", 1e9), ("M", 1e6), ("k", 1e3)):
+        if abs(v) >= size:
+            n = v / size
+            return "$%.0f%s" % (n, unit) if abs(n) >= 10 or n == int(n) else "$%.1f%s" % (n, unit)
+    return "$%.0f" % v
+
+
 def pct_off_high(close, high):
     if close is None or not high:
         return None
@@ -140,12 +150,14 @@ def score_row(row, window, bench_perf, cfg):
     check(close, "price", close is not None and close < cfg["min_price"],
           "price below the %.0f floor (cheap stock)" % cfg["min_price"])
     check(dollar_vol, "liquidity", dollar_vol is not None and dollar_vol < cfg["min_dollar_vol"],
-          "average dollar volume under $%.0fM - too thin for institutional sponsorship (S)"
-          % (cfg["min_dollar_vol"] / 1e6))
+          "average dollar volume under %s - too thin for institutional sponsorship (S)"
+          % money(cfg["min_dollar_vol"]))
     check(mcap, "market_cap", mcap is not None and mcap < cfg["min_market_cap"],
-          "market cap under $%.0fM" % (cfg["min_market_cap"] / 1e6))
+          "market cap under %s" % money(cfg["min_market_cap"]))
+    # off_high is negative below the high; print its magnitude or the text reads "-33% below".
     check(off_high, "off_high", off_high is not None and off_high < -cfg["max_off_high"],
-          "%.0f%% below the 52-week high - no new-high ground, overhead supply (N)" % (off_high or 0))
+          "%.0f%% below the 52-week high - no new-high ground, overhead supply (N)"
+          % abs(off_high or 0))
     check(rs, "rs", rs is not None and rs <= cfg["min_rs"],
           "window performance lags the benchmark - laggard, not leader (L)")
     v200 = out["vs_ema200_pct"]
