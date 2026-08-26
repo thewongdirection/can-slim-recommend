@@ -11,7 +11,7 @@ description: >-
   "build me a shortlist" - or a themed/scoped set ("recommend AI stocks", "just the top 5
   sectors") - even if they don't name CAN SLIM. This is the LIST/screener lens; to judge ONE named
   ticker (a C-A-N-S-L-I-M scorecard with a BUY-RANGE/WATCH/AVOID verdict) use `can-slim-grader`.
-  Output: a white-themed PDF report by default (the interactive HTML on request). Analysis and
+  Output: a white-themed A4 PDF report by default (the dark interactive HTML on request). Analysis and
   decision support only - never personalized investment advice and never trading.
 ---
 
@@ -25,7 +25,7 @@ same rubric the sister skill uses, and delivers **two recommendation lists**:
 2. **Overall top 10** — the highest-graded names market-wide, regardless of sector.
 
 Both come with a per-name CAN-SLIM-only rationale, a buy point where one legitimately exists, and
-the 7-8% loss-cutting stop. The deliverable is a **white-themed PDF report by default** (the
+the 7-8% loss-cutting stop. The deliverable is a **white-themed A4 PDF report by default** (the
 interactive HTML on request) — **not investment advice, and never an order.**
 
 > **Sister skill — `can-slim-grader`.** This skill is the **LIST / screener** lens: the whole
@@ -221,7 +221,7 @@ company," no personal vibe. If a name cannot be defended in CAN SLIM terms, it d
 either list. Keep each reason concrete (cite the actual EPS/sales %, the RS figure, the base and
 pivot).
 
-### 7 — Deliver: a white-themed PDF by default (HTML on request)
+### 7 — Deliver: a white A4 PDF by default (the dark HTML on request)
 1. **Fill the report.** Copy `assets/dashboard_template.html` to
    `canslim-recommendations-<date>.html` and fill the `CONFIG` object — the *only* thing you
    edit; the page renders itself. Populate `market` (verdict + tone + **`mGrade`** + implication),
@@ -240,14 +240,18 @@ pivot).
 3. **Render the PDF — this is the default deliverable.**
    `python scripts/html_to_pdf.py canslim-recommendations-<date>.html`
    (headless Chrome/Chromium/Edge → Playwright → WeasyPrint → wkhtmltopdf; it prints the engine
-   used). The template is **white/light-themed** and print-optimized, and declares
-   `@page{size:A4 landscape}` because the pick tables are wide — the script detects that and
-   passes it to the fallback engines too. Hand over the PDF. If no PDF engine is
-   available, say so and hand over the HTML instead — never block the run on the export.
-4. **HTML on request only.** Give the `.html` when the user asks for the HTML, an interactive
-   version, sortable columns, or the clickable per-ticker report modal — those flatten in the PDF.
-   A dark rendering is likewise on request: set `<html lang="en" data-theme="dark">` in the filled
-   file. White/light is the default on screen and in print.
+   used). The template declares `@page{size:A4 landscape; margin:15mm}` — A4 landscape because
+   the pick tables are wide, and 15mm on every edge as the committed print inset. The script
+   reads **both** the size and the margin out of that rule and passes them to whichever fallback
+   engine it uses, so every engine produces the same page. The print stylesheet also **forces the
+   white palette**, so the PDF comes out white even though the HTML file itself is dark. Hand over
+   the PDF. If no PDF engine is available, say so and hand over the HTML instead — never block the
+   run on the export.
+4. **HTML on request only, and it is dark.** Give the `.html` when the user asks for the HTML, an
+   interactive version, sortable columns, or the clickable per-ticker report modal — those flatten
+   in the PDF. The template ships `<html data-theme="dark">`, so the HTML deliverable is dark on
+   screen; the PDF is unaffected. Switch that attribute to `"light"` only if someone asks for a
+   light HTML.
 5. Keep the chat reply short: the market read, how many cleared 4.5 and from which sectors, the
    headline names, and why the count is what it is.
 
@@ -378,7 +382,8 @@ apply the same rubric inline from the shared methodology."*)
   (Chrome → Playwright → WeasyPrint → wkhtmltopdf; honours the template's `@page` size). Shared
   with `can-slim-grader`.
 - `assets/dashboard_template.html` — the report (full behavior in Step 7): a self-contained,
-  **white-themed** (dark opt-in via `data-theme="dark"`), print-optimized, pure-ASCII dashboard
+  print-optimized, pure-ASCII dashboard that is **dark on screen and white in print** (A4
+  landscape, 15mm margins),
   driven by a `CONFIG` object. Derives both recommendation lists from one `picks[]` array (both
   gated at the grade cut, with an enumerated empty state when nothing clears it), self-audits its
   own CONFIG, and renders the funnel tiles, leadership map, sector sweep table, data-sources

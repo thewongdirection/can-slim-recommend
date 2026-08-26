@@ -4,9 +4,13 @@ html_to_pdf.py - render the filled CAN SLIM recommendations HTML to PDF.
 
 The PDF is this skill's DEFAULT deliverable: the filled canslim-recommendations-<date>.html
 is the working file, and this turns it into the report the user gets. The dashboard template
-is white/light-themed and print-optimized (A4/Letter, print-color-adjust:exact), so a
-headless-Chrome print reproduces the on-screen report faithfully. This script tries several
-engines so it works across environments, and prints the engine it used.
+is print-optimized (A4, print-color-adjust:exact) and its print stylesheet forces the white
+palette, so the PDF comes out white even when the HTML itself is rendered dark. This script
+tries several engines so it works across environments, and prints the engine it used.
+
+Page size AND margin are read out of the document's own `@page` rule (see css_page_size and
+css_page_margin) and passed to whichever engine runs, so every engine produces the same page
+rather than each applying its own default.
 
 Shared with the sister skill `can-slim-grader` (same file, same behaviour) - keep the two in
 step if you change it.
@@ -39,6 +43,30 @@ def css_page_size(path):
         return None
     m = re.search(r"@page[^{]*\{[^}]*?\bsize\s*:\s*([^;}]+)", head, re.I | re.S)
     return m.group(1).strip().lower() if m else None
+
+
+DEFAULT_MARGIN = "12mm"
+
+
+def css_page_margin(path, default=DEFAULT_MARGIN):
+    """Read the document's `@page { margin: ... }` rule as a single CSS length.
+
+    Same reason as css_page_size: Chrome honours @page itself, but Playwright and wkhtmltopdf
+    take margins as arguments, so without this a document that asks for a 15mm inset gets
+    whatever the engine defaults to. Only a uniform (one-value) margin is read - that is what
+    both templates declare, and a multi-value rule is left to `default` rather than guessed at.
+    Returns a CSS length string such as "15mm", or `default` when there is no usable rule.
+    """
+    try:
+        head = open(path, encoding="utf-8", errors="replace").read(200000)
+    except OSError:
+        return default
+    m = re.search(r"@page[^{]*\{[^}]*?\bmargin\s*:\s*([^;}]+)", head, re.I | re.S)
+    if not m:
+        return default
+    val = m.group(1).strip().lower()
+    # one value only, and it must be a length we can hand to another engine verbatim
+    return val if re.fullmatch(r"\d+(?:\.\d+)?(?:mm|cm|in|px|pt)", val) else default
 
 
 def _abs(p):
@@ -111,8 +139,9 @@ def via_playwright(inp, out):
             b = p.chromium.launch()
             pg = b.new_page()
             pg.goto(url, wait_until="networkidle")
+            mg = css_page_margin(inp)
             kw = dict(path=_abs(out), print_background=True,
-                      margin={"top": "12mm", "bottom": "12mm", "left": "12mm", "right": "12mm"})
+                      margin={"top": mg, "bottom": mg, "left": mg, "right": mg})
             if css_page_size(inp):
                 kw["prefer_css_page_size"] = True   # the document declares its own page
             else:
@@ -143,8 +172,10 @@ def via_wkhtmltopdf(inp, out):
     try:
         size = css_page_size(inp) or ""
         orient = ["-O", "Landscape"] if "landscape" in size else []
+        mg = css_page_margin(inp)
+        margins = ["-T", mg, "-B", mg, "-L", mg, "-R", mg]
         subprocess.run([exe, "--enable-local-file-access", "--print-media-type"] + orient +
-                       [_abs(inp), _abs(out)], check=True, timeout=120,
+                       margins + [_abs(inp), _abs(out)], check=True, timeout=120,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return os.path.exists(out) and os.path.getsize(out) > 1000
     except Exception:

@@ -2,7 +2,7 @@
 
 A Claude skill that sweeps **every market sector** for its top performers, grades each one against
 the **CAN SLIM** growth-investing methodology using live **TradingView** data, and returns **two
-ranked recommendation lists** as a white-themed PDF report.
+ranked recommendation lists** as a white-themed A4 PDF report.
 
 It activates when you ask for stock ideas — *"recommend some stocks"*, *"what should I buy"*,
 *"give me a list of growth stocks"*, *"best names in each sector"*, *"top sector performers"*,
@@ -96,15 +96,17 @@ rules, and the classic mistakes to avoid.
 
 ## Output
 
-- **Default: a white-themed PDF report** (`scripts/html_to_pdf.py`), A4 landscape so the
+- **Default: a white-themed PDF report** (`scripts/html_to_pdf.py`), A4 landscape with a 15mm
+  margin on every edge, so the
   pick tables fit. Each pick's CAN SLIM rationale runs as a full-width row beneath its stats
   rather than squeezed into a column, so it always has the whole table to wrap into. It includes the market verdict, the screening funnel, a leadership
   map (RS vs distance below the 52-week high), both recommendation lists, the sector sweep
   ranking, a **data sources & freshness table**, the portfolio/loss-cutting note, the disclaimer
   and an acronym glossary.
 - **On request: the interactive HTML** — same report plus sortable columns and clickable tickers
-  that open each name's per-ticker report in an in-page window. A dark rendering is also on
-  request (`data-theme="dark"`).
+  that open each name's per-ticker report in an in-page window. The HTML deliverable is **dark**;
+  the PDF stays white regardless, because the print stylesheet forces the light palette. Set
+  `data-theme="light"` on `<html>` if you want a light HTML instead.
 - The dashboard **audits its own CONFIG** on render and prints a red banner for contradictions —
   an ungraded letter, a buy point with N failing, a pivot below new-high ground, a stop that isn't
   7-8%, a verdict that disagrees with the grade, or missing data provenance.
@@ -130,7 +132,8 @@ was pulled, and flags anything gated or stale.
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
 - `scripts/html_to_pdf.py` — renders the filled dashboard to PDF. Shared with `can-slim-grader`.
-- `assets/dashboard_template.html` — the self-contained white-themed report template.
+- `assets/dashboard_template.html` — the self-contained report template: dark on screen, white
+  on paper.
 
 ## Requirements
 - **TradingView MCP connector** (primary). Falls back to IBKR / Massive Market Data / FMP / web.

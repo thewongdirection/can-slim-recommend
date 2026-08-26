@@ -43,8 +43,13 @@
       a red check banner if provenance is missing - never ship a report showing that banner.
     - Never put account-bound data (IDs, balances, positions) anywhere in CONFIG.
 
-  THEME: white/light by default, on screen and in print (this is a PDF-first report).
-    A dark rendering is opt-in: set <html lang="en" data-theme="dark"> in the filled file.
+  THEME - the two deliverables deliberately differ:
+    - The PDF (the default deliverable) is WHITE. The print stylesheet redeclares the light
+      tokens, so it stays white no matter what data-theme the file carries. It targets A4
+      landscape with a 15mm margin on all four edges.
+    - The HTML (handed over on request) is DARK - <html data-theme="dark"> is set below.
+      Switch that attribute to "light" if someone wants a light HTML instead; the PDF is
+      unaffected either way.
 
   ENCODING: keep CONFIG text ASCII where practical (use "-" not an em-dash, "vs" not a
     special glyph). The page is UTF-8, but ASCII content is bulletproof across viewers/PDF.
@@ -64,7 +69,10 @@
     text. The links are interactive-HTML only - they flatten in the PDF.
 -->
 <!doctype html>
-<html lang="en">
+<!-- data-theme="dark" is the HTML deliverable's committed look. The print
+     stylesheet forces the light palette back on, so the PDF stays white. To hand over a
+     light-on-screen HTML instead, change this to data-theme="light". -->
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -104,7 +112,11 @@
   .verdict.pressure{background:var(--partial-bg);color:var(--partial)}
   .verdict.down{background:var(--fail-bg);color:var(--fail)}
   .market .imp{font-size:16px;color:var(--ink);flex:1;min-width:240px}
+  /* The distribution-day line is one long mono string, so left in the same flex row it claims
+     its full width as its base size and squeezes the implication - the paragraph that actually
+     matters - into whatever is left. Give it its own row instead. */
   .dd{font-family:var(--mono);font-size:14px;color:var(--muted)}
+  .market .dd{flex-basis:100%}
 
   .section-title{font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
     color:var(--muted);margin:26px 0 10px}
@@ -273,8 +285,17 @@
   /* the PDF is the default deliverable - keep the white design and the colour chips exact */
   html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   @media print{
-    html,body{background:var(--bg)}
-    .wrap{max-width:none;padding:12mm}
+    /* The PDF is a WHITE report even when the HTML deliverable is rendered dark. The theme
+       tokens are redeclared here so <html data-theme="dark"> prints light rather than laying
+       a dark page down on paper. Keep these in step with the :root block above. */
+    :root,:root[data-theme="dark"],:root[data-theme="light"]{
+      --bg:#ffffff;--panel:#fbfcfd;--ink:#14181f;--muted:#5b6472;--line:#e3e7ec;
+      --accent:#1c5fd8;--accent-soft:#eaf1fe;--pass:#0f7a45;--pass-bg:#e4f4ea;--partial:#a76300;
+      --partial-bg:#fdf0dc;--fail:#b4231f;--fail-bg:#fbe7e5;--chip:#eef1f5;}
+    html,body{background:#fff;color:var(--ink)}
+    /* The page inset is owned by @page (15mm on all four edges) - the wrap adds none of its
+       own, or the two would stack and the wide pick table would lose the width it needs. */
+    .wrap{max-width:none;padding:0}
     .card,.tier,.market,.leadmap,.funnel,#leadmapWrap{break-inside:avoid}
     tbody tr{break-inside:avoid}
     tr.pickrow{break-after:avoid}          /* keep a pick with its CAN SLIM reason */
@@ -293,9 +314,11 @@
     .hint,th .arrow{display:none}
     a{color:var(--accent);text-decoration:none}
     .modal{display:none !important}
-    /* the pick tables are ~10 columns wide - portrait clips them, so print landscape.
-       scripts/html_to_pdf.py detects this and passes it on to the fallback engines too. */
-    @page{size:A4 landscape;margin:0}
+    /* A4, landscape: the pick tables are ~10 columns wide and portrait clips them. 15mm of
+       margin on every edge is the report's committed print inset - scripts/html_to_pdf.py
+       reads both the size and the margin out of this rule and passes them to whichever
+       fallback engine it ends up using, so every engine produces the same page. */
+    @page{size:A4 landscape;margin:15mm}
   }
 </style>
 </head>
