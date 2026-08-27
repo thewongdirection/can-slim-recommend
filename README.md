@@ -111,12 +111,24 @@ rules, and the classic mistakes to avoid.
   an ungraded letter, a buy point with N failing, a pivot below new-high ground, a stop that isn't
   7-8%, a verdict that disagrees with the grade, or missing data provenance.
 
-## Fresh data, every run
+## Fresh data, every run — and an honest report when it isn't
 
-Every figure comes from a tool call made in that run. Screener rows, bars, financials, grades and
-filled reports are never reused from an earlier run, an earlier session, or earlier in the same
-conversation — a re-check is a full re-run. Every report names its sources and stamps when each
-was pulled, and flags anything gated or stale.
+Every run attempts a fresh pull of every source. Screener rows, bars, financials and grades are
+never *started* from an earlier run, an earlier session, or earlier in the same conversation — a
+re-check is a full re-run.
+
+When a fresh pull fails — a connector down, gated, throttled, or returning nothing — the run
+retries, tries the documented fallback source, and only then may fall back to previously pulled
+data, and only where that older figure is still applicable (a quarterly financial usually is; a
+price, 52-week high or distribution-day count usually is not). **Whatever happens is reported in
+the dashboard**, not buried: a banner enumerates each source that did not come back fresh, why,
+what was used instead, and the date that fallback data is from, and the sources table carries a
+FRESH / REUSED / UNAVAILABLE chip per row.
+
+**Every report is dated twice** — `generatedAt` (when the report was built) and `dataDate` (what
+date the market data is as of), plus, per source, both when the call was made and what date the
+figure underneath is from. The dashboard's self-audit refuses to ship a report that is missing its
+data date, has an undated source row, or admits reused data the freshness block does not declare.
 
 ## Contents
 - `SKILL.md` — activation + the full workflow.

@@ -227,6 +227,19 @@
   .provenance{font-family:var(--mono);font-size:14px;color:var(--muted);margin:10px 0 2px}
   .provenance b{color:var(--ink)}
   /* historical / point-in-time badge */
+  /* Per-source freshness chips in the data-sources table, and the data-date stamp. */
+  /* A date that wraps to "2026-\A 08-23" is unreadable - the two date columns never break. */
+  td.when{white-space:nowrap}
+  .fchip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700;
+    letter-spacing:.03em;white-space:nowrap}
+  .fchip.fresh{background:var(--pass-bg);color:var(--pass)}
+  .fchip.reused{background:var(--partial-bg);color:var(--partial)}
+  .fchip.unavailable{background:var(--fail-bg);color:var(--fail)}
+  .datestamp{display:inline-flex;align-items:center;gap:7px;margin:14px 0 0;padding:7px 13px;
+    border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;
+    background:var(--panel);font-family:var(--mono);font-size:13px;color:var(--ink)}
+  .datestamp b{font-family:var(--sans);letter-spacing:.03em;text-transform:uppercase;font-size:11px;
+    color:var(--muted)}
   .asof-badge{display:inline-flex;align-items:center;gap:8px;margin:14px 0 0;padding:8px 14px;
     border-radius:10px;background:var(--partial-bg);color:var(--partial);border:1px solid var(--line);
     font-weight:700;font-size:14px}
@@ -334,8 +347,10 @@
   </header>
 
   <div id="asof"></div>
+  <div id="datestamp"></div>
   <div class="market" id="market"></div>
   <div id="checks"></div>
+  <div id="freshness"></div>
   <div id="dataWarning"></div>
   <div id="dataProvenance"></div>
   <div class="funnel" id="funnel"></div>
@@ -420,7 +435,7 @@
   <div class="callout" id="portfolio"></div>
 
   <!-- ===================== data sources (always shown) ===================== -->
-  <div class="section-title">Data sources &amp; freshness <span class="n">- every figure in this report traces to one of these, pulled fresh for this run</span></div>
+  <div class="section-title">Data sources &amp; freshness <span class="n" id="srcSub"></span></div>
   <div class="tablewrap">
     <table class="compact">
       <thead><tr id="srcHead"></tr></thead>
@@ -457,11 +472,42 @@
 const CONFIG = {
   title: "CAN SLIM Sector Recommendations",
   subtitle: "Top 10 performers per sector (TradingView), each graded against CAN SLIM",
-  generatedAt: "2026-08-21 (close)",
+  // WHEN THE REPORT WAS BUILT. Not the same thing as when the market data is from - a run on a
+  // Sunday reads Friday's close. Both are printed, and never merged into one string.
+  generatedAt: "2026-08-23",
+  // WHAT DATE THE MARKET DATA IS AS OF - REQUIRED, and the page prints a red check banner
+  // without it. This is the newest bar/filing the run actually saw, e.g. "2026-08-21 close".
+  // Every reader question that starts "how old is this?" is answered by this field.
+  dataDate: "",
   dataSource: "TradingView screener + bars/financials; sponsorship from filings/web",
   // Historical / point-in-time mode: set to a past date (e.g. "2023-01-31") to mark the whole
   // page as an as-of reconstruction (renders an "AS OF ..." badge). Leave "" for a live run.
   asOf: "",
+
+  /* --- FRESHNESS: every run attempts a fresh pull of every source; this is where the run says
+     whether it got one. REQUIRED. The page renders a green line when everything came back
+     fresh and an amber callout enumerating each failure when it did not - and the self-audit
+     refuses a report whose sourceMap admits reused data that is not declared here.
+
+     Reuse is a fallback, never a shortcut: only after a fresh pull was ATTEMPTED and failed,
+     and only when the older figure is still applicable to the question being asked. Say so
+     here, with the date of what was reused, so nothing stale is ever passed off as current. */
+  freshness: {
+    attemptedAt: "",        // when this run tried the sources, e.g. "2026-08-23 13:40 UTC"
+    allFresh: true,         // false if ANY source fell back to older data or came back empty
+    // One entry per source that did not come back fresh. Leave [] when allFresh is true.
+    failures: [
+      // { item:"I - institutional sponsorship",       // which class of figure
+      //   source:"TradingView get_symbol_data",       // what was attempted
+      //   error:"ownership columns returned null for every symbol queried; I is capped at "+
+      //         "partial for every name rather than guessed",   // why, and what it costs
+      //   fallback:"",                                // what OLDER data was reused, if any.
+      //                                               // Leave "" when nothing was reused - the
+      //                                               // page then says the gap was worked around.
+      //   fallbackDate:"" }                           // REQUIRED whenever `fallback` is set:
+      //                                               // the date the reused data is from.
+    ]
+  },
 
   // --- the two recommendation lists are DERIVED from picks[] using these knobs ---
   gradeThreshold: 4.5,   // list 1 = every graded name at/above this score out of 7
@@ -488,17 +534,28 @@ const CONFIG = {
   // gap. Leave "" if everything resolved from the preferred sources with fresh data.
   dataWarning: "",
 
-  // Per-datum provenance, rendered as the "Data sources & freshness" table. REQUIRED - one
-  // row per class of figure in the report. { item, source, pulled, note }
+  /* Per-datum provenance, rendered as the "Data sources & freshness" table. REQUIRED - one row
+     per class of figure in the report. Every row needs BOTH dates and a status:
+       item    - which class of figure this row covers
+       source  - the tool / feed it came from
+       pulled  - WHEN THE CALL WAS MADE (required; the audit rejects a row without it)
+       asOf    - WHAT DATE THE DATA ITSELF IS FROM (newest bar, filed quarter, ...). Required
+                 for a reused row; strongly preferred everywhere, since "pulled today" says
+                 nothing about whether the figure underneath is a week old.
+       status  - "fresh"       pulled successfully in THIS run (the default when omitted)
+                 "reused"      a fresh pull was attempted and failed, so older data was used
+                 "unavailable" no data at all - the report works around the gap and says how
+       note    - anything a reader needs to judge the figure
+     A "reused" or "unavailable" row MUST have a matching entry in freshness.failures, or the
+     self-audit refuses the report. */
   sourceMap: [
     // { item:"Sector sweep (top 10 per sector)", source:"TradingView run_screener, Perf.6M",
-    //   pulled:"2026-08-21 14:05 UTC", note:"20 sectors, US primary listings, >$20M avg $ volume" },
-    // { item:"Price / 52-wk high / volume", source:"TradingView get_ohlcv + get_symbol_data",
-    //   pulled:"2026-08-21 14:07 UTC", note:"newest daily bar 2026-08-20" },
-    // { item:"C - quarterly EPS & sales", source:"TradingView get_earnings_history (street EPS)",
-    //   pulled:"2026-08-21 14:12 UTC", note:"GAAP eps from get_financial_history cross-checked" },
+    //   pulled:"2026-08-23 14:05 UTC", asOf:"2026-08-21 close", status:"fresh",
+    //   note:"20 sectors, US primary listings, >$20M avg $ volume" },
+    // { item:"C - quarterly EPS & sales", source:"TradingView get_financial_history (fq)",
+    //   pulled:"2026-08-23 14:12 UTC", asOf:"Q2/2026 as filed", status:"fresh", note:"" },
     // { item:"I - institutional sponsorship", source:"SEC 13F via securities-filings-lookup",
-    //   pulled:"2026-08-21 14:20 UTC", note:"latest filed quarter" }
+    //   pulled:"-", asOf:"", status:"unavailable", note:"gated this run; I capped at partial" }
   ],
 
   // The screening funnel - the numbers that make the sweep auditable. Rendered as stat tiles.
@@ -591,7 +648,52 @@ const TOPN = Number(CONFIG.topCount)||10;
 document.title = CONFIG.title || "CAN SLIM Sector Recommendations";
 $("title").textContent = CONFIG.title || document.title;
 if (CONFIG.subtitle) $("subtitle").textContent = CONFIG.subtitle;
-$("meta").innerHTML = "As of " + esc(CONFIG.generatedAt||"") + "<br>" + esc(CONFIG.dataSource||"");
+$("meta").innerHTML = "Generated " + esc(CONFIG.generatedAt||"") + "<br>" + esc(CONFIG.dataSource||"");
+
+/* ---- the data date, stamped where nobody can miss it ----
+   generatedAt says when the report was built; dataDate says how old the market data underneath
+   it is. They are different questions and a report that answers only the first is misleading,
+   so this is rendered on its own line and the self-audit requires it. ---- */
+(function(){
+  const dd = CONFIG.dataDate;
+  $("datestamp").innerHTML = dd
+    ? '<div class="datestamp"><b>Data as of</b> ' + esc(dd) +
+      (CONFIG.generatedAt ? ' <span style="color:var(--muted)">&middot; report generated ' +
+        esc(CONFIG.generatedAt) + '</span>' : '') + '</div>'
+    : '';
+})();
+
+/* ---- freshness: did this run actually get fresh data? ----
+   Every run attempts a fresh pull of every source. This block reports the outcome either way -
+   a green line when everything came back fresh, an enumerated amber callout when something did
+   not, naming what failed, why, what was used instead, and THAT fallback's date. Silence is
+   never an option: the audit below rejects a sourceMap that admits reuse this block does not
+   declare. ---- */
+(function(){
+  const f = CONFIG.freshness || {};
+  const fails = Array.isArray(f.failures) ? f.failures : [];
+  const when = f.attemptedAt ? ' on ' + esc(f.attemptedAt) : '';
+  if (!fails.length && f.allFresh !== false){
+    $("freshness").innerHTML = '<div class="callout"><b>&#10003; Fresh data:</b> every source in the '+
+      'table below was pulled fresh for this run' + when + '. Nothing was carried over from an '+
+      'earlier run or an earlier point in this conversation.</div>';
+    return;
+  }
+  const li = fails.map(x=>{
+    const used = x.fallback
+      ? ' <b>Used instead:</b> ' + esc(x.fallback) +
+        (x.fallbackDate ? ' <b>(data dated ' + esc(x.fallbackDate) + ')</b>' : ' <b>(no date given)</b>')
+      : ' <b>Used instead:</b> nothing - the report works around the gap.';
+    return '<li><b>' + esc(x.item||'(unnamed source)') + '</b> via ' + esc(x.source||'(source not named)') +
+           ' &mdash; ' + esc(x.error||'fresh pull failed') + '.' + used + '</li>';
+  }).join('');
+  $("freshness").innerHTML = '<div class="callout warn"><b>&#9888; Not all data is fresh.</b> A fresh '+
+    'pull was attempted for every source' + when + '. ' + fails.length + ' did not come back fresh:'+
+    '<ul style="margin:6px 0 0 18px;padding:0">' + (li ||
+      '<li>freshness.allFresh is false but no failures are listed - the run must say what was not fresh.</li>') +
+    '</ul></div>';
+})();
+
 if (CONFIG.asOf){
   $("asof").innerHTML = '<div class="asof-badge">&#9203; AS OF ' + esc(CONFIG.asOf) +
     ' <span class="sub2">- historical reconstruction (point-in-time), not a survivorship-free backtest</span></div>';
@@ -1186,11 +1288,29 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
 // ---- data sources & freshness table (always rendered; never let a report ship sourceless) ----
 (function(){
   const rows = CONFIG.sourceMap||[];
-  $("srcHead").innerHTML = ["What","Source (tool / feed)","Pulled","Note"].map(c=>'<th>'+c+'</th>').join('');
+  /* Two dates, deliberately: `pulled` is when this run made the call, `asOf` is how old the
+     figure underneath is. A source pulled today can still hand back last week's number. */
+  $("srcHead").innerHTML = ["What","Source (tool / feed)","Pulled","Data as of","Status","Note"]
+    .map(c=>'<th>'+c+'</th>').join('');
+  const STATUS = {fresh:"FRESH", reused:"REUSED", unavailable:"UNAVAILABLE"};
   $("srcRows").innerHTML = rows.length
-    ? rows.map(r=>'<tr><td><b>'+esc(r.item)+'</b></td><td class="grp">'+esc(r.source)+
-        '</td><td class="grp">'+esc(r.pulled||'')+'</td><td class="grp">'+esc(r.note||'')+'</td></tr>').join('')
-    : '<tr><td colspan="4" style="padding:16px;color:var(--fail)">CONFIG.sourceMap is empty - fill it before shipping this report.</td></tr>';
+    ? rows.map(r=>{
+        const st = String(r.status||"fresh").trim().toLowerCase();
+        const cls = STATUS.hasOwnProperty(st) ? st : "unavailable";
+        const lab = STATUS[st] || String(r.status).toUpperCase();
+        return '<tr><td><b>'+esc(r.item)+'</b></td><td class="grp">'+esc(r.source)+
+          '</td><td class="grp when">'+esc(r.pulled||'')+
+          '</td><td class="grp">'+esc(r.asOf||'')+
+          '</td><td><span class="fchip '+cls+'">'+esc(lab)+'</span></td>'+
+          '<td class="grp">'+esc(r.note||'')+'</td></tr>';
+      }).join('')
+    : '<tr><td colspan="6" style="padding:16px;color:var(--fail)">CONFIG.sourceMap is empty - fill it before shipping this report.</td></tr>';
+  /* The subtitle is derived, never asserted: a run that fell back cannot print "pulled fresh". */
+  const nf = rows.filter(r=> String(r.status||"fresh").trim().toLowerCase() !== "fresh").length;
+  $("srcSub").textContent = nf
+    ? '- every figure traces to one of these; ' + nf + ' of ' + rows.length +
+      ' did not come back fresh this run (see the banner above)'
+    : '- every figure in this report traces to one of these, all pulled fresh for this run';
 })();
 
 /* ---- self-audit: the report checks itself and shouts if CONFIG contradicts itself.
@@ -1199,6 +1319,54 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
   const errs = [];
   if (!CONFIG.dataProvenance) errs.push("CONFIG.dataProvenance is empty - the report must name the data sources it used.");
   if (!(CONFIG.sourceMap||[]).length) errs.push("CONFIG.sourceMap is empty - fill one row per class of figure (what, source, pulled).");
+
+  /* ---- freshness contract ----
+     Every run attempts fresh data; the report must say what it got. These checks make silence
+     impossible: no data date, an undated source, or reuse that the freshness block does not
+     declare all stop the report here. */
+  if (!CONFIG.dataDate)
+    errs.push("CONFIG.dataDate is empty - every report must state the date its market data is as of. "+
+      "generatedAt (when the report was built) does not answer that question.");
+  const fr = CONFIG.freshness;
+  if (!fr || typeof fr !== "object")
+    errs.push("CONFIG.freshness is missing - every run must record whether its fresh pull succeeded, "+
+      "even when it did (freshness:{attemptedAt:'...', allFresh:true, failures:[]}).");
+  else {
+    const fails = Array.isArray(fr.failures) ? fr.failures : [];
+    if (!fr.attemptedAt)
+      errs.push("CONFIG.freshness.attemptedAt is empty - state when this run attempted its data pull.");
+    if (fr.allFresh === false && !fails.length)
+      errs.push("CONFIG.freshness.allFresh is false but freshness.failures is empty - name what did not "+
+        "come back fresh, why, and what was used instead.");
+    if (fr.allFresh !== false && fails.length)
+      errs.push("CONFIG.freshness lists "+fails.length+" failure(s) but allFresh is not false - "+
+        "the banner would tell the reader everything was fresh.");
+    fails.forEach((x,i)=>{
+      const who = x.item || ("failures["+i+"]");
+      if (!x.item)   errs.push("freshness.failures["+i+"] has no `item` - name which class of figure failed.");
+      if (!x.error)  errs.push(who+": freshness failure has no `error` - say why the fresh pull did not work.");
+      if (x.fallback && !x.fallbackDate)
+        errs.push(who+': fell back to "'+x.fallback+'" with no fallbackDate - reused data must carry '+
+          "the date it is from, or the reader cannot tell how stale it is.");
+    });
+    // every reused/unavailable source has to be declared up top, not just chipped in the table
+    const declared = new Set(fails.map(x=>String(x.item||"").trim().toLowerCase()).filter(Boolean));
+    (CONFIG.sourceMap||[]).forEach((r,i)=>{
+      const where = r.item || ("sourceMap["+i+"]");
+      const st = String(r.status||"fresh").trim().toLowerCase();
+      if (["fresh","reused","unavailable"].indexOf(st) < 0)
+        errs.push(where+': status "'+r.status+'" is not fresh/reused/unavailable - it renders as UNAVAILABLE.');
+      if (!r.pulled)
+        errs.push(where+": no `pulled` date - every source row must say when this run called it "+
+          '(use "-" only for a source that returned nothing, and mark it unavailable).');
+      if (st === "reused" && !r.asOf)
+        errs.push(where+": reused data with no `asOf` date - reused figures must say what date they are from.");
+      if ((st === "reused" || st === "unavailable") && !declared.has(String(r.item||"").trim().toLowerCase()))
+        errs.push(where+' is marked '+st.toUpperCase()+' in the sources table but has no matching entry in '+
+          "CONFIG.freshness.failures - a source that was not pulled fresh must be reported at the top of "+
+          "the report, not only in the table.");
+    });
+  }
   if (!allPicks.length) errs.push("CONFIG.picks is empty - nothing was graded, so neither recommendation list can be built.");
   const swGraded = Number((CONFIG.sweep||{}).graded);
   if (isFinite(swGraded) && swGraded && swGraded !== allPicks.length)

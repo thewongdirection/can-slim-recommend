@@ -101,16 +101,55 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
 
 Work in order. Scale research depth to the request; keep the user informed as you go.
 
-> **ALWAYS pull fresh data — every run, regardless of prior usage.** Treat every invocation as a
-> cold start. Re-run every screener call, re-pull every bar series, re-fetch every financial, and
-> re-run the web research **this run**. **Never reuse** a prior run's screener rows, sweep JSON,
-> RS values, grades, or an already-filled `CONFIG` — not from earlier in this conversation, not
-> from memory, not from a saved output file. Sector leadership rotates and prices go stale within
-> minutes during market hours, so a carried-over number can be silently wrong. **A re-check is a
-> full re-run** ("run it again", "is that still true?") — never patch one figure into an old
-> report. Stamp `generatedAt`, `dataProvenance` and every `sourceMap[].pulled` with the actual
-> pull time of *this* run; if a connector hands back a stale or cached snapshot, refetch and, if
-> it is still stale, flag it in `dataWarning`.
+> **ALWAYS ATTEMPT FRESH DATA — every run, every source, regardless of prior usage.** Treat every
+> invocation as a cold start. Re-run every screener call, re-pull every bar series, re-fetch every
+> financial, and re-run the web research **this run**. Never *start* from a prior run's screener
+> rows, sweep JSON, RS values, grades, or an already-filled `CONFIG` — not from earlier in this
+> conversation, not from memory, not from a saved output file. Sector leadership rotates and prices
+> go stale within minutes during market hours, so a carried-over number can be silently wrong.
+> **A re-check is a full re-run** ("run it again", "is that still true?") — never patch one figure
+> into an old report.
+
+#### When a fresh pull fails
+
+The attempt is mandatory; success is not always available. A connector can be down, gated,
+throttled, or hand back nothing. When that happens, **report it — never paper over it, and never
+let it silently become a fresh-looking number.** In order:
+
+1. **Retry once**, and try the documented fallback source for that datum
+   (`references/tradingview-sector-sweep.md` step 6, then `references/ibkr-data-guide.md`).
+2. **If a fallback source works, that row is still `fresh`** — it just names a different source.
+3. **If nothing fresh can be had, you may reuse previously pulled data — but only if it is still
+   applicable** to what is being asked, and only after the attempt failed. A quarterly financial
+   from last week is usually still applicable; a price, a 52-week high, an RS reading or a
+   distribution-day count from a previous session usually is **not** — those move, and a stale one
+   changes grades. When the older figure is not applicable, drop the datum, grade the letter on
+   what remains, and say so, rather than reusing something that is no longer true.
+4. **Record it in `CONFIG.freshness.failures`** — one entry per source, each naming the `item`,
+   the `source` attempted, the `error` (why it failed), the `fallback` used, and the
+   **`fallbackDate`** (the date the reused data is from). Set `freshness.allFresh: false`.
+5. **Mark the row** in `sourceMap[]` as `status:"reused"` (older data used) or
+   `status:"unavailable"` (no data at all), with its `asOf` date.
+6. **Say it in `dataWarning`** too, in plain language, when it changes how the report should be
+   read — a capped letter, a missing grade, a gap worked around.
+
+The template enforces all of this: the page renders an amber callout enumerating every failure
+with its fallback date, and the self-audit **refuses the report** if `freshness` is missing, if a
+failure has no `error`, if reused data has no date, or if a `reused`/`unavailable` row in the
+sources table has no matching entry in `freshness.failures`. A silent reuse cannot ship.
+
+#### Always date the data
+
+Two dates, always, and never merged into one string:
+- **`generatedAt`** — when the report was built.
+- **`dataDate`** — **what date the market data is as of** (the newest bar the run actually saw,
+  e.g. `"2026-08-21 close"`). Required; the self-audit rejects a report without it. A run on a
+  Sunday reads Friday's close, and the reader has to be able to tell.
+
+Per source, `sourceMap[]` carries both `pulled` (when *this run* made the call) and `asOf` (what
+date the figure underneath is from) — a source pulled today can still hand back last week's
+number. Every row needs `pulled`; a reused row also needs `asOf`. Also set
+`freshness.attemptedAt` to when the run tried its sources, so "fresh" has a timestamp behind it.
 
 ### 1 — Set the scope
 Defaults, applied without asking when the user just said "recommend stocks":
@@ -227,14 +266,16 @@ pivot).
    edit; the page renders itself. Populate `market` (verdict + tone + **`mGrade`** + implication),
    `sweep` (the funnel — its `graded` count must equal `picks.length`), `sectors[]` (the sector
    ranking from `sector_screen.py`), `picks[]` (every graded name), `gradeThreshold` /
-   `topCount`, and — always — **`dataProvenance`** and **`sourceMap[]`**. Add `shortfall`,
+   `topCount`, and — always — **`dataDate`**, **`freshness`**, **`dataProvenance`** and
+   **`sourceMap[]`** (every row with `pulled`, `asOf` and `status`). Add `shortfall`,
    `noQualifierReasons`, `watch[]`, `speculative[]`, `excluded[]`, `rationale[]`,
    `portfolioNote`, `disclaimer`, `sources[]` and `dataWarning` when they apply.
 2. **Check the self-audit banner.** The page audits its own CONFIG on render and prints a red
    "Report checks failed" banner for contradictions — an ungraded letter, a buy point with N
    failing, a pivot more than 10% below the 52-week high, a stop that isn't 7-8%, a verdict that
    disagrees with the grade, a `sweep.graded` count that doesn't match `picks[]`, missing
-   provenance. **Never ship a report showing that banner** —
+   provenance, a missing `dataDate`, an undated source row, or reused data the `freshness` block
+   does not declare. **Never ship a report showing that banner** —
    fix the grade or fix the evidence, and do not delete the check. The PDF freezes whatever the
    page says, so verify before exporting.
 3. **Render the PDF — this is the default deliverable.**
@@ -265,7 +306,12 @@ pivot).
 - **Sector sweep table** — the sector ranking behind the lists, from `CONFIG.sectors`.
 - **No-qualifier fallback** — for each sector with zero qualifiers, its top 5 in the screener's own
   ranking, from `CONFIG.sectors[].top5`, banner-marked as ungraded and not recommendations.
-- **Data sources & freshness table** — from `CONFIG.sourceMap`.
+- **Data date stamp** — `CONFIG.dataDate` beside `generatedAt`, at the top of the page.
+- **Freshness banner** — from `CONFIG.freshness`: a green line when every source came back fresh,
+  or an amber callout enumerating each failure, its cause, what was used instead and that
+  fallback's date.
+- **Data sources & freshness table** — from `CONFIG.sourceMap`: what, source, pulled, data-as-of,
+  a FRESH / REUSED / UNAVAILABLE status chip, and the note.
 - **Acronym glossary** — the standard CAN SLIM + finance terms; extend via `CONFIG.glossary`.
 
 **Per-ticker deep dive (clickable ticker → in-page report window):** give a pick a `reviewUrl`
@@ -276,11 +322,13 @@ loads via an iframe, the review files must be **same-origin** with the dashboard
 served locally) — a full `https://` URL also works. Omit `reviewUrl` and the ticker is plain text.
 These links are HTML-only; they flatten in the PDF.
 
-**Data sources are not optional.** Every dashboard must carry `dataProvenance` (one line naming
-which sources actually contributed and which letters came from where) **and** `sourceMap[]` (one
-row per class of figure: what, source, pulled-at, note), plus `dataWarning` whenever any source
-was gated, throttled or stale and the analysis leaned on a fallback. The page prints a red check
-banner if either is missing.
+**Data sources and dates are not optional.** Every dashboard must carry `dataProvenance` (one line
+naming which sources actually contributed and which letters came from where), `sourceMap[]` (one
+row per class of figure: what, source, `pulled`, `asOf`, `status`, note), `dataDate` (the date the
+market data is as of) and `freshness` (whether this run's fresh pull succeeded, and what failed if
+it did not) — plus `dataWarning` whenever a gap changes how the report should be read. The page
+prints a red check banner if any of them is missing, and refuses a report whose sources table
+admits reused data that `freshness.failures` does not declare.
 
 **Scoring — pass/partial/fail, /7 total (incl. M):** grade each of C·A·N·S·L·I as `pass` (1.0),
 `partial` (0.5) or `fail` (0), and grade **M once for the whole market** via
