@@ -130,6 +130,27 @@ date the market data is as of), plus, per source, both when the call was made an
 figure underneath is from. The dashboard's self-audit refuses to ship a report that is missing its
 data date, has an undated source row, or admits reused data the freshness block does not declare.
 
+## Using it with a non-Claude assistant
+
+`python scripts/export_portable.py` bundles the whole skill into two artifacts under `dist/`:
+
+- **`can-slim-recommend-portable.md`** — one self-contained Markdown file: a portability preamble
+  followed by every file of the skill inlined verbatim. Paste or upload it into Gemini, ChatGPT,
+  or any long-context assistant and tell it to follow the workflow. This file is committed, so
+  there is a stable link to hand someone.
+- **`can-slim-recommend.zip`** — the raw directory, for a host that takes a folder (a Gemini Gem,
+  a Custom GPT's knowledge files, another agent install).
+
+The preamble is the important part. The reference guides describe a specific TradingView MCP
+connector because that is what the skill was verified against, and no other assistant will have
+it — so the preamble restates the requirement **tool-agnostically**: a screener ranked on 6-month
+performance, daily OHLCV bars, quarterly and annual fundamentals, index bars for the market grade.
+Any source that provides those works. It also carries the rules most likely to be lost in
+translation — never invent a number, always attempt fresh data, always date it, never lower the
+bar to fill a list.
+
+Re-run the script after changing the skill; a stale bundle is worse than none.
+
 ## Contents
 - `SKILL.md` — activation + the full workflow.
 - `references/canslim-methodology.md` — the distilled CAN SLIM rule set: the seven criteria and
@@ -144,6 +165,7 @@ data date, has an undated source row, or admits reused data the freshness block 
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
 - `scripts/html_to_pdf.py` — renders the filled dashboard to PDF. Shared with `can-slim-grader`.
+- `scripts/export_portable.py` — bundles the skill for use with a non-Claude assistant.
 - `assets/dashboard_template.html` — the self-contained report template: dark on screen, white
   on paper.
 

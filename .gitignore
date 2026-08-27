@@ -4,3 +4,8 @@ __pycache__/
 
 # Generated sample outputs (never commit run results)
 canslim-*.html
+
+# Portable bundle: the .md is committed so there is a stable URL to hand someone;
+# the .zip is not (GitHub can zip the repo itself). Regenerate both with
+# `python scripts/export_portable.py` - never hand-edit the bundle.
+dist/*.zip
