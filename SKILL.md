@@ -413,8 +413,16 @@ apply the same rubric inline from the shared methodology."*)
 
 ## Files in this skill
 - `references/canslim-methodology.md` — the full CAN SLIM rules, thresholds, base patterns, sell
-  rules, money management, and mistake list. **Shared verbatim with `can-slim-grader`** — any
-  material change to the method has to land on both sides. Read before screening.
+  rules, money management, and mistake list. **Shared with `can-slim-grader`** — any material
+  change to the method has to land on both sides. Read before screening.
+  **Not currently byte-identical, and this copy is the newer one:** it carries the
+  *"pass / partial / fail grading rubric"* section (the per-letter PASS/PARTIAL/FAIL anchors and
+  the total read bands), which the sister's copy does not yet have. That section replaced an
+  older 0-10 rubric that scored a scorecard out of 70; **nothing in either skill scores out of
+  70 any more** — both dashboards total seven letters at pass 1 / partial 0.5 / fail 0, out of
+  **7**. The port owed runs *from here to the sister*, not the other way, and the sister's
+  `SKILL.md` parity note still describes this copy as carrying the old /70 rubric — that note is
+  stale and should be corrected when the rubric is ported.
 - `references/tradingview-sector-sweep.md` — **the primary data guide**: the verified TradingView
   call shapes, the sector taxonomy, the triage filters, the grader hand-off, and how the two
   lists are built. Read before gathering data.

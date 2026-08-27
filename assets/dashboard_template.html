@@ -1317,6 +1317,15 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
    Never ship a report showing this banner - fix the grade or fix the evidence. ---- */
 (function(){
   const errs = [];
+  /* The scorecard maxes at 7 - seven letters at pass=1. A threshold carried over from some other
+     scale (45, 70, a percentage) is not a loud failure: THRESHOLD just exceeds every possible
+     total, both lists come out empty, and the empty-state text explains it as a weak market. */
+  const thr = Number(CONFIG.gradeThreshold);
+  if (CONFIG.gradeThreshold != null && (!isFinite(thr) || thr <= 0 || thr > 7))
+    errs.push('CONFIG.gradeThreshold is "'+CONFIG.gradeThreshold+'", which is off the scale - a '+
+      'scorecard is seven letters at pass 1 / partial 0.5 / fail 0, so it totals at most 7 and the '+
+      'cut must sit between 0 and 7 (the default is 4.5). A value above 7 empties both lists and '+
+      'reads as a weak market rather than as a mis-set threshold.');
   if (!CONFIG.dataProvenance) errs.push("CONFIG.dataProvenance is empty - the report must name the data sources it used.");
   if (!(CONFIG.sourceMap||[]).length) errs.push("CONFIG.sourceMap is empty - fill one row per class of figure (what, source, pulled).");
 

@@ -570,8 +570,16 @@ apply the same rubric inline from the shared methodology."*)
 
 ## Files in this skill
 - `references/canslim-methodology.md` — the full CAN SLIM rules, thresholds, base patterns, sell
-  rules, money management, and mistake list. **Shared verbatim with `can-slim-grader`** — any
-  material change to the method has to land on both sides. Read before screening.
+  rules, money management, and mistake list. **Shared with `can-slim-grader`** — any material
+  change to the method has to land on both sides. Read before screening.
+  **Not currently byte-identical, and this copy is the newer one:** it carries the
+  *"pass / partial / fail grading rubric"* section (the per-letter PASS/PARTIAL/FAIL anchors and
+  the total read bands), which the sister's copy does not yet have. That section replaced an
+  older 0-10 rubric that scored a scorecard out of 70; **nothing in either skill scores out of
+  70 any more** — both dashboards total seven letters at pass 1 / partial 0.5 / fail 0, out of
+  **7**. The port owed runs *from here to the sister*, not the other way, and the sister's
+  `SKILL.md` parity note still describes this copy as carrying the old /70 rubric — that note is
+  stale and should be corrected when the rubric is ported.
 - `references/tradingview-sector-sweep.md` — **the primary data guide**: the verified TradingView
   call shapes, the sector taxonomy, the triage filters, the grader hand-off, and how the two
   lists are built. Read before gathering data.
@@ -733,11 +741,34 @@ date the market data is as of), plus, per source, both when the call was made an
 figure underneath is from. The dashboard's self-audit refuses to ship a report that is missing its
 data date, has an undated source row, or admits reused data the freshness block does not declare.
 
+## Using it with a non-Claude assistant
+
+`python scripts/export_portable.py` bundles the whole skill into two artifacts under `dist/`:
+
+- **`can-slim-recommend-portable.md`** — one self-contained Markdown file: a portability preamble
+  followed by every file of the skill inlined verbatim. Paste or upload it into Gemini, ChatGPT,
+  or any long-context assistant and tell it to follow the workflow. This file is committed, so
+  there is a stable link to hand someone.
+- **`can-slim-recommend.zip`** — the raw directory, for a host that takes a folder (a Gemini Gem,
+  a Custom GPT's knowledge files, another agent install).
+
+The preamble is the important part. The reference guides describe a specific TradingView MCP
+connector because that is what the skill was verified against, and no other assistant will have
+it — so the preamble restates the requirement **tool-agnostically**: a screener ranked on 6-month
+performance, daily OHLCV bars, quarterly and annual fundamentals, index bars for the market grade.
+Any source that provides those works. It also carries the rules most likely to be lost in
+translation — never invent a number, always attempt fresh data, always date it, never lower the
+bar to fill a list.
+
+Re-run the script after changing the skill; a stale bundle is worse than none.
+
 ## Contents
 - `SKILL.md` — activation + the full workflow.
 - `references/canslim-methodology.md` — the distilled CAN SLIM rule set: the seven criteria and
   thresholds, chart-base patterns, buy/sell rules, money management, and the costly mistakes.
-  Shared verbatim with `can-slim-grader`.
+  Shared with `can-slim-grader`; this copy additionally carries the pass/partial/fail grading
+  rubric, which the sister's copy does not yet have. Both skills score a scorecard out of **7**
+  (seven letters at pass 1 / partial 0.5 / fail 0) — nothing scores out of 70.
 - `references/tradingview-sector-sweep.md` — the primary data guide: verified TradingView call
   shapes, the sector taxonomy, triage filters, the grader hand-off, and how the two lists are
   built.
@@ -747,6 +778,7 @@ data date, has an undated source row, or admits reused data the freshness block 
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
 - `scripts/html_to_pdf.py` — renders the filled dashboard to PDF. Shared with `can-slim-grader`.
+- `scripts/export_portable.py` — bundles the skill for use with a non-Claude assistant.
 - `assets/dashboard_template.html` — the self-contained report template: dark on screen, white
   on paper.
 
@@ -3857,6 +3889,15 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
    Never ship a report showing this banner - fix the grade or fix the evidence. ---- */
 (function(){
   const errs = [];
+  /* The scorecard maxes at 7 - seven letters at pass=1. A threshold carried over from some other
+     scale (45, 70, a percentage) is not a loud failure: THRESHOLD just exceeds every possible
+     total, both lists come out empty, and the empty-state text explains it as a weak market. */
+  const thr = Number(CONFIG.gradeThreshold);
+  if (CONFIG.gradeThreshold != null && (!isFinite(thr) || thr <= 0 || thr > 7))
+    errs.push('CONFIG.gradeThreshold is "'+CONFIG.gradeThreshold+'", which is off the scale - a '+
+      'scorecard is seven letters at pass 1 / partial 0.5 / fail 0, so it totals at most 7 and the '+
+      'cut must sit between 0 and 7 (the default is 4.5). A value above 7 empties both lists and '+
+      'reads as a weak market rather than as a mis-set threshold.');
   if (!CONFIG.dataProvenance) errs.push("CONFIG.dataProvenance is empty - the report must name the data sources it used.");
   if (!(CONFIG.sourceMap||[]).length) errs.push("CONFIG.sourceMap is empty - fill one row per class of figure (what, source, pulled).");
 

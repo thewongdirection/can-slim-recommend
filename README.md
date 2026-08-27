@@ -155,7 +155,9 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `SKILL.md` — activation + the full workflow.
 - `references/canslim-methodology.md` — the distilled CAN SLIM rule set: the seven criteria and
   thresholds, chart-base patterns, buy/sell rules, money management, and the costly mistakes.
-  Shared verbatim with `can-slim-grader`.
+  Shared with `can-slim-grader`; this copy additionally carries the pass/partial/fail grading
+  rubric, which the sister's copy does not yet have. Both skills score a scorecard out of **7**
+  (seven letters at pass 1 / partial 0.5 / fail 0) — nothing scores out of 70.
 - `references/tradingview-sector-sweep.md` — the primary data guide: verified TradingView call
   shapes, the sector taxonomy, triage filters, the grader hand-off, and how the two lists are
   built.
