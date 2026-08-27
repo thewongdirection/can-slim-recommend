@@ -99,17 +99,29 @@ letter (IBKR covers N/S/L/M; web research covers C/A and ownership).
 
 Work in order. Scale research depth to the request; keep the user informed as you go.
 
-> **ALWAYS pull fresh data — every run, regardless of prior usage.** Treat every invocation as a
-> cold start. Re-pull live IBKR price snapshots, price history, and themes; **re-resolve every
-> `contract_id`**; and re-run the web research **this run**. **Never reuse** a prior run's
-> figures, candidate list, `contract_id`s, RS values, base metrics, or an already-filled
-> `CONFIG` — not from earlier in this conversation, not from memory, not from a saved/cached
-> output file. Prices, RS, and % off-high go stale within minutes during market hours, so a
-> carried-over number can be silently wrong. Always **make the connector calls again** and build
-> `CONFIG` from the values you just fetched. Stamp `generatedAt` / `dataProvenance` with the
-> actual pull time of *this* run; if a connector hands back a cached/expired snapshot (e.g. an
-> `expires` timestamp in the past, or a stale market timestamp), refetch and, if it is still
-> stale, flag it in `dataWarning`.
+> **ALWAYS attempt a fresh pull — every run, regardless of prior usage.** Treat every invocation
+> as a cold start. Re-pull live price snapshots, price history and themes; **re-resolve every
+> `contract_id`**; and re-run the web research **this run**. Do not silently reuse a prior run's
+> figures, candidate list, `contract_id`s, RS values, base metrics, or an already-filled `CONFIG`
+> — not from earlier in this conversation, not from memory, not from a cached output file. Prices,
+> RS and % off-high go stale within minutes during market hours. Stamp `dataStatus.pulledAt` with
+> the actual pull time of *this* run; if a connector hands back a cached/expired snapshot (an
+> `expires` timestamp in the past, a stale market timestamp), refetch.
+>
+> **When a source is down, gated or timing out, the screen does not stop — it gets honest.**
+> In order: (1) drop down the source ladder in `ibkr-data-guide.md`; (2) if nothing answers, reuse
+> the most recent earlier figure and record it in `CONFIG.dataStatus.items` as `state:"carried"`
+> with its own `asOf` date and a `why` naming what failed; (3) if it cannot be sourced at all,
+> mark it `state:"unavailable"` with a `why` and screen on what you do have. The dashboard then
+> shows an amber **Data notice** at the top and tags the row *carried over* in its provenance
+> table. A dated older figure beats refusing to screen; an undated or quietly stale one is never
+> acceptable.
+>
+> **Date everything, from the data rather than the wall clock.** `CONFIG.dataStatus` is required:
+> `pulledAt` for the run, plus one dated row per class of figure (price/volume, C & A earnings,
+> ownership, market direction) carrying its `source`, its own `asOf` and its state. Never let a
+> carried figure pass for fresh, and never carry the price series itself without saying the screen
+> is stale — the technical letters are measured against the newest bar.
 
 ### As-of / historical mode (optional) — "run it as of <past date>"
 If the user asks for the screen **as of a past date** ("recommend stocks as if it were Jan 2023",

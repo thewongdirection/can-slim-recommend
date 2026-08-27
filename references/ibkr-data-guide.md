@@ -73,6 +73,22 @@ breakout are computed only from in-window bars. For **C/A/I**, use only filings 
 the as-of date (no look-ahead), and remember `get_theme_details` / web "current leaders" are
 **present-day** — flag the survivorship/look-ahead limits in `dataWarning`.
 
+## Freshness & provenance (read first)
+
+**Every run attempts its own pull, and every figure carries the date it is as of.** Re-call the
+tools each time — even for the same universe minutes later — and rebuild `CONFIG` from what you
+just fetched. Take the as-of from the **data** (newest bar date, snapshot `ts`/`is_close`), not
+the wall clock; while the session is open the newest candle is live and partial, so label the
+screen provisional.
+
+**A failed source does not stop the run.** (1) Drop down the ladder in Step 3; (2) if nothing
+answers, reuse the most recent earlier figure and mark it `state:"carried"` in
+`CONFIG.dataStatus.items` with its own `asOf` and a `why`; (3) if it cannot be sourced at all,
+mark it `state:"unavailable"` with a `why` and screen on what you have. The dashboard raises an
+amber **Data notice** and tags the row in its provenance table, so a carried number never reads
+as a fresh one. What is forbidden is silence: an undated figure, or a stale one presented as
+current.
+
 ## Step 0 — Candidate generation (the hardest part)
 
 The **IBKR** connector has no bulk market screener, so build a candidate universe from
