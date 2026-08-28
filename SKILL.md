@@ -417,12 +417,11 @@ apply the same rubric inline from the shared methodology."*)
   change to the method has to land on both sides. Read before screening.
   **Not currently byte-identical, and this copy is the newer one:** it carries the
   *"pass / partial / fail grading rubric"* section (the per-letter PASS/PARTIAL/FAIL anchors and
-  the total read bands), which the sister's copy does not yet have. That section replaced an
-  older 0-10 rubric that scored a scorecard out of 70; **nothing in either skill scores out of
-  70 any more** — both dashboards total seven letters at pass 1 / partial 0.5 / fail 0, out of
-  **7**. The port owed runs *from here to the sister*, not the other way, and the sister's
-  `SKILL.md` parity note still describes this copy as carrying the old /70 rubric — that note is
-  stale and should be corrected when the rubric is ported.
+  the total read bands), which the sister's copy does not yet have. The port owed therefore runs
+  *from here to the sister*, not the other way. **There is exactly one scale in this skill:**
+  seven letters, each pass 1.0 / partial 0.5 / fail 0, totalling out of **7**. Any other scale
+  you may meet in an older copy of either skill, or in the sister's parity note, is dead — do not
+  reintroduce it, and do not grade a letter on anything but pass / partial / fail.
 - `references/tradingview-sector-sweep.md` — **the primary data guide**: the verified TradingView
   call shapes, the sector taxonomy, the triage filters, the grader hand-off, and how the two
   lists are built. Read before gathering data.

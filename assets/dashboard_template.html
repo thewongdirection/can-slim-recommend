@@ -1326,6 +1326,28 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
       'scorecard is seven letters at pass 1 / partial 0.5 / fail 0, so it totals at most 7 and the '+
       'cut must sit between 0 and 7 (the default is 4.5). A value above 7 empties both lists and '+
       'reads as a weak market rather than as a mis-set threshold.');
+  /* The checks above police CONFIG's structured fields. Prose is the remaining hole: a reason
+     that says "scores 45/70" renders exactly as written, contradicting the /7 scorecard beside
+     it. Match ONLY the dead scales by name - a general "denominator that isn't 7" rule fires on
+     ordinary prose ("52-week high of 514", "#1 of the ten"), and an audit that cries wolf is
+     worse than no audit, because the banner is meant to stop a shipment. */
+  (function(){
+    const DEAD = /\/\s*(?:70|10)\b|\bout of\s+(?:70|10)\b|\b0\s*-\s*10\s+(?:rubric|scale|scoring)\b/i;
+    const texts = [];
+    const add = (label, v)=>{ if (typeof v === "string" && v) texts.push([label, v]); };
+    add("market.implication", (CONFIG.market||{}).implication);
+    add("shortfall", CONFIG.shortfall); add("dataWarning", CONFIG.dataWarning);
+    add("portfolioNote", CONFIG.portfolioNote); add("dataProvenance", CONFIG.dataProvenance);
+    (CONFIG.picks||[]).forEach(p=> add((p.symbol||"a pick")+".reason", p.reason));
+    (CONFIG.noQualifierReasons||[]).forEach((r,i)=> add("noQualifierReasons["+i+"]", r));
+    (CONFIG.sourceMap||[]).forEach((r,i)=> add("sourceMap["+i+"].note", r.note));
+    texts.forEach(([label, v])=>{
+      const hit = v.match(DEAD);
+      if (hit) errs.push(label+' says "'+hit[0].trim()+'" - that is a scoring scale this skill '+
+        'does not use. A scorecard is seven letters at pass 1 / partial 0.5 / fail 0, totalling '+
+        'out of 7. Rewrite the sentence on the /7 scale.');
+    });
+  })();
   if (!CONFIG.dataProvenance) errs.push("CONFIG.dataProvenance is empty - the report must name the data sources it used.");
   if (!(CONFIG.sourceMap||[]).length) errs.push("CONFIG.sourceMap is empty - fill one row per class of figure (what, source, pulled).");
 
@@ -1386,7 +1408,7 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
     LETTERS6.forEach(k=>{
       if (sc[k]==null) errs.push(p.symbol+": letter "+k+" has no grade (defaults to fail).");
       else if (!isGrade(sc[k])) errs.push(p.symbol+": letter "+k+' is "'+sc[k]+
-        '", which is not pass/partial/fail - it scores as FAIL. Use the pass/partial/fail scale (an integer from the old 0-10 rubric will silently zero the letter).');
+        '", which is not pass/partial/fail - it scores as FAIL. Every letter takes exactly "pass" (1.0), "partial" (0.5) or "fail" (0); a bare number is not a grade on any scale this skill uses and silently zeroes the letter.');
     });
     if (!isGrade((CONFIG.market||{}).mGrade))
       errs.push('CONFIG.market.mGrade is "'+((CONFIG.market||{}).mGrade)+

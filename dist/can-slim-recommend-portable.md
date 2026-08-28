@@ -574,12 +574,11 @@ apply the same rubric inline from the shared methodology."*)
   change to the method has to land on both sides. Read before screening.
   **Not currently byte-identical, and this copy is the newer one:** it carries the
   *"pass / partial / fail grading rubric"* section (the per-letter PASS/PARTIAL/FAIL anchors and
-  the total read bands), which the sister's copy does not yet have. That section replaced an
-  older 0-10 rubric that scored a scorecard out of 70; **nothing in either skill scores out of
-  70 any more** — both dashboards total seven letters at pass 1 / partial 0.5 / fail 0, out of
-  **7**. The port owed runs *from here to the sister*, not the other way, and the sister's
-  `SKILL.md` parity note still describes this copy as carrying the old /70 rubric — that note is
-  stale and should be corrected when the rubric is ported.
+  the total read bands), which the sister's copy does not yet have. The port owed therefore runs
+  *from here to the sister*, not the other way. **There is exactly one scale in this skill:**
+  seven letters, each pass 1.0 / partial 0.5 / fail 0, totalling out of **7**. Any other scale
+  you may meet in an older copy of either skill, or in the sister's parity note, is dead — do not
+  reintroduce it, and do not grade a letter on anything but pass / partial / fail.
 - `references/tradingview-sector-sweep.md` — **the primary data guide**: the verified TradingView
   call shapes, the sector taxonomy, the triage filters, the grader hand-off, and how the two
   lists are built. Read before gathering data.
@@ -767,8 +766,8 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `references/canslim-methodology.md` — the distilled CAN SLIM rule set: the seven criteria and
   thresholds, chart-base patterns, buy/sell rules, money management, and the costly mistakes.
   Shared with `can-slim-grader`; this copy additionally carries the pass/partial/fail grading
-  rubric, which the sister's copy does not yet have. Both skills score a scorecard out of **7**
-  (seven letters at pass 1 / partial 0.5 / fail 0) — nothing scores out of 70.
+  rubric, which the sister's copy does not yet have. Both skills score a scorecard out of **7** —
+  seven letters, each pass 1.0 / partial 0.5 / fail 0.
 - `references/tradingview-sector-sweep.md` — the primary data guide: verified TradingView call
   shapes, the sector taxonomy, triage filters, the grader hand-off, and how the two lists are
   built.
@@ -3898,6 +3897,28 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
       'scorecard is seven letters at pass 1 / partial 0.5 / fail 0, so it totals at most 7 and the '+
       'cut must sit between 0 and 7 (the default is 4.5). A value above 7 empties both lists and '+
       'reads as a weak market rather than as a mis-set threshold.');
+  /* The checks above police CONFIG's structured fields. Prose is the remaining hole: a reason
+     that says "scores 45/70" renders exactly as written, contradicting the /7 scorecard beside
+     it. Match ONLY the dead scales by name - a general "denominator that isn't 7" rule fires on
+     ordinary prose ("52-week high of 514", "#1 of the ten"), and an audit that cries wolf is
+     worse than no audit, because the banner is meant to stop a shipment. */
+  (function(){
+    const DEAD = /\/\s*(?:70|10)\b|\bout of\s+(?:70|10)\b|\b0\s*-\s*10\s+(?:rubric|scale|scoring)\b/i;
+    const texts = [];
+    const add = (label, v)=>{ if (typeof v === "string" && v) texts.push([label, v]); };
+    add("market.implication", (CONFIG.market||{}).implication);
+    add("shortfall", CONFIG.shortfall); add("dataWarning", CONFIG.dataWarning);
+    add("portfolioNote", CONFIG.portfolioNote); add("dataProvenance", CONFIG.dataProvenance);
+    (CONFIG.picks||[]).forEach(p=> add((p.symbol||"a pick")+".reason", p.reason));
+    (CONFIG.noQualifierReasons||[]).forEach((r,i)=> add("noQualifierReasons["+i+"]", r));
+    (CONFIG.sourceMap||[]).forEach((r,i)=> add("sourceMap["+i+"].note", r.note));
+    texts.forEach(([label, v])=>{
+      const hit = v.match(DEAD);
+      if (hit) errs.push(label+' says "'+hit[0].trim()+'" - that is a scoring scale this skill '+
+        'does not use. A scorecard is seven letters at pass 1 / partial 0.5 / fail 0, totalling '+
+        'out of 7. Rewrite the sentence on the /7 scale.');
+    });
+  })();
   if (!CONFIG.dataProvenance) errs.push("CONFIG.dataProvenance is empty - the report must name the data sources it used.");
   if (!(CONFIG.sourceMap||[]).length) errs.push("CONFIG.sourceMap is empty - fill one row per class of figure (what, source, pulled).");
 
@@ -3958,7 +3979,7 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
     LETTERS6.forEach(k=>{
       if (sc[k]==null) errs.push(p.symbol+": letter "+k+" has no grade (defaults to fail).");
       else if (!isGrade(sc[k])) errs.push(p.symbol+": letter "+k+' is "'+sc[k]+
-        '", which is not pass/partial/fail - it scores as FAIL. Use the pass/partial/fail scale (an integer from the old 0-10 rubric will silently zero the letter).');
+        '", which is not pass/partial/fail - it scores as FAIL. Every letter takes exactly "pass" (1.0), "partial" (0.5) or "fail" (0); a bare number is not a grade on any scale this skill uses and silently zeroes the letter.');
     });
     if (!isGrade((CONFIG.market||{}).mGrade))
       errs.push('CONFIG.market.mGrade is "'+((CONFIG.market||{}).mGrade)+
