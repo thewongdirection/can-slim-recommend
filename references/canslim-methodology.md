@@ -86,7 +86,7 @@ Two ideas underpin everything:
 - **Relative Strength (RS):** buy stocks whose 12-month price performance beats **≥ 80%**
   (ideally 90%+) of the market. Big winners averaged an **RS ~87** before their major run.
   **Do not buy RS below ~70.** (This skill computes an RS *proxy* from price history — see
-  ibkr-data-guide.md — since a true full-market 1–99 RS rating needs the whole market.)
+  each skill's data guide — since a true full-market 1–99 RS rating needs the whole market.)
 - **Avoid "sympathy plays"** — the cheaper laggard in the same group that never performs
   like the leader. "The first man gets the oyster; the second, the shell."
 - **Never buy on the way down** because it "looks cheap" (Cisco $82→$8, Crocs $75→$1, BofA
@@ -277,36 +277,25 @@ A candidate should satisfy as many as possible:
 22. Watch for buybacks (5–10%+) and new management.
 23. Don't buy at the bottom / on the way down / average down.
 
-## The 0-10 grading rubric (how to score each letter)
-Grade each letter as an integer **0-10** (10 = textbook-perfect, 0 = absent / red flag). Be honest
-and granular. The dashboard total /70 = C+A+N+S+L+I + M. Anchors:
+## Scoring: pass / partial / fail, total out of 7
+Grade each letter **pass / partial / fail** against the thresholds above, and total them at
+**one point per letter — pass 1, partial 0.5, fail 0 — across C-A-N-S-L-I-M, maximum 7.00.**
+Both skills in this pair score on that scale, so a screened idea and a graded ticker mean the
+same thing; the dashboards compute the total themselves. Never rescale it.
 
-- **C — current quarterly EPS & sales:** 10 = EPS +100%+ and accelerating with sales +25%+; 8 =
-  EPS +40-100% accelerating; 6 = +25-40% steady; 4 = +10-25% or decelerating; 2 = flat/slowing;
-  0 = negative / none. Dock 2+ if sales lag EPS (buyback-driven) or margins fall.
-- **A — annual earnings & ROE:** 10 = 3 yrs EPS +25%+ each and ROE 25%+; 8 = solid multi-yr
-  growth, ROE 17%+; 6 = growing but ROE < 17% or one soft year; 4 = erratic; 2 = one good year on
-  a weak base; 0 = declining. Newly public (< 2 yrs) with strong quarters caps at ~7.
-- **N — new + new high off a base:** 10 = major new driver AND breaking out of a sound base at a
-  proper pivot, <=5% extended; 8 = at/near a new high off a good base; 6 = 5-10% off / slightly
-  extended; 4 = 10-15% off / base repairing; 2 = wide-loose or 15-25% off; 0 = no new driver or
-  > 25% off / below base.
-- **S — supply & demand:** 10 = breakout volume >= +50%, tight float, active buyback; 8 = above the
-  50/200-day with accumulation; 6 = above the MAs on average volume; 4 = just above/below the
-  50-day, thin confirmation; 2 = heavy distribution/dilution; 0 = below the 200-day / illiquid.
-- **L — leader not laggard (map RS):** 10 = RS >= 95 (proxy: far outperforming SPY, #1 in group);
-  8 = RS ~85-95; 6 = RS ~75-85; 4 = roughly in line with SPY; 2 = lagging; 0 = clear laggard /
-  negative relative trend. Prefer the #1-2 name in a top group.
-- **I — institutional sponsorship:** 10 = rising ownership, top-tier funds recently added, not
-  over-owned; 8 = solid/improving; 6 = adequate; 4 = thin or flat; 2 = funds distributing; 0 =
-  neglected / fund-dumping.
-- **M — market direction (scored ONCE, applied to every row via `CONFIG.market.mScore`):** 10 =
-  confirmed uptrend, few distribution days, broad leadership; 8 = healthy uptrend; 6 = uptrend
-  under pressure (a few distribution days, narrowing); 4 = choppy rally attempt, no follow-through;
-  2 = downtrend with failed rallies; 0 = confirmed correction / bear.
+The grade for a letter follows mechanically from its threshold and the actual figure printed
+beside it: if the evidence concedes the bar was missed, the letter is not a pass, however
+impressive the story. Where a threshold says **each** ("EPS up each of the last 3 yrs at >=25%"),
+every period must clear it.
 
-Rough total read: **60-70** = table-pounding leader in a strong tape; **48-59** = solid, buyable on
-a proper pivot; **35-47** = watch (needs the market or a letter to improve); **< 35** = pass.
+**C, A and L weigh more in the verdict, not in the arithmetic.** They were the most predictive
+traits, so they gate the label rather than the number: a buy-range call needs C, A and L passing
+with a valid N, and no total earns it without them. Rough read of the total: **6-7** = leader in
+a strong tape; **4.5-5.5** = solid, buyable only on a proper pivot; **3-4** = watch, needs the
+market or a letter to improve; **under 3** = pass.
+
+Per-skill scoring detail (what counts as partial for each letter, and the verdict definitions)
+lives in each skill's own data guide, not here.
 
 ## Modern refinements & professional practice (beyond the 1988 book)
 CAN SLIM's core is durable, but apply it with current, professionally-informed judgment — and

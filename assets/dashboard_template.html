@@ -12,10 +12,13 @@
       bases/pivots, relative strength, new highs, volume/accumulation, leadership,
       institutional sponsorship, market direction). No generic market chatter, no non-method
       rationale. If a name can't be justified in CAN SLIM terms, it does not belong here.
-    - `scores` grades each of C,A,N,S,L,I as an INTEGER 0-10 (be granular: e.g. C:7, A:5).
-    - M (market direction) is graded ONCE for the whole market via CONFIG.market.mScore (0-10)
-      and applied to every row (same value), so the per-row scorecard shows C,A,N,S,L,I + an
-      M cell (dashed = market-wide). Total = C+A+N+S+L+I + M, out of 70.
+    - `scores` grades each of C,A,N,S,L,I as exactly "pass" | "partial" | "fail".
+    - M (market direction) is graded ONCE for the whole market via CONFIG.market.mState
+      ("pass"|"partial"|"fail") and applied to every row, so the per-row scorecard shows
+      C,A,N,S,L,I + an M cell (dashed = market-wide).
+    - TOTAL IS OUT OF 7: one point per letter - pass 1, partial 0.5, fail 0 - summed across
+      C+A+N+S+L+I+M. The page computes it; never rescale the denominator. This is the same
+      scale can-slim-grader uses, so a screened idea and a graded ticker mean the same thing.
     - Never put account-bound data (IDs, balances, positions) anywhere in CONFIG.
 
   ENCODING: keep CONFIG text ASCII where practical (use "-" not an em-dash, "vs" not a
@@ -226,10 +229,10 @@
 
   <div class="section-title">Recommended stocks <span id="countnote" style="font-weight:400;text-transform:none;letter-spacing:0"></span></div>
   <div class="legend">
-    <span><span class="dot pass"></span>8-10 strong</span>
-    <span><span class="dot partial"></span>4-7 partial</span>
-    <span><span class="dot fail"></span>0-3 weak</span>
-    <span style="color:var(--muted)">Each letter graded <b>0-10</b>; Total = C&middot;A&middot;N&middot;S&middot;L&middot;I + <b>M</b> (market, same for every row) out of <b>70</b>. RS = relative strength vs. SPY.</span>
+    <span><span class="dot pass"></span>pass (1)</span>
+    <span><span class="dot partial"></span>partial (0.5)</span>
+    <span><span class="dot fail"></span>fail (0)</span>
+    <span style="color:var(--muted)">Each letter graded <b>pass / partial / fail</b> (1 / 0.5 / 0); Total = C&middot;A&middot;N&middot;S&middot;L&middot;I + <b>M</b> (market, same for every row) out of <b>7</b>. RS = relative strength vs. SPY.</span>
   </div>
   <div class="legend"><span class="hint">Click a column header to sort. Click a ticker to open its ibkr-review-ticker report.</span></div>
   <div class="tablewrap">
@@ -330,7 +333,8 @@ const CONFIG = {
   market: {
     verdict: "Confirmed uptrend - narrow & selective",   // badge text
     tone: "pressure",                                     // "up" | "pressure" | "down"
-    mScore: 6,                                            // M graded 0-10 (feeds every row's /70 total): confirmed uptrend ~8-10, under pressure ~5-7, correction ~0-4
+    mState: "partial",                                    // M graded once for the whole market and applied to every row's /7 total:
+                                                          // "pass" = confirmed uptrend, "partial" = uptrend under pressure, "fail" = correction/downtrend
     distributionDays: "SPY 5 / QQQ 7 over ~5 weeks",
     implication: "Indices near highs above the 50-day, but leadership is narrow (M intact but late-stage). Buy only genuine leaders emerging from sound bases; normal 7-8% stops."
   },
@@ -344,7 +348,7 @@ const CONFIG = {
     // {
     //   rank:1, symbol:"ANET", company:"Arista Networks", group:"AI networking",
     //   price:"186.96", rs:"+51", offHigh:"0%", buyPoint:"~178 pivot", stop:"~172",
-    //   scores:{C:9,A:8,N:9,S:6,L:9,I:8},   // each 0-10; M comes from market.mScore
+    //   scores:{C:"pass",A:"pass",N:"pass",S:"partial",L:"pass",I:"partial"},   // M comes from market.mState
     //   reason:"C: Q EPS +32% / sales +35% accelerating. A: 3-yr growth + high ROE. N: new AI-cluster product at a new high off a sound base. L: RS +51, #1 in a leading group. I: heavy institutional sponsorship.",
     //   reviewUrl:"reviews/ANET-review.html"
     // }
@@ -371,12 +375,19 @@ const esc = (s)=> (s==null?"":String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':
 const rsClass = (v)=> /^[-\u2212]/.test(String(v).trim()) ? "neg" : "pos";
 // parse a messy numeric string ("+51","-14%","1,188",">1,220 breakout","~178 pivot") -> number|NaN
 const num = (s)=>{ if(s==null) return NaN; const m=String(s).replace(/,/g,'').match(/-?\d+(\.\d+)?/); return m?parseFloat(m[0]):NaN; };
-// --- 0-10 per-letter grading; total = C+A+N+S+L+I + M (market, same for all rows) out of 70 ---
+// --- pass/partial/fail per letter; total = C+A+N+S+L+I + M (market, same for all rows) OUT OF 7.
+// One point per letter, pass 1 / partial 0.5 / fail 0, so the maximum is 7.00 - the same scale
+// can-slim-grader scores a single ticker on. Anything unrecognised counts as fail rather than
+// silently inflating a total. ---
 const LETTERS6 = ["C","A","N","S","L","I"];
-const clamp10 = (v)=>{ v=Number(v); return isFinite(v)?Math.max(0,Math.min(10,Math.round(v))):0; };
-const gradeCls = (v)=> v>=8?"s-hi":v>=4?"s-mid":"s-lo";
-const mScore = ()=> clamp10((CONFIG.market||{}).mScore);
-const scoreTotal = (p)=> LETTERS6.reduce((n,k)=> n+clamp10((p.scores||{})[k]), 0) + mScore();
+const WEIGHT = {pass:1, partial:0.5, fail:0};
+const grade = (v)=>{ const k = String(v||"").toLowerCase(); return WEIGHT[k]===undefined ? "fail" : k; };
+const gradeCls = (v)=> ({pass:"s-hi", partial:"s-mid", fail:"s-lo"})[grade(v)];
+const MARK = {pass:"\u2713", partial:"~", fail:"\u2717"};
+const mState = ()=> grade((CONFIG.market||{}).mState);
+const scoreTotal = (p)=> Math.round((LETTERS6.reduce((n,k)=> n+WEIGHT[grade((p.scores||{})[k])], 0)
+                                     + WEIGHT[mState()]) * 100) / 100;
+const fmtTotal = (t)=> (t % 1 ? t.toFixed(1) : String(t));
 
 document.title = CONFIG.title || "CAN SLIM Recommendations";
 $("title").textContent = CONFIG.title || document.title;
@@ -449,7 +460,7 @@ const COLS = [
   {key:"price",  label:"Price",        type:"num",  cls:"num",  get:p=>num(p.price)},
   {key:"rs",     label:"RS",           type:"num",  cls:"num",  get:p=>num(p.rs)},
   {key:"offHigh",label:"% off 52w hi", type:"num",  cls:"num",  get:p=>num(p.offHigh)},
-  {key:"score",  label:"C&middot;A&middot;N&middot;S&middot;L&middot;I&middot;M (/70)", type:"num", cls:"", get:p=>scoreTotal(p)},
+  {key:"score",  label:"C&middot;A&middot;N&middot;S&middot;L&middot;I&middot;M (/7)", type:"num", cls:"", get:p=>scoreTotal(p)},
   {key:"buyPoint",label:"Buy point",   type:"text", cls:"num",  get:p=>(p.buyPoint||""), noSort:true},
   {key:"stop",   label:"Stop",         type:"text", cls:"num",  get:p=>(p.stop||""),      noSort:true},
   {key:"reason", label:"Why (CAN SLIM read)", type:"text", cls:"", get:p=>(p.reason||""), noSort:true},
@@ -467,12 +478,13 @@ function renderRows(list){
     const tk = p.reviewUrl
       ? '<a class="sym" data-review="'+esc(p.reviewUrl)+'" data-sym="'+esc(p.symbol)+'">'+esc(p.symbol)+'</a>'
       : '<span class="sym">'+esc(p.symbol)+'</span>';
-    const ms = mScore();
-    const sc = LETTERS6.map(k=>{ const v=clamp10((p.scores||{})[k]);
-      return '<span class="sc"><span class="lab">'+k+'</span><span class="mk '+gradeCls(v)+'">'+v+'</span></span>';
+    const ms = mState();
+    const sc = LETTERS6.map(k=>{ const v=grade((p.scores||{})[k]);
+      return '<span class="sc" title="'+k+': '+v+'"><span class="lab">'+k+'</span><span class="mk '+
+             gradeCls(v)+'">'+MARK[v]+'</span></span>';
     }).join('')
-      + '<span class="sc mcol" title="M = market direction (same for every row)"><span class="lab">M</span><span class="mk '+gradeCls(ms)+'">'+ms+'</span></span>'
-      + '<span class="sc-total"><span class="lab">/70</span><span class="val">'+scoreTotal(p)+'</span></span>';
+      + '<span class="sc mcol" title="M = market direction, '+ms+' (same for every row)"><span class="lab">M</span><span class="mk '+gradeCls(ms)+'">'+MARK[ms]+'</span></span>'
+      + '<span class="sc-total"><span class="lab">/7</span><span class="val">'+fmtTotal(scoreTotal(p))+'</span></span>';
     return '<tr>'+
       '<td class="rk">'+esc(p.rank)+'</td>'+
       '<td>'+tk+'<div class="co">'+esc(p.company)+'</div></td>'+
@@ -492,9 +504,23 @@ function applySort(key){
   sortState.dir = (sortState.key===key) ? -sortState.dir : 1;
   sortState.key = key;
   const dir = sortState.dir;
+  // The /7 scale has only 15 possible totals, so ties are the norm rather than the exception.
+  // Break them the way the method ranks: stronger relative strength first, then closer to the
+  // 52-week high. Without this, sorting by score would leave rows in arbitrary input order.
+  // Returns "better first"; the caller multiplies by -dir so the tiebreak follows the same
+  // direction of goodness as the primary sort (best-first view -> best RS first, and vice versa).
+  const tiebreak = (a,b)=>{
+    const ra=num(a.rs), rb=num(b.rs);
+    if (isFinite(ra) && isFinite(rb) && ra!==rb) return rb-ra;
+    const oa=num(a.offHigh), ob=num(b.offHigh);
+    if (isFinite(oa) && isFinite(ob) && oa!==ob) return oa-ob;
+    return 0;
+  };
   const sorted = picks.slice().sort((a,b)=>{
     let va=col.get(a), vb=col.get(b);
-    if(col.type==="num"){ const na=isNaN(va), nb=isNaN(vb); if(na&&nb)return 0; if(na)return 1; if(nb)return -1; return (va-vb)*dir; }
+    if(col.type==="num"){ const na=isNaN(va), nb=isNaN(vb); if(na&&nb)return 0; if(na)return 1; if(nb)return -1;
+      if(va!==vb) return (va-vb)*dir;
+      return key==="score" ? tiebreak(a,b)*-dir : 0; }
     return String(va).localeCompare(String(vb),undefined,{sensitivity:'base'})*dir;
   });
   renderRows(sorted);
@@ -509,7 +535,7 @@ renderRows(picks);
 // ---- leadership map: RS (x) vs % off 52-wk high (y, 0 at top) ----
 function buildLeadMap(){
   const pts = picks.map(p=>({sym:p.symbol, x:num(p.rs), y:num(p.offHigh),
-                             lead:scoreTotal(p)>=50}))
+                             lead:scoreTotal(p)>=5}))
                    .filter(d=> isFinite(d.x) && isFinite(d.y));
   if (pts.length < 2) return;   // nothing meaningful to plot
   $("leadmapWrap").style.display='block';

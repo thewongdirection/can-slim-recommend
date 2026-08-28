@@ -203,13 +203,17 @@ see "Delegating for deeper financials" below.
 ### 5 — Score, filter, diversify
 Apply `ibkr-data-guide.md` Step 4: hard-disqualify the failures (cheap/illiquid, near
 52-week lows, RS lagging SPY, declining or no earnings, wide-loose/late-stage bases). **Grade
-each survivor 0-10 on every CAN SLIM letter** — be granular, not just pass/fail (use the 0-10
-rubric in `canslim-methodology.md`): C, A, N, S, L, I per stock, plus **M graded once for the
-whole market** (0-10: confirmed uptrend ~8-10, under pressure ~5-7, correction ~0-4). The
-**total is out of 70** (= C+A+N+S+L+I + M); weight earnings (C/A) and leadership (L) most in the
-qualitative read. Use `get_company_themes` per finalist to tag industry group/sector, and
+each survivor **pass / partial / fail** on every CAN SLIM letter** (thresholds in
+`canslim-methodology.md`): C, A, N, S, L, I per stock, plus **M graded once for the whole
+market** ("pass" = confirmed uptrend, "partial" = under pressure, "fail" = correction). The
+**total is out of 7** — one point per letter, pass 1 / partial 0.5 / fail 0, summed across
+C+A+N+S+L+I+M — the same scale `can-slim-grader` uses, so a screened idea and a graded ticker
+mean the same thing. C, A and L weigh more in the **qualitative read and the buy-range call**,
+never in the arithmetic. Use `get_company_themes` per finalist to tag industry group/sector, and
 **cap names per group (≤ ~2-3)** so the final list spans **non-overlapping sectors**. Rank by
-the /70 total (RS and distance-to-high as tiebreakers).
+the /7 total, breaking ties on RS and then distance-to-high — the 15-value scale ties often, so
+the tiebreak is what actually orders the list (the dashboard applies the same rule when you sort
+by score).
 
 ### 6 — Deliver: a self-contained HTML dashboard by default (offer PDF)
 Return the requested count (default 20). **If fewer qualify, return fewer and say why** —
@@ -232,8 +236,9 @@ the actual EPS/sales %, the RS figure, the base and pivot).
 straight in a browser, rendered from `assets/dashboard_template.html`:
 1. Copy the template to an output file (e.g. `canslim-recommendations-<date>.html`).
 2. Fill the `CONFIG` object — the *only* thing you edit; the page renders itself. Populate:
-   `market` (verdict + tone + **`mScore` 0-10** + the M implication), `picks[]` (each with
-   `scores` = an **integer 0-10 for every one of C·A·N·S·L·I**, the basic info fields, and the
+   `market` (verdict + tone + **`mState`: "pass"|"partial"|"fail"** + the M implication),
+   `picks[]` (each with `scores` = **"pass"|"partial"|"fail" for every one of C·A·N·S·L·I**,
+   the basic info fields, and the
    CAN-SLIM-only `reason`), and, when they apply,
    `shortfall` (fewer than requested),
    `watch[]` (leaders repairing bases — not yet buyable), `speculative[]` (strong charts that
@@ -296,10 +301,12 @@ nothing is an order), and an auto-rendered **acronym glossary** at the end (the 
 SLIM + finance acronyms; extend with run-specific terms via `CONFIG.glossary` = `[{term, def}]`).
 **Never** write account-bound data into the file — it may be shared.
 
-**Scoring — 0-10 per letter, /70 total (incl. M):** Grade each of C·A·N·S·L·I from 0 to 10 per
-stock, and grade **M once for the whole market** (0-10) via `CONFIG.market.mScore`. The template
-renders the six per-stock letters plus a dashed **M cell** (the market score, identical on every
-row) and a **/70 total** (= C+A+N+S+L+I + M). M is scored once because market direction is a
+**Scoring — pass/partial/fail per letter, /7 total (incl. M):** Grade each of C·A·N·S·L·I as
+`"pass"`, `"partial"` or `"fail"` per stock, and grade **M once for the whole market** via
+`CONFIG.market.mState`. The template renders the six per-stock letters plus a dashed **M cell**
+(the market grade, identical on every row) and computes the **/7 total** itself
+(pass 1, partial 0.5, fail 0, across C+A+N+S+L+I+M — never rescale it). M is scored once because
+market direction is a
 single market-wide gate — it contributes equally to every name's total rather than being
 re-judged per row. Grade honestly and granularly (e.g. C:7 for solid-but-not-accelerating
 earnings, L:9 for a clear RS leader); do not collapse everything to 0/5/10.

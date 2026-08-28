@@ -323,10 +323,15 @@ than guessing.
 
 1. **Hard filters (disqualify):** price < $10; near 52-week low / RS lagging SPY; annual or
    quarterly EPS declining; no earnings; wide-loose/late-stage-only base; illiquid.
-2. **CAN SLIM score:** rate each of C, A, N, S, L, I against the thresholds in
-   `canslim-methodology.md` (e.g., pass/partial/fail), plus the M context. Rank by how many
-   criteria are strongly met, weighting C, A (earnings) and L (RS/leadership) most heavily —
-   these are the method's most predictive factors.
+2. **CAN SLIM score — pass / partial / fail, total out of 7:** rate each of C, A, N, S, L, I
+   against the thresholds in `canslim-methodology.md`, plus **M graded once for the whole
+   market** (`CONFIG.market.mState`). Total at **one point per letter — pass 1, partial 0.5,
+   fail 0 — across C+A+N+S+L+I+M, maximum 7.00**; the dashboard computes it, and it is the same
+   scale `can-slim-grader` scores a single ticker on. Never rescale it.
+   Rank by that total, then break ties on **RS**, then on **distance below the 52-week high** —
+   with only 15 possible totals ties are the norm, so the tiebreak is what really orders the
+   list. C, A (earnings) and L (RS/leadership) weigh most in the **qualitative read and the
+   buy-range call** — the method's most predictive factors — not in the arithmetic.
 3. **Sector non-overlap:** use `get_company_themes { contract_id }` to get each finalist's
    sectors/trends. Enforce diversification: **cap how many names share the same industry
    group/sector** (aim ≤ 2–3 per group for a 20-name list) so the watchlist isn't, e.g., 15
