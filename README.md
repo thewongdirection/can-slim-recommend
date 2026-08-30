@@ -96,7 +96,17 @@ rules, and the classic mistakes to avoid.
 
 ## Output
 
-- **Default: a white-themed PDF report** (`scripts/html_to_pdf.py`), A4 landscape with a 15mm
+One command produces either format, and the format is an argument rather than a convention:
+
+```
+python scripts/build_report.py canslim-recommendations-<date>.html [--format pdf|html|both]
+```
+
+`--format` **defaults to `pdf`**. The script also enforces the dashboard's self-audit — it renders
+the page and refuses to emit anything while the report is failing its own checks — and falls back
+to the HTML, with a reason, if no PDF engine is installed.
+
+- **Default: a white-themed PDF report** (`scripts/build_report.py`), A4 landscape with a 15mm
   margin on every edge, so the
   pick tables fit. Each pick's CAN SLIM rationale runs as a full-width row beneath its stats
   rather than squeezed into a column, so it always has the whole table to wrap into. It includes the market verdict, the screening funnel, a leadership
@@ -166,7 +176,9 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `scripts/sector_screen.py` — sector sweep arithmetic + CAN SLIM triage over the screener rows.
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
-- `scripts/html_to_pdf.py` — renders the filled dashboard to PDF. Shared with `can-slim-grader`.
+- `scripts/build_report.py` — produces the PDF (default), the HTML, or both, and enforces the
+  self-audit before emitting.
+- `scripts/html_to_pdf.py` — the PDF engine chain behind it. Shared with `can-slim-grader`.
 - `scripts/export_portable.py` — bundles the skill for use with a non-Claude assistant.
 - `assets/dashboard_template.html` — the self-contained report template: dark on screen, white
   on paper.

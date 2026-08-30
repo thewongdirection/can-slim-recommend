@@ -260,7 +260,7 @@ company," no personal vibe. If a name cannot be defended in CAN SLIM terms, it d
 either list. Keep each reason concrete (cite the actual EPS/sales %, the RS figure, the base and
 pivot).
 
-### 7 — Deliver: a white A4 PDF by default (the dark HTML on request)
+### 7 — Deliver: PDF by default, HTML on request (`--format` decides)
 1. **Fill the report.** Copy `assets/dashboard_template.html` to
    `canslim-recommendations-<date>.html` and fill the `CONFIG` object — the *only* thing you
    edit; the page renders itself. Populate `market` (verdict + tone + **`mGrade`** + implication),
@@ -278,21 +278,34 @@ pivot).
    does not declare. **Never ship a report showing that banner** —
    fix the grade or fix the evidence, and do not delete the check. The PDF freezes whatever the
    page says, so verify before exporting.
-3. **Render the PDF — this is the default deliverable.**
-   `python scripts/html_to_pdf.py canslim-recommendations-<date>.html`
-   (headless Chrome/Chromium/Edge → Playwright → WeasyPrint → wkhtmltopdf; it prints the engine
-   used). The template declares `@page{size:A4 landscape; margin:15mm}` — A4 landscape because
-   the pick tables are wide, and 15mm on every edge as the committed print inset. The script
-   reads **both** the size and the margin out of that rule and passes them to whichever fallback
-   engine it uses, so every engine produces the same page. The print stylesheet also **forces the
-   white palette**, so the PDF comes out white even though the HTML file itself is dark. Hand over
-   the PDF. If no PDF engine is available, say so and hand over the HTML instead — never block the
-   run on the export.
-4. **HTML on request only, and it is dark.** Give the `.html` when the user asks for the HTML, an
-   interactive version, sortable columns, or the clickable per-ticker report modal — those flatten
-   in the PDF. The template ships `<html data-theme="dark">`, so the HTML deliverable is dark on
-   screen; the PDF is unaffected. Switch that attribute to `"light"` only if someone asks for a
-   light HTML.
+3. **Build the deliverable — one command, and the format is an argument.**
+   ```
+   python scripts/build_report.py canslim-recommendations-<date>.html [--format pdf|html|both]
+   ```
+   **`--format` defaults to `pdf`**, so plain `build_report.py <file>` is the default run. Pass
+   `--format html` when the user asks for HTML, `--format both` when they want each. Read the
+   user's own words: *"as a PDF"*, *"send me the HTML"*, *"both"* — and if they said nothing about
+   format, produce the PDF. Add `--theme light` only if someone wants a light HTML; the PDF is
+   white regardless.
+
+   What the script does for you, so none of it depends on remembering:
+   - **Enforces the self-audit.** It renders the page headlessly, reads the banner, and
+     **refuses to emit anything** while the report is failing its own checks (exit 1, listing
+     each failure). `--no-check` overrides it for inspection only. With no browser available the
+     check is skipped *with a warning* rather than silently passing.
+   - **Runs the same engine chain** as `html_to_pdf.py` (Chrome/Chromium/Edge → Playwright →
+     WeasyPrint → wkhtmltopdf) and names the one it used.
+   - **Never blocks the run on the export.** If `--format pdf` was asked for and no engine
+     exists, it writes the HTML instead and says why — hand that over and repeat the reason.
+
+   The template declares `@page{size:A4 landscape; margin:15mm}` — A4 landscape because the pick
+   tables are wide, 15mm on every edge as the committed print inset — and the print stylesheet
+   forces the white palette, so the PDF is white even though the HTML is dark. `html_to_pdf.py`
+   remains usable directly if you only want the PDF and nothing else.
+4. **What differs between the two formats.** Only presentation: the same filled `CONFIG` drives
+   both. The **HTML** is dark, has sortable columns and clickable tickers that open each name's
+   per-ticker report in a modal — all of which flatten in print. The **PDF** is white, A4
+   landscape, paginated. Neither contains a figure the other does not.
 5. Keep the chat reply short: the market read, how many cleared 4.5 and from which sectors, the
    headline names, and why the count is what it is.
 
@@ -433,8 +446,11 @@ apply the same rubric inline from the shared methodology."*)
 - `scripts/relative_strength.py` — computes the RS proxy, % off 52-week high, base depth/length
   and breakout volume from OHLCV bars (TradingView / IBKR / Polygon shapes). Shared with
   `can-slim-grader`. Feed it the collected bars rather than eyeballing charts.
-- `scripts/html_to_pdf.py` — renders the filled dashboard to the default PDF deliverable
-  (Chrome → Playwright → WeasyPrint → wkhtmltopdf; honours the template's `@page` size). Shared
+- `scripts/build_report.py` — **the step-7 entry point.** Produces the PDF (default), the HTML,
+  or both from one filled dashboard; enforces the self-audit before emitting anything; falls back
+  to the HTML when no PDF engine exists.
+- `scripts/html_to_pdf.py` — the PDF engine chain behind it (Chrome → Playwright → WeasyPrint →
+  wkhtmltopdf; honours the template's `@page` size and margin). Usable directly, and shared
   with `can-slim-grader`.
 - `assets/dashboard_template.html` — the report (full behavior in Step 7): a self-contained,
   print-optimized, pure-ASCII dashboard that is **dark on screen and white in print** (A4

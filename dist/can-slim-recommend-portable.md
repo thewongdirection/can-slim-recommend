@@ -143,6 +143,7 @@ can-slim-recommend/
   references/ibkr-data-guide.md
   scripts/sector_screen.py
   scripts/relative_strength.py
+  scripts/build_report.py
   scripts/html_to_pdf.py
   assets/dashboard_template.html
 ```
@@ -154,7 +155,7 @@ can-slim-recommend/
 
 The skill itself: when it activates and the full workflow, step by step.
 
-```md
+````md
 ---
 name: can-slim-recommend
 description: >-
@@ -417,7 +418,7 @@ company," no personal vibe. If a name cannot be defended in CAN SLIM terms, it d
 either list. Keep each reason concrete (cite the actual EPS/sales %, the RS figure, the base and
 pivot).
 
-### 7 — Deliver: a white A4 PDF by default (the dark HTML on request)
+### 7 — Deliver: PDF by default, HTML on request (`--format` decides)
 1. **Fill the report.** Copy `assets/dashboard_template.html` to
    `canslim-recommendations-<date>.html` and fill the `CONFIG` object — the *only* thing you
    edit; the page renders itself. Populate `market` (verdict + tone + **`mGrade`** + implication),
@@ -435,21 +436,34 @@ pivot).
    does not declare. **Never ship a report showing that banner** —
    fix the grade or fix the evidence, and do not delete the check. The PDF freezes whatever the
    page says, so verify before exporting.
-3. **Render the PDF — this is the default deliverable.**
-   `python scripts/html_to_pdf.py canslim-recommendations-<date>.html`
-   (headless Chrome/Chromium/Edge → Playwright → WeasyPrint → wkhtmltopdf; it prints the engine
-   used). The template declares `@page{size:A4 landscape; margin:15mm}` — A4 landscape because
-   the pick tables are wide, and 15mm on every edge as the committed print inset. The script
-   reads **both** the size and the margin out of that rule and passes them to whichever fallback
-   engine it uses, so every engine produces the same page. The print stylesheet also **forces the
-   white palette**, so the PDF comes out white even though the HTML file itself is dark. Hand over
-   the PDF. If no PDF engine is available, say so and hand over the HTML instead — never block the
-   run on the export.
-4. **HTML on request only, and it is dark.** Give the `.html` when the user asks for the HTML, an
-   interactive version, sortable columns, or the clickable per-ticker report modal — those flatten
-   in the PDF. The template ships `<html data-theme="dark">`, so the HTML deliverable is dark on
-   screen; the PDF is unaffected. Switch that attribute to `"light"` only if someone asks for a
-   light HTML.
+3. **Build the deliverable — one command, and the format is an argument.**
+   ```
+   python scripts/build_report.py canslim-recommendations-<date>.html [--format pdf|html|both]
+   ```
+   **`--format` defaults to `pdf`**, so plain `build_report.py <file>` is the default run. Pass
+   `--format html` when the user asks for HTML, `--format both` when they want each. Read the
+   user's own words: *"as a PDF"*, *"send me the HTML"*, *"both"* — and if they said nothing about
+   format, produce the PDF. Add `--theme light` only if someone wants a light HTML; the PDF is
+   white regardless.
+
+   What the script does for you, so none of it depends on remembering:
+   - **Enforces the self-audit.** It renders the page headlessly, reads the banner, and
+     **refuses to emit anything** while the report is failing its own checks (exit 1, listing
+     each failure). `--no-check` overrides it for inspection only. With no browser available the
+     check is skipped *with a warning* rather than silently passing.
+   - **Runs the same engine chain** as `html_to_pdf.py` (Chrome/Chromium/Edge → Playwright →
+     WeasyPrint → wkhtmltopdf) and names the one it used.
+   - **Never blocks the run on the export.** If `--format pdf` was asked for and no engine
+     exists, it writes the HTML instead and says why — hand that over and repeat the reason.
+
+   The template declares `@page{size:A4 landscape; margin:15mm}` — A4 landscape because the pick
+   tables are wide, 15mm on every edge as the committed print inset — and the print stylesheet
+   forces the white palette, so the PDF is white even though the HTML is dark. `html_to_pdf.py`
+   remains usable directly if you only want the PDF and nothing else.
+4. **What differs between the two formats.** Only presentation: the same filled `CONFIG` drives
+   both. The **HTML** is dark, has sortable columns and clickable tickers that open each name's
+   per-ticker report in a modal — all of which flatten in print. The **PDF** is white, A4
+   landscape, paginated. Neither contains a figure the other does not.
 5. Keep the chat reply short: the market read, how many cleared 4.5 and from which sectors, the
    headline names, and why the count is what it is.
 
@@ -590,8 +604,11 @@ apply the same rubric inline from the shared methodology."*)
 - `scripts/relative_strength.py` — computes the RS proxy, % off 52-week high, base depth/length
   and breakout volume from OHLCV bars (TradingView / IBKR / Polygon shapes). Shared with
   `can-slim-grader`. Feed it the collected bars rather than eyeballing charts.
-- `scripts/html_to_pdf.py` — renders the filled dashboard to the default PDF deliverable
-  (Chrome → Playwright → WeasyPrint → wkhtmltopdf; honours the template's `@page` size). Shared
+- `scripts/build_report.py` — **the step-7 entry point.** Produces the PDF (default), the HTML,
+  or both from one filled dashboard; enforces the self-audit before emitting anything; falls back
+  to the HTML when no PDF engine exists.
+- `scripts/html_to_pdf.py` — the PDF engine chain behind it (Chrome → Playwright → WeasyPrint →
+  wkhtmltopdf; honours the template's `@page` size and margin). Usable directly, and shared
   with `can-slim-grader`.
 - `assets/dashboard_template.html` — the report (full behavior in Step 7): a self-contained,
   print-optimized, pure-ASCII dashboard that is **dark on screen and white in print** (A4
@@ -600,14 +617,14 @@ apply the same rubric inline from the shared methodology."*)
   gated at the grade cut, with an enumerated empty state when nothing clears it), self-audits its
   own CONFIG, and renders the funnel tiles, leadership map, sector sweep table, data-sources
   table and glossary automatically.
-```
+````
 
 
 ## `README.md`
 
 Human-facing overview: what it produces and the CAN SLIM ideas behind it.
 
-```md
+````md
 # can-slim-recommend
 
 A Claude skill that sweeps **every market sector** for its top performers, grades each one against
@@ -706,7 +723,17 @@ rules, and the classic mistakes to avoid.
 
 ## Output
 
-- **Default: a white-themed PDF report** (`scripts/html_to_pdf.py`), A4 landscape with a 15mm
+One command produces either format, and the format is an argument rather than a convention:
+
+```
+python scripts/build_report.py canslim-recommendations-<date>.html [--format pdf|html|both]
+```
+
+`--format` **defaults to `pdf`**. The script also enforces the dashboard's self-audit — it renders
+the page and refuses to emit anything while the report is failing its own checks — and falls back
+to the HTML, with a reason, if no PDF engine is installed.
+
+- **Default: a white-themed PDF report** (`scripts/build_report.py`), A4 landscape with a 15mm
   margin on every edge, so the
   pick tables fit. Each pick's CAN SLIM rationale runs as a full-width row beneath its stats
   rather than squeezed into a column, so it always has the whole table to wrap into. It includes the market verdict, the screening funnel, a leadership
@@ -776,7 +803,9 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `scripts/sector_screen.py` — sector sweep arithmetic + CAN SLIM triage over the screener rows.
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
-- `scripts/html_to_pdf.py` — renders the filled dashboard to PDF. Shared with `can-slim-grader`.
+- `scripts/build_report.py` — produces the PDF (default), the HTML, or both, and enforces the
+  self-audit before emitting.
+- `scripts/html_to_pdf.py` — the PDF engine chain behind it. Shared with `can-slim-grader`.
 - `scripts/export_portable.py` — bundles the skill for use with a non-Claude assistant.
 - `assets/dashboard_template.html` — the self-contained report template: dark on screen, white
   on paper.
@@ -795,7 +824,7 @@ and never gives personalized buy/sell directives. CAN SLIM is a probability edge
 every recommendation is paired with its loss-cutting exit rule. Markets carry risk of loss. It is
 an independent implementation of a publicly known investing framework and reproduces no
 third-party copyrighted text.
-```
+````
 
 
 ## `references/canslim-methodology.md`
@@ -2354,9 +2383,183 @@ if __name__ == "__main__":
 ```
 
 
+## `scripts/build_report.py`
+
+The step-7 entry point: produces the PDF (default), the HTML, or both, and refuses to emit a report that is failing its own self-audit.
+
+```python
+#!/usr/bin/env python3
+"""
+build_report.py - turn a filled dashboard into the deliverable(s) the user asked for.
+
+This is the single entry point for step 7. It exists so "PDF by default, HTML on request"
+is a resolved argument rather than a convention someone has to remember:
+
+    python scripts/build_report.py canslim-recommendations-<date>.html                 -> PDF
+    python scripts/build_report.py canslim-recommendations-<date>.html --format html   -> HTML
+    python scripts/build_report.py canslim-recommendations-<date>.html --format both   -> both
+
+`--format` defaults to `pdf`. Nothing else about the report changes with the format: the same
+filled CONFIG drives both, the HTML renders dark on screen, and the print stylesheet forces the
+white palette so the PDF is white either way (see the template's THEME note). `--theme` flips
+the on-screen look of the HTML deliverable; it has no effect on the PDF.
+
+THE SELF-AUDIT IS ENFORCED HERE. The template audits its own CONFIG on render and prints a red
+"Report checks failed" banner when the run contradicts itself. Shipping a report showing that
+banner is the one thing the skill must never do, so this script renders the page in a headless
+browser and REFUSES to emit anything when the banner is present. If no browser is available the
+check is skipped with a warning rather than silently passing.
+
+Exit codes: 0 = deliverables written; 1 = nothing written (audit failed, or no PDF engine and
+--format pdf was required); 2 = bad usage.
+"""
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import html_to_pdf  # noqa: E402  - same directory, shared engine chain
+
+
+def apply_theme(path, theme):
+    """Rewrite the document element's data-theme. Returns True if the file changed.
+
+    Anchored to the doctype on purpose: the template's own header comment TALKS about
+    `<html data-theme="dark">`, and a naive "first <html" match rewrites that prose instead of
+    the real element, leaving the page's theme untouched while reporting success.
+    """
+    src = open(path, encoding="utf-8").read()
+    doctype = re.search(r"<!doctype\s+html[^>]*>", src, re.I)
+    start = doctype.end() if doctype else 0
+    tag = re.search(r"<html\b[^>]*>", src[start:], re.I)
+    if not tag:
+        return False
+    lo, hi = start + tag.start(), start + tag.end()
+    old_tag = src[lo:hi]
+    if 'data-theme="%s"' % theme in old_tag:
+        return False
+    new_tag, n = re.subn(r'\s*data-theme="[^"]*"', ' data-theme="%s"' % theme, old_tag, count=1)
+    if not n:
+        new_tag = old_tag[:-1].rstrip() + ' data-theme="%s">' % theme
+    open(path, "w", encoding="utf-8").write(src[:lo] + new_tag + src[hi:])
+    return True
+
+
+def audit(path):
+    """Render the page headlessly and read its self-audit banner.
+
+    Returns (ok, detail): ok is True when the report is clean OR the check could not run
+    (detail says which). ok is False only when the banner is actually present.
+    """
+    exe = html_to_pdf.find_browser()
+    if not exe:
+        return True, "SKIPPED - no headless browser found, so the self-audit could not be read"
+    url = "file:///" + os.path.abspath(path).replace("\\", "/")
+    for head in ("--headless=new", "--headless"):
+        try:
+            out = subprocess.run(
+                [exe, head, "--disable-gpu", "--no-sandbox", "--virtual-time-budget=6000",
+                 "--dump-dom", url],
+                check=True, timeout=120, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            ).stdout.decode("utf-8", "replace")
+        except Exception:
+            continue
+        m = re.search(r'<div id="checks"[^>]*>(.*?)(?=<div id="freshness")', out, re.S)
+        body = m.group(1) if m else ""
+        if "Report checks failed" not in body:
+            return True, "clean"
+        items = re.findall(r"<li>(.*?)</li>", body, re.S)
+        items = [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", i)).strip() for i in items]
+        return False, "\n".join("    - " + i for i in items) or "    - (banner present)"
+    return True, "SKIPPED - the browser failed to render the page, so the audit could not be read"
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Produce the PDF and/or HTML deliverable.")
+    ap.add_argument("input", help="the filled canslim-recommendations-<date>.html")
+    ap.add_argument("--format", "-f", choices=("pdf", "html", "both"), default="pdf",
+                    help="which deliverable to produce (default: pdf)")
+    ap.add_argument("--theme", choices=("dark", "light"),
+                    help="on-screen theme of the HTML deliverable; the PDF is white regardless")
+    ap.add_argument("--out", "-o", help="directory to write into (default: alongside the input)")
+    ap.add_argument("--no-check", action="store_true",
+                    help="emit even if the self-audit banner is showing (use only to inspect a failure)")
+    a = ap.parse_args()
+
+    if not os.path.isfile(a.input):
+        print("no such file: " + a.input, file=sys.stderr)
+        sys.exit(2)
+
+    outdir = a.out or os.path.dirname(os.path.abspath(a.input)) or "."
+    os.makedirs(outdir, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(a.input))[0]
+
+    if a.theme and apply_theme(a.input, a.theme):
+        print("theme -> %s" % a.theme)
+
+    ok, detail = audit(a.input)
+    if not ok:
+        print("REFUSED: the report's self-audit is failing - do not ship it.\n" + detail,
+              file=sys.stderr)
+        if not a.no_check:
+            print("\nFix the CONFIG (or re-run with --no-check to emit it anyway for inspection).",
+                  file=sys.stderr)
+            sys.exit(1)
+        print("--no-check given; emitting anyway.", file=sys.stderr)
+    elif detail != "clean":
+        print("self-audit %s" % detail)
+    else:
+        print("self-audit clean")
+
+    written = []
+    if a.format in ("html", "both"):
+        dest = os.path.join(outdir, stem + ".html")
+        if os.path.abspath(dest) != os.path.abspath(a.input):
+            shutil.copyfile(a.input, dest)
+        written.append(dest)
+
+    if a.format in ("pdf", "both"):
+        dest = os.path.join(outdir, stem + ".pdf")
+        made = False
+        for name, fn in (("chrome", html_to_pdf.via_chrome),
+                         ("playwright", html_to_pdf.via_playwright),
+                         ("weasyprint", html_to_pdf.via_weasyprint),
+                         ("wkhtmltopdf", html_to_pdf.via_wkhtmltopdf)):
+            if fn(a.input, dest):
+                print("PDF via %s" % name)
+                written.append(dest)
+                made = True
+                break
+        if not made:
+            # Never block the run on the export: fall back to the HTML and say why.
+            print("no PDF engine available (install Chrome/Chromium/Edge, playwright, weasyprint "
+                  "or wkhtmltopdf)", file=sys.stderr)
+            if a.format == "pdf":
+                fallback = os.path.join(outdir, stem + ".html")
+                if os.path.abspath(fallback) != os.path.abspath(a.input):
+                    shutil.copyfile(a.input, fallback)
+                written.append(fallback)
+                print("falling back to the HTML deliverable - hand it over and say why there is "
+                      "no PDF.", file=sys.stderr)
+
+    for p in written:
+        print("%8.1f KB  %s" % (os.path.getsize(p) / 1024.0, p))
+    sys.exit(0 if written else 1)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+
 ## `scripts/html_to_pdf.py`
 
-Renders the filled dashboard to PDF; reads page size and margin from the document's @page rule.
+The PDF engine chain behind it; reads page size and margin from the document's @page rule.
 
 ```python
 #!/usr/bin/env python3
