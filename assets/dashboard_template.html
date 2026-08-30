@@ -177,10 +177,15 @@
   .mk.g-partial{background:var(--partial-bg);color:var(--partial)}
   .mk.g-fail{background:var(--fail-bg);color:var(--fail)}
   .sc.mcol .mk{outline:1px dashed var(--line);outline-offset:-1px}   /* M = market-wide component */
-  .sc-total{display:inline-flex;flex-direction:column;align-items:center;margin-left:7px;vertical-align:top}
-  .sc-total .lab{font-size:11px;color:var(--muted);font-family:var(--mono)}
-  .sc-total .val{font-family:var(--mono);font-weight:700;font-size:15px;margin-top:1px;color:var(--ink)}
-  .sc-total .val.hit{color:var(--pass)}
+  /* ONE span, value first: "4.5 / 7". It used to be a stacked "/7" label above the value, which
+     looked fine but flattened to "/74.5" in copy-paste, PDF text extraction and screen readers -
+     i.e. it read as a score out of 70. Never split a value from its denominator across elements. */
+  .sc-total{display:inline-block;margin-left:9px;padding-top:13px;vertical-align:top;white-space:nowrap;
+    font-family:var(--mono);font-weight:700;font-size:15px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .sc-total.hit{color:var(--pass)}
+  /* Carries text that must survive flattening but must not be seen. */
+  .vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
+    clip-path:inset(50%);white-space:nowrap;border:0}
   /* The CAN SLIM read spans the whole table rather than living in a column, so it always has
      the full width to wrap into and is never truncated or squeezed to one word per line. */
   tr.whyrow td{border-bottom:1px solid var(--line);padding:0 10px 11px 10px}
@@ -723,7 +728,11 @@ if (CONFIG.dataWarning){
     {k:"Top performers pulled", v:s.screened, s:(s.perSector? s.perSector+" per sector":"")},
     {k:"Cleared triage", v:s.triaged, s:"CAN SLIM hard filters"},
     {k:"Fully graded", v:s.graded, s:"can-slim-grader rubric"},
-    {k:"Graded &ge;"+fmtScore(THRESHOLD), v:null, s:"of 7 - recommendation 1"}
+    /* No "7" anywhere in this tile. Its value is a COUNT of names, and the label sits directly
+       above it while the sub-label sits directly below - so either one ending or starting with
+       "7" makes the count read as a score ("2 of 7", "out of 72"). The /7 scale is stated in the
+       table legend, where it belongs. */
+    {k:"Graded &ge;"+fmtScore(THRESHOLD), v:null, s:"names at or above the cut"}
   ];
   window.__tiles = tiles;   // count filled in after picks are scored
 })();
@@ -779,7 +788,7 @@ const COLS = [
   {key:"sector", label:"Sector / group",type:"text",cls:"",     get:p=>sectorKey(p)},
   {key:"price",  label:"Price",        type:"num",  cls:"num",  get:p=>num(p.price)},
   {key:"rs",     label:"RS",           type:"num",  cls:"num",  get:p=>p._rs},
-  {key:"score",  label:"C&middot;A&middot;N&middot;S&middot;L&middot;I&middot;M (/7)", type:"num", cls:"", get:p=>p._total},
+  {key:"score",  label:"C&middot;A&middot;N&middot;S&middot;L&middot;I&middot;M &mdash; total out of 7", type:"num", cls:"", get:p=>p._total},
   {key:"verdict",label:"Verdict",      type:"text", cls:"",     get:p=>(p.verdict||"")},
   {key:"buyPoint",label:"Buy point",   type:"text", cls:"num",  get:p=>(p.buyPoint||""), noSort:true},
   {key:"stop",   label:"Stop",         type:"text", cls:"num",  get:p=>(p.stop||""),      noSort:true},
@@ -798,11 +807,17 @@ function headHtml(){
 function scoreCells(p){
   const ms = mGrade(), LAB = {pass:"P", partial:"~", fail:"X"};
   const t = p._total;
-  return LETTERS6.map(k=>{ const g=gradeOf((p.scores||{})[k]);
-    return '<span class="sc" title="'+k+': '+g+'"><span class="lab">'+k+'</span><span class="mk g-'+g+'">'+LAB[g]+'</span></span>';
-  }).join('')
-    + '<span class="sc mcol" title="M = market direction (same for every row): '+ms+'"><span class="lab">M</span><span class="mk g-'+ms+'">'+LAB[ms]+'</span></span>'
-    + '<span class="sc-total"><span class="lab">/7</span><span class="val'+(t>=THRESHOLD?' hit':'')+'">'+fmtScore(t)+'</span></span>';
+  /* Each letter carries a visually-hidden ":grade " so the cell still reads correctly once the
+     markup is flattened. Without it the inline spans fuse into "CPAPN~SXLPI~M~". */
+  const cell = (k,g,extra,title)=>
+    '<span class="sc'+extra+'" title="'+title+'"><span class="lab">'+k+'</span>'+
+    '<span class="mk g-'+g+'">'+LAB[g]+'</span></span><span class="vh">:'+g+' </span>';
+  return LETTERS6.map(k=>{ const g=gradeOf((p.scores||{})[k]); return cell(k,g,'',k+': '+g); }).join('')
+    + cell('M', ms, ' mcol', 'M = market direction (same for every row): '+ms)
+    /* Value THEN denominator, in one span - the exact form the sister skill can-slim-grader
+       prints ("4.5 / 7"), so a score means and reads the same in both reports. */
+    + '<span class="sc-total'+(t>=THRESHOLD?' hit':'')+'" title="total out of 7">'
+    + fmtScore(t)+' / 7</span>';
 }
 
 /* BUY-RANGE / WATCH / AVOID - the same three verdicts can-slim-grader issues. It is NOT the
