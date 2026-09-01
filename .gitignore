@@ -2,8 +2,10 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# Generated sample outputs (never commit run results)
+# Generated sample outputs (never commit run results). PDF is the default format,
+# so both extensions have to be here or a run leaves an 868KB artifact staged.
 canslim-*.html
+canslim-*.pdf
 
 # Portable bundle: the .md is committed so there is a stable URL to hand someone;
 # the .zip is not (GitHub can zip the repo itself). Regenerate both with
