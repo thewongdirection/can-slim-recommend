@@ -82,9 +82,10 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
   ought to work, and see the Tier 1 table in `tradingview-sector-sweep.md` for the per-call notes.
   Symbols are `EXCHANGE:TICKER`. Tools are deferred — load with `ToolSearch`.
 - **Screen A before spending calls on history.** `get_financials` alone (ROE + TTM EPS growth)
-  disqualifies most candidates on **A**, and a name that fails A cannot reach the cut — so pull
-  `fq`/`fy` history only for the survivors. This roughly halved the fundamental calls in the live
-  run.
+  settles **A** for one call, which is what re-cuts the ceiling and eliminates names before the
+  expensive `fq`/`fy` history — see step 4a. Run it on **every** triage survivor: it is the
+  cheapest letter that can eliminate, and skipping it is what forces a run to guess which names
+  are worth grading.
 - **`can-slim-grader`** — the sister skill that grades each candidate. If it isn't installed,
   say so, prompt the user to add it from **https://github.com/thewongdirection/can-slim-grader**,
   and apply its rubric inline from the shared methodology rather than inventing a different scale.
@@ -185,6 +186,54 @@ illiquid, >25% below the 52-week high, lagging SPY, below the 200-day). Its `gra
 list to grade. **Report the funnel** in `CONFIG.sweep` — swept, pulled, triaged, graded — so the
 reader can see what was dropped rather than reading the sweep as full coverage.
 
+Pass the run's **M grade** and the best **I** any name can reach, because both are known before a
+single name is graded and both bound every row:
+
+```
+python scripts/sector_screen.py sweep.json --m-grade partial --i-grade partial --md
+```
+
+### 4a — The ceiling: which names MUST be graded
+You cannot know a name clears 4.5 until you grade it — the score *is* the output of grading. So
+the coverage rule runs the other way, on the **ceiling**: the highest score a name could still
+reach. `sector_screen.py` computes it for every triage survivor from what is already known —
+
+| letter | bounded by | cap |
+|---|---|---|
+| **M** | graded once market-wide, before any name | the run's actual M |
+| **I** | routinely unsourceable; never guessed | `--i-grade` (usually partial) |
+| **N** | % below the 52-week high | >10% below → partial (no pivot); >20% → fail |
+| **S** | relative volume | <1.0x → partial; <0.8x → fail (drying up, not accumulating) |
+| **L** | sector rank from this sweep | bottom-half sector → partial (leader of a laggard group) |
+| **C**, **A** | not yet pulled | assumed **pass** until a real grade says otherwise |
+
+> **THE RULE: grade every name whose ceiling reaches `gradeThreshold`. No exceptions, and never
+> a judgment call about which names "look promising".** Because every entry above is an *upper*
+> bound, a ceiling below the cut means no combination of unseen fundamentals could get that name
+> there — it is eliminated by arithmetic. A ceiling at or above the cut means the opposite: the
+> name might qualify, so not grading it could hide a qualifier. `CONFIG.sweep.mustGrade` carries
+> that count and **the dashboard's self-audit refuses a report that graded fewer**.
+
+**Two stages, because the A-screen is where the pruning actually happens.** With M and I both at
+partial the stage-1 floor is exactly 4.5 (1+1+0.5+0.5+0.5+0.5+0.5), so the screener alone
+eliminates almost nobody — that is arithmetic, not a weak filter. Spend one `get_financials` call
+per survivor to settle **A**, write the results to a JSON map, and re-cut the ceiling:
+
+```
+python scripts/sector_screen.py sweep.json --m-grade partial --i-grade partial \
+       --known a-screen.json --md          # {"NASDAQ:OKTA": {"A": "fail"}, ...}
+```
+
+Everything that now falls below the cut is eliminated **without spending the C call on it**.
+Grade the rest in the order the queue gives them (highest ceiling first), so an interrupted run
+has still found the strongest qualifiers.
+
+**If the must-grade count is more than the run can afford, tighten the funnel — never the
+coverage.** Raise `--threshold`, or tighten triage (`--max-off-high 15`, a higher
+`--min-dollar-vol`). Both shrink the must-grade set *provably* and both are recorded in
+`CONFIG.sweep`. Silently grading a subset is the one thing that is not allowed, because it makes
+the two lists a sample while the report reads as a sweep.
+
 ### 5 — Grade every survivor with `can-slim-grader`
 Run the sister skill on each name in the grade queue (or apply its rubric inline if it isn't
 installed). Per ticker that is ~five TradingView calls plus `scripts/relative_strength.py`;
@@ -219,7 +268,11 @@ grades and verdict. The dashboard derives both lists — **do not hand-build the
 
 **Both lists only ever hold names at or above the cut.** A name below 4.5 is not a recommendation
 just because everything else scored worse, so it never appears in either list — it stays in the
-"Every name graded" appendix with its scorecard.
+"Every name graded" appendix with its scorecard. **The report says this in its own words**: the
+dashboard renders a note under list 1 stating that only names scoring >=4.5/7 are listed, and —
+from `CONFIG.sweep.mustGrade` / `eliminatedByCeiling` — that every survivor which could still have
+reached the cut was graded. Fill both fields from `sector_screen.py`'s `must_grade` and
+`eliminated_by_ceiling` or that sentence cannot be made.
 
 **A sector that produced no qualifier still shows its top 5.** Paste `sector_screen.py`'s `top5`
 into `CONFIG.sectors[].top5` for every sector; the dashboard renders it **only** where that

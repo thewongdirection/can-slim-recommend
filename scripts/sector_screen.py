@@ -58,7 +58,14 @@ DEFAULTS = {
     "min_market_cap": 1e9,  # skip microcaps the method's sponsorship test can't clear
     "max_off_high": 25.0,   # % below the 52-week high beyond which there is no new-high ground
     "min_rs": 0.0,          # must beat the benchmark over the window (L: leader not laggard)
+    "threshold": 4.5,       # the recommendation cut, out of 7 - the ceiling is measured against it
+    "m_grade": "partial",   # M is graded ONCE market-wide, before any name; it bounds every row
+    "i_grade": "partial",   # I is routinely unavailable, which caps every row - say so, never guess
+    "pivot_band": 10.0,     # % below the 52-week high beyond which there is no pivot, so N <= partial
+    "thin_vol": 0.8,        # relative volume under this is drying up, not accumulating, so S = fail
 }
+
+WEIGHT = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
 
 VOL_KEYS = ("average_volume_10d_calc", "average_volume_90d_calc", "average_volume_30d_calc",
             "average_volume_60d_calc", "volume")
@@ -182,6 +189,94 @@ def score_row(row, window, bench_perf, cfg):
     return out
 
 
+def ceiling(out, cfg, known=None):
+    """The HIGHEST score this name could still reach - so a name can be eliminated without
+    grading it, and one that cannot be eliminated is provably worth the calls.
+
+    The rule the whole two-stage process rests on: grade every candidate whose ceiling reaches
+    the cut. Because each letter here is an UPPER bound, a ceiling below the cut means no
+    combination of unseen fundamentals could get the name there - it is eliminated by
+    arithmetic, not by judgment. Erring high is safe (it only costs calls); erring low would
+    silently drop a qualifier, so every cap below is one the grader would actually apply.
+
+    M and I are known before any name is graded - M is graded once market-wide and I is
+    routinely unsourceable - so both bound every row from the start. N, S and L are capped
+    from screener columns. C and A are assumed PASS until a real grade says otherwise, which
+    is what `known` supplies: pass {"A": "fail"} after the A-screen and the ceiling drops
+    again, usually far enough to skip the C call entirely.
+    """
+    known = known or {}
+    caps, why = {}, []
+
+    # N - no pivot without new-high ground. The 10% band mirrors the dashboard's own audit
+    # rule, which rejects a buy point more than 10% under the 52-week high as "a lower high,
+    # not a pivot". Past twice that band there is no new-high ground left to grade at all, so
+    # the cap is FAIL rather than partial - the grade this run would actually give.
+    oh = out["off_high_pct"]
+    band = cfg["pivot_band"]
+    if oh is None:
+        caps["N"] = "pass"
+    elif oh < -2 * band:
+        caps["N"] = "fail"
+        why.append("N = fail: %.0f%% below the 52-week high - no new-high ground at all" % abs(oh))
+    elif oh < -band:
+        caps["N"] = "partial"
+        why.append("N <= partial: %.0f%% below the 52-week high, so there is no pivot" % abs(oh))
+    else:
+        caps["N"] = "pass"
+
+    # S - relative volume is the accumulation test. At its own norm or better the letter is
+    # still open; below it demand is absent, and materially below it (the `thin_vol` floor)
+    # the price is rising on drying volume, which is the opposite of what S asks for.
+    rv = out["rel_volume_10d"]
+    if rv is None:
+        caps["S"] = "pass"
+    elif rv < cfg["thin_vol"]:
+        caps["S"] = "fail"
+        why.append("S = fail: relative volume %.2fx - volume drying up under the price" % rv)
+    elif rv < 1.0:
+        caps["S"] = "partial"
+        why.append("S <= partial: relative volume %.2fx - under its own norm, no accumulation" % rv)
+    else:
+        caps["S"] = "pass"
+
+    # L - a leader of a laggard group is not a leader. Sector rank comes from the sweep, so
+    # this is only known once every sector has been ranked.
+    sr = out.get("sector_rank_overall")
+    tot = out.get("sector_count") or 0
+    if sr and tot and sr > tot / 2.0:
+        caps["L"] = "partial"
+        why.append("L <= partial: sector ranks #%d of %d - leader of a laggard group" % (sr, tot))
+    else:
+        caps["L"] = "pass"
+
+    caps["C"] = "pass"   # unknown until the quarter is pulled
+    caps["A"] = "pass"   # unknown until get_financials is pulled
+    caps["M"] = cfg["m_grade"]
+    caps["I"] = cfg["i_grade"]
+    if cfg["m_grade"] != "pass":
+        why.append("M = %s: graded once market-wide, so it bounds every row" % cfg["m_grade"])
+    if cfg["i_grade"] != "pass":
+        why.append("I <= %s: sponsorship not sourceable this run" % cfg["i_grade"])
+
+    # a real grade always overrides the assumption
+    for k, v in known.items():
+        k = str(k).strip().upper()
+        v = str(v).strip().lower()
+        if k in caps and v in WEIGHT:
+            if WEIGHT[v] < WEIGHT[caps[k]]:
+                why.append("%s = %s (graded)" % (k, v))
+            caps[k] = v
+
+    total = round(sum(WEIGHT[caps[k]] for k in ("C", "A", "N", "S", "L", "I", "M")) * 2) / 2.0
+    out["ceiling"] = total
+    out["ceiling_caps"] = caps
+    out["ceiling_reasons"] = why
+    out["ceiling_known"] = {k.upper(): str(v).lower() for k, v in known.items()}
+    out["grade_required"] = total >= cfg["threshold"]
+    return out
+
+
 def normalize_sectors(blob):
     """Accept either {"sectors": {name: [rows]}} or {"sectors": [{"sector","rows"}]}."""
     sec = blob.get("sectors") or {}
@@ -191,7 +286,7 @@ def normalize_sectors(blob):
             for s in sec]
 
 
-def run(blob, cfg):
+def run(blob, cfg, known=None):
     window = blob.get("window") or "Perf.6M"
     bench = blob.get("benchmark") or {}
     bench_perf = None
@@ -244,8 +339,25 @@ def run(blob, cfg):
         for m in s["members"]:
             m["sector_rank_overall"] = i
 
+    # The ceiling needs the finished sector ranking (L depends on group strength), so it runs
+    # only once every sector has been placed - never inside score_row.
+    known = known or {}
+    for s in sectors:
+        for m in s["members"]:
+            m["sector_count"] = len(sectors)
+            if m["triage"] == "grade":
+                ceiling(m, cfg, known.get(m["symbol"]) or known.get(m["ticker"]))
+            else:                       # already disqualified; a ceiling would only confuse
+                m["ceiling"] = None
+                m["grade_required"] = False
+        s["must_grade"] = sum(1 for m in s["members"] if m.get("grade_required"))
+
     queue = [m for s in sectors for m in s["members"] if m["triage"] == "grade"]
-    queue.sort(key=lambda d: (d["rs_vs_bench_pts"] is None, -(d["rs_vs_bench_pts"] or 0)))
+    # Highest ceiling first, then RS - the order that finds qualifiers soonest if a run is
+    # interrupted, and the order the coverage rule expects the calls to be spent in.
+    queue.sort(key=lambda d: (-(d.get("ceiling") or 0),
+                              d["rs_vs_bench_pts"] is None, -(d["rs_vs_bench_pts"] or 0)))
+    must = [m for m in queue if m.get("grade_required")]
 
     return {
         "asOf": blob.get("asOf"),
@@ -255,10 +367,23 @@ def run(blob, cfg):
         "sector_count": len(sectors),
         "graded_candidates": len(queue),
         "dropped": sum(len(s["members"]) for s in sectors) - len(queue),
+        # The coverage contract, in three numbers the report has to echo: how many survivors
+        # could still reach the cut (every one of these MUST be graded), how many the ceiling
+        # ruled out, and what the cut is. A run that grades fewer than must_grade has not
+        # finished, and the dashboard's self-audit refuses it.
+        "threshold": cfg["threshold"],
+        "must_grade": len(must),
+        "eliminated_by_ceiling": len(queue) - len(must),
+        "ceiling_basis": {"M": cfg["m_grade"], "I": cfg["i_grade"],
+                          "pivot_band_pct": cfg["pivot_band"],
+                          "thin_vol": cfg["thin_vol"]},
         "sectors": sectors,
         "grade_queue": [{"symbol": m["symbol"], "ticker": m["ticker"], "sector": m["sector"] or "",
                          "sector_rank": m["sector_rank"], "rs_vs_bench_pts": m["rs_vs_bench_pts"],
-                         "off_high_pct": m["off_high_pct"], "flags": m["flags"]} for m in queue],
+                         "off_high_pct": m["off_high_pct"], "ceiling": m.get("ceiling"),
+                         "grade_required": m.get("grade_required"),
+                         "ceiling_reasons": m.get("ceiling_reasons") or [],
+                         "flags": m["flags"]} for m in queue],
     }
 
 
@@ -275,12 +400,40 @@ def to_markdown(res):
                 n(res["benchmark"].get("perf_pct"), 1, "%"), res["sector_count"],
                 res["graded_candidates"], res["dropped"]))
     L.append("")
-    L.append("| # | Sector | Median perf | Survived triage |")
-    L.append("|---|---|---:|---:|")
-    for s in res["sectors"]:
-        L.append("| %d | %s | %s | %d/%d |" % (s["rank"], s["sector"], n(s["median_perf_pct"], 1, "%"),
-                                               s["survivors"], len(s["members"])))
+    cb = res.get("ceiling_basis") or {}
+    L.append("**Grading coverage** - %d of the %d survivors can still reach %s/7 and MUST be graded; "
+             "%d are eliminated by ceiling (no combination of unseen fundamentals reaches the cut). "
+             "Ceiling assumes M=%s, I<=%s, and C/A pass until graded."
+             % (res.get("must_grade", 0), res["graded_candidates"], n(res.get("threshold"), 1),
+                res.get("eliminated_by_ceiling", 0), cb.get("M", "?"), cb.get("I", "?")))
     L.append("")
+    L.append("| # | Sector | Median perf | Survived triage | Must grade |")
+    L.append("|---|---|---:|---:|---:|")
+    for s in res["sectors"]:
+        L.append("| %d | %s | %s | %d/%d | %d |" % (s["rank"], s["sector"], n(s["median_perf_pct"], 1, "%"),
+                                                    s["survivors"], len(s["members"]), s.get("must_grade", 0)))
+    L.append("")
+    must = [m for m in res["grade_queue"] if m.get("grade_required")]
+    if must:
+        L.append("## Must grade - %d names, highest ceiling first" % len(must))
+        L.append("")
+        L.append("| # | Symbol | Sector | Ceiling | RS vs bench | Off 52w high |")
+        L.append("|---|---|---|---:|---:|---:|")
+        for i, m in enumerate(must, 1):
+            L.append("| %d | %s | %s | %s | %s | %s |" % (
+                i, m["ticker"], m["sector"], n(m.get("ceiling"), 1),
+                n(m["rs_vs_bench_pts"], 1, " pts"), n(m["off_high_pct"], 1, "%")))
+        L.append("")
+    skip = [m for m in res["grade_queue"] if not m.get("grade_required")]
+    if skip:
+        L.append("## Eliminated by ceiling - %d names, not graded and why" % len(skip))
+        L.append("")
+        L.append("| Symbol | Sector | Ceiling | Why it cannot reach the cut |")
+        L.append("|---|---|---:|---|")
+        for m in skip:
+            L.append("| %s | %s | %s | %s |" % (m["ticker"], m["sector"], n(m.get("ceiling"), 1),
+                                                "; ".join(m.get("ceiling_reasons") or []) or "-"))
+        L.append("")
     for s in res["sectors"]:
         L.append("## %d. %s" % (s["rank"], s["sector"]))
         L.append("")
@@ -323,15 +476,36 @@ def main():
                     help="max %% below the 52-week high before a name is dropped (default %(default)s)")
     ap.add_argument("--min-rs", type=float, default=DEFAULTS["min_rs"],
                     help="minimum window performance over the benchmark, in points")
+    ap.add_argument("--threshold", type=float, default=DEFAULTS["threshold"],
+                    help="the recommendation cut out of 7 (default %(default)s)")
+    ap.add_argument("--m-grade", choices=("pass", "partial", "fail"), default=DEFAULTS["m_grade"],
+                    help="this run's market grade - graded ONCE and applied to every row, so it "
+                         "bounds every ceiling (default %(default)s)")
+    ap.add_argument("--i-grade", choices=("pass", "partial", "fail"), default=DEFAULTS["i_grade"],
+                    help="the best I any name can reach this run; sponsorship data is routinely "
+                         "unavailable, and the cap belongs in the ceiling (default %(default)s)")
+    ap.add_argument("--pivot-band", type=float, default=DEFAULTS["pivot_band"],
+                    help="%% below the 52-week high past which N cannot pass; past twice it, "
+                         "N cannot even reach partial (default %(default)s)")
+    ap.add_argument("--thin-vol", type=float, default=DEFAULTS["thin_vol"],
+                    help="relative volume under which S cannot pass at all (default %(default)s)")
+    ap.add_argument("--known", metavar="FILE",
+                    help='letters already graded, so the ceiling can be re-cut: '
+                         '{"NASDAQ:OKTA": {"A": "fail"}}. Re-run with this after the A-screen - '
+                         'every name that drops below the threshold is eliminated without '
+                         'spending the C call on it.')
     ap.add_argument("--md", action="store_true", help="print markdown instead of JSON")
     a = ap.parse_args()
 
     raw = open(a.input).read() if a.input else sys.stdin.read()
     blob = json.loads(raw)
+    known = json.loads(open(a.known).read()) if a.known else {}
     cfg = {"top": a.top, "fallback": a.fallback, "min_price": a.min_price,
            "min_dollar_vol": a.min_dollar_vol, "min_market_cap": a.min_market_cap,
-           "max_off_high": a.max_off_high, "min_rs": a.min_rs}
-    res = run(blob, cfg)
+           "max_off_high": a.max_off_high, "min_rs": a.min_rs, "threshold": a.threshold,
+           "m_grade": a.m_grade, "i_grade": a.i_grade, "pivot_band": a.pivot_band,
+           "thin_vol": a.thin_vol}
+    res = run(blob, cfg, known)
     print(to_markdown(res) if a.md else json.dumps(res, indent=2))
 
 

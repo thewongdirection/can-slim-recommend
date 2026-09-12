@@ -369,6 +369,7 @@
 
   <!-- ===================== LIST 1: sector leaders at/above the grade cut ===================== -->
   <div class="section-title" id="leadersTitle">Recommendation 1 &mdash; sector leaders</div>
+  <div id="gradeScopeNote"></div>
   <div id="leadersIntro"></div>
   <div class="legend" id="scoreLegend"></div>
   <div class="legend"><span class="hint">Click a column header to sort (sorting flattens the sector grouping). Click a ticker to open its per-name report.</span></div>
@@ -572,6 +573,16 @@ const CONFIG = {
     screened: 0,        // sectors x perSector
     triaged: 0,         // survived the CAN SLIM hard filters (sector_screen.py)
     graded: 0,          // fully graded with can-slim-grader
+    /* THE COVERAGE CONTRACT. `mustGrade` is sector_screen.py's `must_grade`: the number of
+       triage survivors whose CEILING - the highest score still reachable once M, I and the
+       screener-known N/S/L are fixed and C/A are assumed to pass - reaches gradeThreshold.
+       Every one of those MUST be fully graded, because no combination of unseen fundamentals
+       could lift the others to the cut. Grading fewer is an incomplete run and the self-audit
+       refuses it, so a qualifier can never be missed merely because the run stopped early.
+       `eliminatedByCeiling` is the rest of the survivors: not graded, but provably unable to
+       reach the cut - eliminated by arithmetic, never by judgment. */
+    mustGrade: 0,
+    eliminatedByCeiling: 0,
     note: ""            // e.g. "Universe: US primary listings, price >$15, avg $ volume >$20M."
   },
 
@@ -727,12 +738,14 @@ if (CONFIG.dataWarning){
     {k:"Sectors swept", v:s.sectorsScanned, s:s.windowLabel||""},
     {k:"Top performers pulled", v:s.screened, s:(s.perSector? s.perSector+" per sector":"")},
     {k:"Cleared triage", v:s.triaged, s:"CAN SLIM hard filters"},
+    {k:"Could still reach the cut", v:s.mustGrade||null,
+     s:(s.eliminatedByCeiling? s.eliminatedByCeiling+" ruled out by ceiling":"ceiling test")},
     {k:"Fully graded", v:s.graded, s:"can-slim-grader rubric"},
     /* No "7" anywhere in this tile. Its value is a COUNT of names, and the label sits directly
        above it while the sub-label sits directly below - so either one ending or starting with
        "7" makes the count read as a score ("2 of 7", "out of 72"). The /7 scale is stated in the
        table legend, where it belongs. */
-    {k:"Graded &ge;"+fmtScore(THRESHOLD), v:null, s:"names at or above the cut"}
+    {id:"qualified", k:"Graded &ge;"+fmtScore(THRESHOLD), v:null, s:"names at or above the cut"}
   ];
   window.__tiles = tiles;   // count filled in after picks are scored
 })();
@@ -772,7 +785,10 @@ const groupedLeaders = (()=>{
 
 // funnel tiles (now that the grade count is known)
 (function(){
-  const tiles = window.__tiles; tiles[4].v = qualified.length;
+  // Address the tile by identity, never by index - inserting a tile above it used to
+  // silently write the qualifier count into whichever tile had drifted into slot 4.
+  const tiles = window.__tiles;
+  const qt = tiles.find(t=>t.id==="qualified"); if (qt) qt.v = qualified.length;
   $("funnel").innerHTML = tiles.map(t=>
     '<div class="fstep"><div class="k">'+t.k+'</div><div class="v">'+
     (t.v==null||t.v===""?"-":esc(t.v))+'</div>'+(t.s?'<div class="s">'+esc(t.s)+'</div>':'')+'</div>').join('');
@@ -916,6 +932,21 @@ $("scoreLegend").innerHTML =
   'The <b>verdict</b> is separate from the grade: a name can clear '+fmtScore(THRESHOLD)+'/7 on earnings and leadership and still be a <b>WATCH</b> because it has no valid pivot (N).</span>';
 
 // ---- LIST 1: sector leaders at/above the cut ----
+// Say plainly what the lists do and do not contain. A reader must never take a name's
+// absence for a judgment on it when it was simply never graded - or, conversely, take the
+// listed names for the whole market when the cut is what selected them.
+(function(){
+  const sw = CONFIG.sweep||{};
+  let t = "Both lists contain ONLY names that scored "+fmtScore(THRESHOLD)+"/7 or better. "+
+          "A name graded below the cut is not listed as a recommendation.";
+  if (sw.mustGrade && sw.graded)
+    t += " Coverage: every one of the "+sw.mustGrade+" triage survivors that could still reach "+
+         fmtScore(THRESHOLD)+"/7 was graded ("+sw.graded+" graded in total)"+
+         (sw.eliminatedByCeiling? "; the other "+sw.eliminatedByCeiling+" were eliminated without "+
+          "a grade because their best reachable score was below the cut" : "")+".";
+  const el = $("gradeScopeNote"); if (el) el.innerHTML = '<div class="callout">&#9432; '+t+'</div>';
+})();
+
 $("leadersTitle").innerHTML = 'Recommendation 1 &mdash; sector leaders graded &ge;'+fmtScore(THRESHOLD)+
   '/7 <span class="n">- '+qualified.length+' name'+(qualified.length===1?'':'s')+' across '+
   groupedLeaders.length+' sector'+(groupedLeaders.length===1?'':'s')+'</span>';
@@ -1418,6 +1449,13 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
   if (isFinite(swGraded) && swGraded && swGraded !== allPicks.length)
     errs.push("CONFIG.sweep.graded says "+swGraded+" names were graded but CONFIG.picks holds "+allPicks.length+
       " - the funnel and the lists must count the same run.");
+  // The coverage contract: a run that graded fewer names than could still reach the cut has
+  // not finished, and might be hiding a qualifier among the names it never reached.
+  const swMust = Number((CONFIG.sweep||{}).mustGrade);
+  if (isFinite(swMust) && swMust > 0 && allPicks.length < swMust)
+    errs.push("CONFIG.sweep.mustGrade says "+swMust+" survivors could still reach "+fmtScore(THRESHOLD)+
+      "/7, but only "+allPicks.length+" names were graded - the run is incomplete and a qualifier may be "+
+      "missing. Grade every name whose ceiling reaches the cut, or raise the cut.");
   allPicks.forEach(p=>{
     const sc = p.scores||{};
     LETTERS6.forEach(k=>{
