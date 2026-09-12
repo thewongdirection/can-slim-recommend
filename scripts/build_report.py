@@ -60,6 +60,12 @@ def apply_theme(path, theme):
     return True
 
 
+# Wall-clock ceiling on any single headless-render subprocess. A render that has not
+# finished by now is wedged, not slow - the engine gives up and the caller falls through
+# to the next one in the chain.
+RENDER_TIMEOUT = 240
+
+
 def audit(path):
     """Render the page headlessly and read its self-audit banner.
 
@@ -75,7 +81,7 @@ def audit(path):
             out = subprocess.run(
                 [exe, head, "--disable-gpu", "--no-sandbox", "--virtual-time-budget=6000",
                  "--dump-dom", url],
-                check=True, timeout=120, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                check=True, timeout=RENDER_TIMEOUT, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             ).stdout.decode("utf-8", "replace")
         except Exception:
             continue

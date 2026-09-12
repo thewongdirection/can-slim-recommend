@@ -2450,6 +2450,12 @@ def apply_theme(path, theme):
     return True
 
 
+# Wall-clock ceiling on any single headless-render subprocess. A render that has not
+# finished by now is wedged, not slow - the engine gives up and the caller falls through
+# to the next one in the chain.
+RENDER_TIMEOUT = 240
+
+
 def audit(path):
     """Render the page headlessly and read its self-audit banner.
 
@@ -2465,7 +2471,7 @@ def audit(path):
             out = subprocess.run(
                 [exe, head, "--disable-gpu", "--no-sandbox", "--virtual-time-budget=6000",
                  "--dump-dom", url],
-                check=True, timeout=120, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                check=True, timeout=RENDER_TIMEOUT, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             ).stdout.decode("utf-8", "replace")
         except Exception:
             continue
@@ -2665,6 +2671,12 @@ def find_browser():
     return None
 
 
+# Wall-clock ceiling on any single render subprocess, shared by every engine in the chain
+# so none of them can be the odd one out. Playwright otherwise defaults to 30s, which was
+# the tightest limit here and the only one not written down.
+RENDER_TIMEOUT = 240
+
+
 def via_chrome(inp, out):
     exe = find_browser()
     if not exe:
@@ -2683,7 +2695,7 @@ def via_chrome(inp, out):
             except Exception:
                 pass
             try:
-                subprocess.run([exe, head] + extra + common[1:], check=True, timeout=120,
+                subprocess.run([exe, head] + extra + common[1:], check=True, timeout=RENDER_TIMEOUT,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if os.path.exists(out) and os.path.getsize(out) > 1000:
                     return True
@@ -2702,7 +2714,7 @@ def via_playwright(inp, out):
         with sync_playwright() as p:
             b = p.chromium.launch()
             pg = b.new_page()
-            pg.goto(url, wait_until="networkidle")
+            pg.goto(url, wait_until="networkidle", timeout=RENDER_TIMEOUT * 1000)
             mg = css_page_margin(inp)
             kw = dict(path=_abs(out), print_background=True,
                       margin={"top": mg, "bottom": mg, "left": mg, "right": mg})
@@ -2739,7 +2751,7 @@ def via_wkhtmltopdf(inp, out):
         mg = css_page_margin(inp)
         margins = ["-T", mg, "-B", mg, "-L", mg, "-R", mg]
         subprocess.run([exe, "--enable-local-file-access", "--print-media-type"] + orient +
-                       margins + [_abs(inp), _abs(out)], check=True, timeout=120,
+                       margins + [_abs(inp), _abs(out)], check=True, timeout=RENDER_TIMEOUT,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return os.path.exists(out) and os.path.getsize(out) > 1000
     except Exception:
