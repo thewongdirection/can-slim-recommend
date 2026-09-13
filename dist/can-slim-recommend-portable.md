@@ -159,18 +159,17 @@ The skill itself: when it activates and the full workflow, step by step.
 ---
 name: can-slim-recommend
 description: >-
-  Sweep the whole market sector by sector and return TWO ranked recommendation lists, graded with
-  the CAN SLIM growth-investing methodology. Pulls the top 10 performers in EVERY sector from
-  TradingView, grades each one with the sister skill `can-slim-grader` (pass/partial/fail per
-  letter, out of 7), then returns (1) every sector's leaders graded 4.5 or better and (2) the
-  overall top 10 market-wide. Use whenever the user wants stock ideas, picks, or a screen -
-  "recommend some stocks", "what should I buy", "find me growth stocks", "screen for CAN SLIM
-  stocks", "best names in each sector", "top sector performers", "what to add to my watchlist",
-  "build me a shortlist" - or a themed/scoped set ("recommend AI stocks", "just the top 5
-  sectors") - even if they don't name CAN SLIM. This is the LIST/screener lens; to judge ONE named
-  ticker (a C-A-N-S-L-I-M scorecard with a BUY-RANGE/WATCH/AVOID verdict) use `can-slim-grader`.
-  Output: a white-themed A4 PDF report by default (the dark interactive HTML on request). Analysis and
-  decision support only - never personalized investment advice and never trading.
+  Sweep the whole market sector by sector with TradingView and return TWO ranked recommendation
+  lists graded with the CAN SLIM growth-investing methodology: (1) every sector's
+  leaders scoring 4.5 or better out of 7, and (2) the overall top 10 market-wide. Use whenever the
+  user wants stock ideas, picks, or a screen - "recommend some stocks", "what should I buy", "find
+  me growth stocks", "screen for CAN SLIM stocks", "best names in each sector", "top sector
+  performers", "what to add to my watchlist", "build me a shortlist" - or a themed/scoped set
+  ("recommend AI stocks", "just the top 5 sectors") - even if they don't name CAN SLIM. This is the
+  LIST/screener lens; to judge ONE named ticker (a C-A-N-S-L-I-M scorecard with a
+  BUY-RANGE/WATCH/AVOID verdict) use `can-slim-grader`. Output: a white-themed A4 PDF by default
+  (the dark interactive HTML on request). Analysis and decision support only - never personalized
+  investment advice and never trading.
 ---
 
 # can-slim-recommend — CAN SLIM sector sweep over TradingView
@@ -5524,6 +5523,37 @@ def check_export_bundles_every_script(tmp):
 
 
 # ---------------------------------------------------------------- doc/consistency
+
+def _frontmatter_description(path):
+    """Resolve SKILL.md's `description: >-` block the way a YAML folded scalar does: every line
+    stripped and joined with single spaces. The file's own line breaks are invisible to whatever
+    reads the frontmatter, so the source length is NOT the length that counts."""
+    src = io.open(path, encoding="utf-8").read()
+    assert src.startswith("---\n"), "SKILL.md must open with frontmatter"
+    fm = src.split("---", 2)[1]
+    m = re.search(r"description: >-\n(.*?)(?=\n[a-z_]+:|\Z)", fm, re.S)
+    assert m, "SKILL.md has no folded description block"
+    return " ".join(l.strip() for l in m.group(1).strip().splitlines())
+
+
+DESCRIPTION_LIMIT = 1024
+
+
+def check_skill_description_fits_the_frontmatter_limit():
+    """A description over the limit is the worst kind of failure this skill has: nothing errors,
+    the file looks fine, and the skill just stops being offered for the phrases it lists. It had
+    grown to 1108 characters unnoticed. Pinned here because no run would ever reveal it.
+    """
+    d = _frontmatter_description(os.path.join(ROOT, "SKILL.md"))
+    assert len(d) <= DESCRIPTION_LIMIT, (
+        "SKILL.md description is %d characters, %d over the %d limit - trim it, and keep the "
+        "trigger phrases: they are what earns the skill its activations."
+        % (len(d), len(d) - DESCRIPTION_LIMIT, DESCRIPTION_LIMIT))
+    # the parts worth keeping must survive any future trim
+    for must in ("CAN SLIM", "can-slim-grader", "recommend some stocks", "what should I buy",
+                 "4.5", "never personalized investment advice"):
+        assert must in d, "the description no longer mentions %r" % must
+
 
 def check_skill_documents_step_zero():
     s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
