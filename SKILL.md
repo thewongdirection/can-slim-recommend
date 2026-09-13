@@ -1,18 +1,18 @@
 ---
 name: can-slim-recommend
 description: >-
-  Sweep the whole market sector by sector and return TWO ranked recommendation lists, graded with
-  the CAN SLIM growth-investing methodology. Pulls the top 10 performers in EVERY sector from
-  TradingView, grades each one with the sister skill `can-slim-grader` (pass/partial/fail per
-  letter, out of 7), then returns (1) every sector's leaders graded 4.5 or better and (2) the
-  overall top 10 market-wide. Use whenever the user wants stock ideas, picks, or a screen -
-  "recommend some stocks", "what should I buy", "find me growth stocks", "screen for CAN SLIM
-  stocks", "best names in each sector", "top sector performers", "what to add to my watchlist",
-  "build me a shortlist" - or a themed/scoped set ("recommend AI stocks", "just the top 5
-  sectors") - even if they don't name CAN SLIM. This is the LIST/screener lens; to judge ONE named
-  ticker (a C-A-N-S-L-I-M scorecard with a BUY-RANGE/WATCH/AVOID verdict) use `can-slim-grader`.
-  Output: a white-themed A4 PDF report by default (the dark interactive HTML on request). Analysis and
-  decision support only - never personalized investment advice and never trading.
+  Sweep the market sector by sector and return TWO ranked recommendation lists, graded with the
+  CAN SLIM growth-investing methodology. Pulls the top 10 performers in EVERY sector from
+  TradingView, grades each with the sister skill `can-slim-grader` (pass/partial/fail per letter,
+  out of 7), then returns (1) every sector's leaders graded 4.5+ and (2) the overall top 10
+  market-wide. Use whenever the user wants stock ideas, picks, or a screen - "recommend some
+  stocks", "what should I buy", "find me growth stocks", "screen for CAN SLIM stocks", "best names
+  in each sector", "top sector performers", "build me a shortlist" - or a themed/scoped set
+  ("recommend AI stocks", "just the top 5 sectors") - even if they don't name CAN SLIM. The
+  LIST/screener lens; to judge ONE named ticker (a C-A-N-S-L-I-M scorecard with a
+  BUY-RANGE/WATCH/AVOID verdict) use `can-slim-grader`. Output: a white-themed A4 PDF by default,
+  dark interactive HTML on request. Decision support only - never personalized advice and never
+  trading.
 ---
 
 # can-slim-recommend — CAN SLIM sector sweep over TradingView
