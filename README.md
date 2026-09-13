@@ -179,6 +179,15 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `scripts/build_report.py` — produces the PDF (default), the HTML, or both, and enforces the
   self-audit before emitting.
 - `scripts/html_to_pdf.py` — the PDF engine chain behind it. Shared with `can-slim-grader`.
+- `scripts/self_update.py` — the pre-flight the skill runs *before every sweep*: it compares the
+  installed copy against this repo's `main` and installs a newer one in place — a fast-forward in a
+  git clone (never over uncommitted or diverged work), file-by-file from the branch archive in a
+  plain unpacked install (retiring the files upstream has dropped), and never at all when the skill
+  is vendored inside a larger repo. So a list is always produced by the current thresholds and
+  cut, not whichever copy happened to be installed; if the repo is unreachable the run continues
+  and says which copy it used. Standard library only.
+- `tests/` — offline regression tests for `scripts/self_update.py`. Run with
+  `python -m unittest discover -s tests`.
 - `scripts/export_portable.py` — bundles the skill for use with a non-Claude assistant.
 - `assets/dashboard_template.html` — the self-contained report template: dark on screen, white
   on paper.

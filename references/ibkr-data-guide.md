@@ -73,7 +73,7 @@ historical mode"). **Massive** does this natively — its Custom Bars take an ex
 needed. **IBKR** `get_price_history` has **no as-of parameter** and always ends now, so pull
 `period: "FIVE_YEARS"` (it spans the date) and use only bars dated **≤ the as-of date**;
 `get_price_snapshot` / FMP `batch-quote` are **live-only — skip them** and take price / 52-wk
-high / % off-high from the in-window bars. Feed the cutoff to `scripts/relative_strength.py` with `--asof <cutoff>` (same
+high / % off-high from the in-window bars. Feed the cutoff to `scripts/relative_strength.py` with `--asof {cutoff}` (same
 units as the bar timestamps; a bare `YYYY-MM-DD` is inclusive of that day) so RS, base, and
 breakout are computed only from in-window bars. For **C/A/I**, use only filings dated **on/before**
 the as-of date (no look-ahead), and remember `get_theme_details` / web "current leaders" are
@@ -92,7 +92,7 @@ themes**, with the FMP screener as a breadth cross-check.
 
 1. **Leading themes/groups (primary, most CAN-SLIM-aligned).** The user may name a theme,
    or you infer the current leading areas. For each leading trend/sector:
-   - `search_investment_topics { query: "<singular root noun>", max: 5 }` — use short
+   - `search_investment_topics { query: "{singular root noun}", max: 5 }` — use short
      singular keywords ("battery", "robot", "solar", "nuclear", "obesity", "cyber", "ai",
      "datacenter"). Retry with a synonym if empty.
    - `get_theme_details { key, max: 25 }` — returns companies **relevance-ranked** (rank 1 =

@@ -46,7 +46,7 @@ file manifest below if you only have this Markdown file.
 
 ## IMPORTANT: what this skill needs from its host
 
-The skill is **not** self-powering. It needs three capabilities, and its output is only as good as
+The skill is **not** self-powering. It needs a few capabilities, and its output is only as good as
 what it is given. Read this before running it anywhere.
 
 ### 1. Live market data (required)
@@ -79,7 +79,14 @@ are the specification.
 `scripts/html_to_pdf.py` needs a browser or a PDF library on the machine. Without one, hand over
 the HTML - the report is complete either way.
 
-### 3. A way to save and render an HTML file (for the report)
+### 3. Step 0 does not apply here
+
+The skill's first workflow step refreshes itself from its git repo (`scripts/self_update.py`,
+which is not in this bundle - it needs a checkout). On another host the equivalent is to re-export
+this bundle from <https://github.com/thewongdirection/can-slim-recommend> before you rely on it,
+and to say which date's copy produced a list. Then start at step 1.
+
+### 4. A way to save and render an HTML file (for the report)
 
 The deliverable is `assets/dashboard_template.html` with its `CONFIG` object filled in. It is a
 single self-contained file with no external assets. An assistant that can write files produces it
@@ -159,18 +166,18 @@ The skill itself: when it activates and the full workflow, step by step.
 ---
 name: can-slim-recommend
 description: >-
-  Sweep the whole market sector by sector and return TWO ranked recommendation lists, graded with
-  the CAN SLIM growth-investing methodology. Pulls the top 10 performers in EVERY sector from
-  TradingView, grades each one with the sister skill `can-slim-grader` (pass/partial/fail per
-  letter, out of 7), then returns (1) every sector's leaders graded 4.5 or better and (2) the
-  overall top 10 market-wide. Use whenever the user wants stock ideas, picks, or a screen -
-  "recommend some stocks", "what should I buy", "find me growth stocks", "screen for CAN SLIM
-  stocks", "best names in each sector", "top sector performers", "what to add to my watchlist",
-  "build me a shortlist" - or a themed/scoped set ("recommend AI stocks", "just the top 5
-  sectors") - even if they don't name CAN SLIM. This is the LIST/screener lens; to judge ONE named
-  ticker (a C-A-N-S-L-I-M scorecard with a BUY-RANGE/WATCH/AVOID verdict) use `can-slim-grader`.
-  Output: a white-themed A4 PDF report by default (the dark interactive HTML on request). Analysis and
-  decision support only - never personalized investment advice and never trading.
+  Sweep the market sector by sector and return TWO ranked recommendation lists, graded with the
+  CAN SLIM growth-investing methodology. Pulls the top 10 performers in EVERY sector from
+  TradingView, grades each with the sister skill `can-slim-grader` (pass/partial/fail per letter,
+  out of 7), then returns (1) every sector's leaders graded 4.5+ and (2) the overall top 10
+  market-wide. Use whenever the user wants stock ideas, picks, or a screen - "recommend some
+  stocks", "what should I buy", "find me growth stocks", "screen for CAN SLIM stocks", "best names
+  in each sector", "top sector performers", "build me a shortlist" - or a themed/scoped set
+  ("recommend AI stocks", "just the top 5 sectors") - even if they don't name CAN SLIM. The
+  LIST/screener lens; to judge ONE named ticker (a C-A-N-S-L-I-M scorecard with a
+  BUY-RANGE/WATCH/AVOID verdict) use `can-slim-grader`. Output: a white-themed A4 PDF by default,
+  dark interactive HTML on request. Decision support only - never personalized advice and never
+  trading.
 ---
 
 # can-slim-recommend — CAN SLIM sector sweep over TradingView
@@ -257,7 +264,8 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
 
 ## Workflow
 
-Work in order. Scale research depth to the request; keep the user informed as you go.
+Work in order, starting at **step 0** — the skill updates itself before it screens anything.
+Scale research depth to the request; keep the user informed as you go.
 
 > **ALWAYS ATTEMPT FRESH DATA — every run, every source, regardless of prior usage.** Treat every
 > invocation as a cold start. Re-run every screener call, re-pull every bar series, re-fetch every
@@ -308,6 +316,47 @@ Per source, `sourceMap[]` carries both `pulled` (when *this run* made the call) 
 date the figure underneath is from) — a source pulled today can still hand back last week's
 number. Every row needs `pulled`; a reused row also needs `asOf`. Also set
 `freshness.attemptedAt` to when the run tried its sources, so "fresh" has a timestamp behind it.
+
+### 0 — Self-update: run the newest published version of this skill
+**Before the market check, before the sweep, before a single screener call — make sure the copy of
+this skill you are about to follow is the newest one published.** The rules get revised:
+thresholds, the grade cut, the pass/partial/fail rubric, what counts as a pivot, the guardrails. A
+list produced from a stale copy is wrong in a way nobody can see in the output, because the report
+looks exactly the same. One command, every run:
+
+```bash
+python scripts/self_update.py --apply
+```
+
+It compares this install against **https://github.com/thewongdirection/can-slim-recommend**
+(branch `main`), installs a newer version when there is one — a fast-forward in a git clone,
+file-by-file from the branch archive in a plain unpacked install — and prints a final `STATUS:`
+line. Act on it:
+
+| `STATUS:` | Means | Do this |
+|---|---|---|
+| `current` | this copy is the published one | go to step 1 |
+| `updated` | a newer version was just installed | **re-read `SKILL.md` and the files in `references/` from disk before continuing** — what is in your context is the copy you started with, and it is now out of date. Then run the sweep from step 1 under the new rules |
+| `update-available` | newer version found, nothing installed (the `--apply` flag was missing) | re-run with `--apply` |
+| `blocked` | a newer version exists but cannot be installed here: local edits, diverged git history, a read-only install, a copy vendored inside a larger repo, or a write that failed partway | continue on this copy, and say once in the chat reply that the run used an older version and why — and if the detail says the install is **part-updated**, say that too, because its files are a mix. When the output names a staged directory, read the newer `SKILL.md` and `references/` from **there** and follow those rules for this run |
+| `unknown` | the repo could not be reached (offline, rate-limited, no git) | continue on this copy and say so in the chat reply |
+
+- **Every invocation, no exceptions.** "Run it again", "is that still true?" — a re-check is a full
+  re-run, and this step is part of it. It costs one small API call and short-circuits as soon as
+  the copy is confirmed current.
+- **It must never block the run.** One attempt, a short timeout; anything other than `updated`
+  means carry on and report it. A dated list from a slightly older copy beats no list at all — the
+  same bargain the freshness rule above already makes for reused data.
+- **Don't hand-edit an installed copy.** In a plain unpacked install `--apply` replaces every file
+  that differs from upstream, and deletes the ones an earlier update installed that upstream has
+  since retired — that is the point of it. Keep changes in a git clone, where the script refuses to
+  touch a dirty or diverged tree. A copy committed inside a larger repo is never rewritten at all:
+  the script says so and leaves the update to that repo.
+- **`can-slim-grader` self-updates the same way, and step 5 delegates to it.** Its own step 0 runs
+  when it does; do not run it on its behalf, and do not treat its update as this skill's.
+- It touches **no user data**, and writes nothing outside this skill's own directory — with one
+  exception: a read-only install, where it unpacks the newer copy into a temp directory and names
+  the path so this run can follow the newer rules from there.
 
 ### 1 — Set the scope
 Defaults, applied without asking when the user just said "recommend stocks":
@@ -420,7 +469,7 @@ pivot).
 
 ### 7 — Deliver: PDF by default, HTML on request (`--format` decides)
 1. **Fill the report.** Copy `assets/dashboard_template.html` to
-   `canslim-recommendations-<date>.html` and fill the `CONFIG` object — the *only* thing you
+   `canslim-recommendations-{date}.html` and fill the `CONFIG` object — the *only* thing you
    edit; the page renders itself. Populate `market` (verdict + tone + **`mGrade`** + implication),
    `sweep` (the funnel — its `graded` count must equal `picks.length`), `sectors[]` (the sector
    ranking from `sector_screen.py`), `picks[]` (every graded name), `gradeThreshold` /
@@ -438,9 +487,9 @@ pivot).
    page says, so verify before exporting.
 3. **Build the deliverable — one command, and the format is an argument.**
    ```
-   python scripts/build_report.py canslim-recommendations-<date>.html [--format pdf|html|both]
+   python scripts/build_report.py canslim-recommendations-{date}.html [--format pdf|html|both]
    ```
-   **`--format` defaults to `pdf`**, so plain `build_report.py <file>` is the default run. Pass
+   **`--format` defaults to `pdf`**, so plain `build_report.py {file}` is the default run. Pass
    `--format html` when the user asks for HTML, `--format both` when they want each. Read the
    user's own words: *"as a PDF"*, *"send me the HTML"*, *"both"* — and if they said nothing about
    format, produce the PDF. Add `--theme light` only if someone wants a light HTML; the PDF is
@@ -488,7 +537,7 @@ pivot).
 **Per-ticker deep dive (clickable ticker → in-page report window):** give a pick a `reviewUrl`
 and its ticker becomes a link that opens that report in a modal iframe. Save each
 `can-slim-grader` (or `ibkr-review-ticker`) report next to the dashboard as
-`reviews/<SYM>-canslim.html` and set `reviewUrl:"reviews/<SYM>-canslim.html"`. Because the modal
+`reviews/{SYM}-canslim.html` and set `reviewUrl:"reviews/{SYM}-canslim.html"`. Because the modal
 loads via an iframe, the review files must be **same-origin** with the dashboard (same folder,
 served locally) — a full `https://` URL also works. Omit `reviewUrl` and the ticker is plain text.
 These links are HTML-only; they flatten in the PDF.
@@ -508,7 +557,7 @@ admits reused data that `freshness.failures` does not declare.
 market-wide gate — it contributes equally to every name rather than being re-judged per row. This
 is the sister skill's exact scale, which is what makes the **4.5 cut** portable between the two.
 
-### As-of / historical mode (optional) — "run it as of <past date>"
+### As-of / historical mode (optional) — "run it as of {past date}"
 If the user asks for the sweep **as of a past date** ("what did CAN SLIM flag in Jan 2023"),
 switch to **point-in-time reconstruction**. This is a **best-effort historical view, NOT a
 survivorship-bias-free backtest** — say so, and stamp the output as a reconstruction.
@@ -522,7 +571,7 @@ survivorship-bias-free backtest** — say so, and stamp the output as a reconstr
   with `to` = the as-of date), giving native point-in-time OHLC. Live snapshots and
   `get_quotes_batch` are **live-only — do not use them for history**; take price, the 52-week
   high and % off-high from the in-window bars. Pass the cutoff to `scripts/relative_strength.py`
-  via `--asof <cutoff>` so RS / base / breakout use only in-window bars.
+  via `--asof {cutoff}` so RS / base / breakout use only in-window bars.
 - **M, N, S, L** reconstruct cleanly from the truncated SPY/QQQ + candidate bars.
 - **C, A, I (avoid look-ahead):** use only the most recent quarter/annual **reported ON OR BEFORE
   the as-of date** — e.g. for Jan 2023 that is **Q3 2022** (filed Oct–Nov 2022), **not** Q4 2022
@@ -564,6 +613,10 @@ https://github.com/thewongdirection/can-slim-grader — install it and I'll re-r
 apply the same rubric inline from the shared methodology."*)
 
 ## Guardrails
+- **Newest rules every run.** Self-update before anything else —
+  `python scripts/self_update.py --apply` — and when it reports `updated`, re-read `SKILL.md` and
+  `references/` before screening; when it cannot update, say in the chat reply that the run used an
+  older copy. Never skip it on a repeat run. See step 0.
 - **Read-only, market data only.** TradingView: `search_symbols`, `run_screener`, `get_ohlcv`,
   `get_symbol_data`, `get_quotes_batch`, `get_technicals`, `get_financials`,
   `get_financial_history`, `get_earnings_history`, `get_news`, and the user's own watchlists if
@@ -583,6 +636,12 @@ apply the same rubric inline from the shared methodology."*)
   exit rule.
 
 ## Files in this skill
+- `scripts/self_update.py` — the step-0 pre-flight: compares this install against
+  `github.com/thewongdirection/can-slim-recommend@main` and installs a newer version in place —
+  fast-forward in a git clone (never over a dirty or diverged tree), file-by-file from the branch
+  archive in an unpacked install (retiring what upstream has dropped), never at all when the skill
+  is vendored inside a larger repo. Reports `current` / `updated` / `update-available` / `blocked`
+  / `unknown` and never blocks a run. Pure standard library; `tests/` covers it offline.
 - `references/canslim-methodology.md` — the full CAN SLIM rules, thresholds, base patterns, sell
   rules, money management, and mistake list. **Shared with `can-slim-grader`** — any material
   change to the method has to land on both sides. Read before screening.
@@ -806,6 +865,15 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `scripts/build_report.py` — produces the PDF (default), the HTML, or both, and enforces the
   self-audit before emitting.
 - `scripts/html_to_pdf.py` — the PDF engine chain behind it. Shared with `can-slim-grader`.
+- `scripts/self_update.py` — the pre-flight the skill runs *before every sweep*: it compares the
+  installed copy against this repo's `main` and installs a newer one in place — a fast-forward in a
+  git clone (never over uncommitted or diverged work), file-by-file from the branch archive in a
+  plain unpacked install (retiring the files upstream has dropped), and never at all when the skill
+  is vendored inside a larger repo. So a list is always produced by the current thresholds and
+  cut, not whichever copy happened to be installed; if the repo is unreachable the run continues
+  and says which copy it used. Standard library only.
+- `tests/` — offline regression tests for `scripts/self_update.py`. Run with
+  `python -m unittest discover -s tests`.
 - `scripts/export_portable.py` — bundles the skill for use with a non-Claude assistant.
 - `assets/dashboard_template.html` — the self-contained report template: dark on screen, white
   on paper.
@@ -1327,7 +1395,7 @@ Feed every screener row into the script exactly as it came back — never retype
 { "asOf": "2026-08-21 (close)",
   "window": "Perf.6M",
   "benchmark": {"symbol": "AMEX:SPY", "perf": {"Perf.6M": 11.2}},
-  "sectors": { "Electronic Technology": [ <row>, <row>, ... ], "Health Technology": [ ... ] } }
+  "sectors": { "Electronic Technology": [ {row}, {row}, ... ], "Health Technology": [ ... ] } }
 ```
 
 ```
@@ -1605,7 +1673,7 @@ historical mode"). **Massive** does this natively — its Custom Bars take an ex
 needed. **IBKR** `get_price_history` has **no as-of parameter** and always ends now, so pull
 `period: "FIVE_YEARS"` (it spans the date) and use only bars dated **≤ the as-of date**;
 `get_price_snapshot` / FMP `batch-quote` are **live-only — skip them** and take price / 52-wk
-high / % off-high from the in-window bars. Feed the cutoff to `scripts/relative_strength.py` with `--asof <cutoff>` (same
+high / % off-high from the in-window bars. Feed the cutoff to `scripts/relative_strength.py` with `--asof {cutoff}` (same
 units as the bar timestamps; a bare `YYYY-MM-DD` is inclusive of that day) so RS, base, and
 breakout are computed only from in-window bars. For **C/A/I**, use only filings dated **on/before**
 the as-of date (no look-ahead), and remember `get_theme_details` / web "current leaders" are
@@ -1624,7 +1692,7 @@ themes**, with the FMP screener as a breadth cross-check.
 
 1. **Leading themes/groups (primary, most CAN-SLIM-aligned).** The user may name a theme,
    or you infer the current leading areas. For each leading trend/sector:
-   - `search_investment_topics { query: "<singular root noun>", max: 5 }` — use short
+   - `search_investment_topics { query: "{singular root noun}", max: 5 }` — use short
      singular keywords ("battery", "robot", "solar", "nuclear", "obesity", "cyber", "ai",
      "datacenter"). Retry with a synonym if empty.
    - `get_theme_details { key, max: 25 }` — returns companies **relevance-ranked** (rank 1 =
