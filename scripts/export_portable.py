@@ -39,6 +39,7 @@ FILES = [
     ("scripts/build_report.py",              "python", "The step-7 entry point: produces the PDF (default), the HTML, or both, and refuses to emit a report that is failing its own self-audit."),
     ("scripts/html_to_pdf.py",               "python", "The PDF engine chain behind it; reads page size and margin from the document's @page rule."),
     ("assets/dashboard_template.html",       "html", "The report template. Fill its CONFIG object and it renders itself, audits itself, and refuses to ship a self-contradicting report."),
+    ("tests/test_regression.py",             "python", "The regression suite - pure stdlib, no pytest, no network. Run it after porting or editing anything: the ceiling's soundness is the one property whose failure is invisible in the output, so it is pinned twice over."),
 ]
 
 PREAMBLE = """# CAN SLIM Sector Recommendations - portable skill bundle

@@ -632,7 +632,13 @@ def check_updates_status_and_header_sets_agree():
 # ---------------------------------------------------------------- export_portable
 
 def check_export_bundles_every_script(tmp):
-    out = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "export_portable.py"), tmp],
+    # The portable bundle ships this suite but NOT the exporter - a copy handed to another
+    # assistant has nothing left to export. Skip rather than fail there, so the suite a ported
+    # copy runs comes back green and a real failure still stands out.
+    exporter = os.path.join(ROOT, "scripts", "export_portable.py")
+    if not os.path.exists(exporter):
+        return "skipped: no exporter in this copy (a portable bundle)"
+    out = subprocess.run([sys.executable, exporter, tmp],
                          capture_output=True, text=True, timeout=180)
     assert out.returncode == 0, out.stderr
     import zipfile
