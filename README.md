@@ -189,6 +189,24 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `scripts/export_portable.py` — bundles the skill for use with a non-Claude assistant.
 - `assets/dashboard_template.html` — the self-contained report template: dark on screen, white
   on paper.
+- `tests/test_regression.py` — the regression suite (see below).
+
+## Tests
+```
+python tests/test_regression.py        # all of it, ~2s
+python tests/test_regression.py -v     # name every passing check
+python tests/test_regression.py ceiling   # only suites matching a substring
+```
+Pure standard library — no pytest, no network, no MCP connector. Run it after touching anything
+under `scripts/` or `assets/`.
+
+The load-bearing check is the ceiling's **soundness**: a ceiling that sits too high only wastes
+API calls, but one that sits too low drops a qualifying name and leaves no trace in the report.
+Two tests pin it from opposite directions — a brute force over the whole grade space against an
+independently written copy of the rubric, and every grade the 2026-09-12 run actually awarded,
+asserting no real score exceeded its own ceiling. The rest cover triage (a missing column must be
+skipped, never failed), `@page` margin parsing, the dashboard's self-audit rules, and the full
+`check_for_updates` git matrix including that it fails open and refuses to pull over a dirty tree.
 
 ## Requirements
 - **TradingView MCP connector** (primary). Falls back to IBKR / Massive Market Data / FMP / web.
