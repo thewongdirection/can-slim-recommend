@@ -88,7 +88,7 @@ file manifest below if you only have this Markdown file.
 
 ## IMPORTANT: what this skill needs from its host
 
-The skill is **not** self-powering. It needs three capabilities, and its output is only as good as
+The skill is **not** self-powering. It needs a few capabilities, and its output is only as good as
 what it is given. Read this before running it anywhere.
 
 ### 1. Live market data (required)
@@ -121,7 +121,14 @@ are the specification.
 `scripts/html_to_pdf.py` needs a browser or a PDF library on the machine. Without one, hand over
 the HTML - the report is complete either way.
 
-### 3. A way to save and render an HTML file (for the report)
+### 3. Step 0 does not apply here
+
+The skill's first workflow step refreshes itself from its git repo (`scripts/self_update.py`,
+which is not in this bundle - it needs a checkout). On another host the equivalent is to re-export
+this bundle from <https://github.com/thewongdirection/can-slim-recommend> before you rely on it,
+and to say which date's copy produced a list. Then start at step 1.
+
+### 4. A way to save and render an HTML file (for the report)
 
 The deliverable is `assets/dashboard_template.html` with its `CONFIG` object filled in. It is a
 single self-contained file with no external assets. An assistant that can write files produces it

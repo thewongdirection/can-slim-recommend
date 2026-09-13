@@ -99,7 +99,8 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
 
 ## Workflow
 
-Work in order. Scale research depth to the request; keep the user informed as you go.
+Work in order, starting at **step 0** — the skill updates itself before it screens anything.
+Scale research depth to the request; keep the user informed as you go.
 
 > **ALWAYS ATTEMPT FRESH DATA — every run, every source, regardless of prior usage.** Treat every
 > invocation as a cold start. Re-run every screener call, re-pull every bar series, re-fetch every
@@ -150,6 +151,47 @@ Per source, `sourceMap[]` carries both `pulled` (when *this run* made the call) 
 date the figure underneath is from) — a source pulled today can still hand back last week's
 number. Every row needs `pulled`; a reused row also needs `asOf`. Also set
 `freshness.attemptedAt` to when the run tried its sources, so "fresh" has a timestamp behind it.
+
+### 0 — Self-update: run the newest published version of this skill
+**Before the market check, before the sweep, before a single screener call — make sure the copy of
+this skill you are about to follow is the newest one published.** The rules get revised:
+thresholds, the grade cut, the pass/partial/fail rubric, what counts as a pivot, the guardrails. A
+list produced from a stale copy is wrong in a way nobody can see in the output, because the report
+looks exactly the same. One command, every run:
+
+```bash
+python scripts/self_update.py --apply
+```
+
+It compares this install against **https://github.com/thewongdirection/can-slim-recommend**
+(branch `main`), installs a newer version when there is one — a fast-forward in a git clone,
+file-by-file from the branch archive in a plain unpacked install — and prints a final `STATUS:`
+line. Act on it:
+
+| `STATUS:` | Means | Do this |
+|---|---|---|
+| `current` | this copy is the published one | go to step 1 |
+| `updated` | a newer version was just installed | **re-read `SKILL.md` and the files in `references/` from disk before continuing** — what is in your context is the copy you started with, and it is now out of date. Then run the sweep from step 1 under the new rules |
+| `update-available` | newer version found, nothing installed (the `--apply` flag was missing) | re-run with `--apply` |
+| `blocked` | a newer version exists but cannot be installed here: local edits, diverged git history, a read-only install, a copy vendored inside a larger repo, or a write that failed partway | continue on this copy, and say once in the chat reply that the run used an older version and why — and if the detail says the install is **part-updated**, say that too, because its files are a mix. When the output names a staged directory, read the newer `SKILL.md` and `references/` from **there** and follow those rules for this run |
+| `unknown` | the repo could not be reached (offline, rate-limited, no git) | continue on this copy and say so in the chat reply |
+
+- **Every invocation, no exceptions.** "Run it again", "is that still true?" — a re-check is a full
+  re-run, and this step is part of it. It costs one small API call and short-circuits as soon as
+  the copy is confirmed current.
+- **It must never block the run.** One attempt, a short timeout; anything other than `updated`
+  means carry on and report it. A dated list from a slightly older copy beats no list at all — the
+  same bargain the freshness rule above already makes for reused data.
+- **Don't hand-edit an installed copy.** In a plain unpacked install `--apply` replaces every file
+  that differs from upstream, and deletes the ones an earlier update installed that upstream has
+  since retired — that is the point of it. Keep changes in a git clone, where the script refuses to
+  touch a dirty or diverged tree. A copy committed inside a larger repo is never rewritten at all:
+  the script says so and leaves the update to that repo.
+- **`can-slim-grader` self-updates the same way, and step 5 delegates to it.** Its own step 0 runs
+  when it does; do not run it on its behalf, and do not treat its update as this skill's.
+- It touches **no user data**, and writes nothing outside this skill's own directory — with one
+  exception: a read-only install, where it unpacks the newer copy into a temp directory and names
+  the path so this run can follow the newer rules from there.
 
 ### 1 — Set the scope
 Defaults, applied without asking when the user just said "recommend stocks":
@@ -406,6 +448,10 @@ https://github.com/thewongdirection/can-slim-grader — install it and I'll re-r
 apply the same rubric inline from the shared methodology."*)
 
 ## Guardrails
+- **Newest rules every run.** Self-update before anything else —
+  `python scripts/self_update.py --apply` — and when it reports `updated`, re-read `SKILL.md` and
+  `references/` before screening; when it cannot update, say in the chat reply that the run used an
+  older copy. Never skip it on a repeat run. See step 0.
 - **Read-only, market data only.** TradingView: `search_symbols`, `run_screener`, `get_ohlcv`,
   `get_symbol_data`, `get_quotes_batch`, `get_technicals`, `get_financials`,
   `get_financial_history`, `get_earnings_history`, `get_news`, and the user's own watchlists if
@@ -425,6 +471,12 @@ apply the same rubric inline from the shared methodology."*)
   exit rule.
 
 ## Files in this skill
+- `scripts/self_update.py` — the step-0 pre-flight: compares this install against
+  `github.com/thewongdirection/can-slim-recommend@main` and installs a newer version in place —
+  fast-forward in a git clone (never over a dirty or diverged tree), file-by-file from the branch
+  archive in an unpacked install (retiring what upstream has dropped), never at all when the skill
+  is vendored inside a larger repo. Reports `current` / `updated` / `update-available` / `blocked`
+  / `unknown` and never blocks a run. Pure standard library; `tests/` covers it offline.
 - `references/canslim-methodology.md` — the full CAN SLIM rules, thresholds, base patterns, sell
   rules, money management, and mistake list. **Shared with `can-slim-grader`** — any material
   change to the method has to land on both sides. Read before screening.

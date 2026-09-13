@@ -9,3 +9,6 @@ canslim-*.html
 # the .zip is not (GitHub can zip the repo itself). Regenerate both with
 # `python scripts/export_portable.py` - never hand-edit the bundle.
 dist/*.zip
+
+# Written by scripts/self_update.py: which upstream commit this copy matches.
+.skill-version
