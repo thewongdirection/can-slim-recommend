@@ -102,6 +102,40 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
 
 Work in order. Scale research depth to the request; keep the user informed as you go.
 
+### 0 — Check this copy of the skill is current, BEFORE anything else
+
+**Run this first, every invocation, before the market read, before a single data call:**
+
+```
+python scripts/check_for_updates.py --update
+```
+
+A stale checkout is the one failure mode that leaves no trace: it produces a confident,
+well-formatted report built by superseded rules, and nothing in the output says so. The check
+costs one `git fetch`.
+
+**What an update can and cannot fix mid-run** — the script reports two groups for this reason,
+and the distinction has to be passed on honestly rather than collapsed into "it updated":
+
+| | when it is read | effect of updating mid-run |
+|---|---|---|
+| `scripts/`, `assets/` | from disk, each time they run | **takes effect immediately** — the new `sector_screen.py` and the new template are what actually execute this run |
+| `SKILL.md`, `references/` | into context when the skill is invoked | **does NOT take effect this run** — these instructions were loaded before step 0 ran |
+
+So when the script reports changes under *"Instructions that changed"*, the update landed on
+disk but this run is still following the previous instructions. **Say so, and offer to re-invoke
+the skill** so the new ones are loaded. Never imply the run picked them up.
+
+**The check never blocks a run.** No git, no network, a private remote, a zip export with no
+repo at all — the script says what it could not verify and exits 0. Continue on the copy you
+have and record it: put the reason in `CONFIG.dataWarning` and a `freshness.failures` entry with
+`item: "skill version"`, exactly as you would for a data source that could not be reached. An
+unverifiable version is a caveat on the report, not a reason to refuse one.
+
+**It also never pulls over your work.** `--update` fast-forwards only on a clean tree that has
+not diverged; against uncommitted changes or a diverged branch it refuses, explains, and leaves
+the decision to the user. If it refuses, do not work around it — report it and carry on.
+
 > **ALWAYS ATTEMPT FRESH DATA — every run, every source, regardless of prior usage.** Treat every
 > invocation as a cold start. Re-run every screener call, re-pull every bar series, re-fetch every
 > financial, and re-run the web research **this run**. Never *start* from a prior run's screener
@@ -493,6 +527,9 @@ apply the same rubric inline from the shared methodology."*)
   lists are built. Read before gathering data.
 - `references/ibkr-data-guide.md` — the fallback path (IBKR / Massive / FMP) plus the shared
   fundamental source ladder.
+- `scripts/check_for_updates.py` — step 0. Compares this checkout against its remote and splits
+  what changed into code (takes effect this run) and instructions (next run). Fails open on
+  every can't-check case; `--update` fast-forwards only when the tree is clean and undiverged.
 - `scripts/sector_screen.py` — turns the per-sector `run_screener` rows into % off the 52-week
   high, RS vs SPY, EMA position, dollar volume, the sector ranking and the triage verdict, and
   emits the grade queue plus each sector's `top5` fallback. Pure standard library.

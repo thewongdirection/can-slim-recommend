@@ -34,6 +34,11 @@ loss-cutting stop.
 
 ## How it works
 
+0. **Version check first** — `scripts/check_for_updates.py` compares this checkout against its
+   remote before any market call. Code updates (`scripts/`, `assets/`) take effect on the spot;
+   instruction updates (`SKILL.md`, `references/`) were already loaded and land on the next
+   invocation, so the run reports which it got. It never blocks a run and never pulls over
+   uncommitted work.
 1. **M first** — market direction from SPY/QQQ bars (distribution days, 50/200-day trend), graded
    once and applied to every row. In a correction the lists come out short rather than the cut
    coming down.
@@ -173,6 +178,8 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
   built.
 - `references/ibkr-data-guide.md` — the fallback path (IBKR / Massive / FMP) plus the shared
   fundamental-source ladder.
+- `scripts/check_for_updates.py` — step 0: is this copy current? Fails open when it cannot
+  check; `--update` fast-forwards only on a clean, undiverged tree.
 - `scripts/sector_screen.py` — sector sweep arithmetic + CAN SLIM triage over the screener rows.
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.

@@ -33,6 +33,7 @@ FILES = [
     ("references/canslim-methodology.md",    "md",   "The distilled CAN SLIM rule set - the seven criteria, thresholds, base patterns, buy/sell rules."),
     ("references/tradingview-sector-sweep.md","md",  "The primary data guide: verified call shapes, sector taxonomy, triage filters, list construction."),
     ("references/ibkr-data-guide.md",        "md",   "The fallback data path plus the shared fundamental-source ladder."),
+    ("scripts/check_for_updates.py",         "python", "Step 0: is this copy current? Compares the checkout against its remote, separates code (effective this run) from instructions (effective next run), and fails open when it cannot check."),
     ("scripts/sector_screen.py",             "python", "Sector-sweep arithmetic and CAN SLIM triage over the screener rows."),
     ("scripts/relative_strength.py",         "python", "RS proxy, % off the 52-week high, base depth/length, breakout volume, from OHLCV bars."),
     ("scripts/build_report.py",              "python", "The step-7 entry point: produces the PDF (default), the HTML, or both, and refuses to emit a report that is failing its own self-audit."),
