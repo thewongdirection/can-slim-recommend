@@ -104,7 +104,7 @@ rules, and the classic mistakes to avoid.
 One command produces either format, and the format is an argument rather than a convention:
 
 ```
-python scripts/build_report.py canslim-recommendations-<date>.html [--format pdf|html|both]
+python scripts/build_report.py canslim-recommendations-{date}.html [--format pdf|html|both]
 ```
 
 `--format` **defaults to `pdf`**. The script also enforces the dashboard's self-audit — it renders

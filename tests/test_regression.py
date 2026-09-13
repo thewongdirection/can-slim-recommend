@@ -690,6 +690,46 @@ def check_skill_description_fits_the_frontmatter_limit():
         assert must in d, "the description no longer mentions %r" % must
 
 
+def check_skill_frontmatter_conforms(tmp):
+    """The rules an importer enforces before it will load the skill at all. Each of these fails
+    SILENTLY somewhere - a BOM hides the opening '---', a tab makes the YAML unparseable, an
+    unrecognised key is rejected wholesale - so the skill simply does not appear, with no error
+    pointing at the file."""
+    raw = io.open(os.path.join(ROOT, "SKILL.md"), "rb").read()
+    assert not raw.startswith(b"\xef\xbb\xbf"), "a UTF-8 BOM hides the opening '---'"
+    assert b"\r\n" not in raw, "CRLF line endings"
+    assert raw.endswith(b"\n"), "no trailing newline"
+    src = raw.decode("utf-8")
+    assert src.startswith("---\n"), "frontmatter must start on line 1"
+    fm, body = src.split("---", 2)[1], src.split("---", 2)[2]
+    assert "\t" not in fm, "YAML forbids tabs for indentation"
+
+    keys = re.findall(r"^([A-Za-z_][A-Za-z0-9_-]*):", fm, re.M)
+    assert set(keys) <= {"name", "description", "license", "allowed-tools", "metadata", "version"}, \
+        "unrecognised frontmatter key in %r" % keys
+    assert {"name", "description"} <= set(keys), "name and description are both required"
+    name = re.search(r"^name:\s*(.+)$", fm, re.M).group(1).strip()
+    assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name), "name %r must be lowercase-and-hyphen" % name
+    assert len(name) <= 64, "name is %d chars (limit 64)" % len(name)
+    assert re.search(r"^#\s+\S", body, re.M), "the body needs a top-level heading"
+
+
+def check_no_angle_bracket_placeholders(tmp):
+    """`<date>`, `<SYM>` and friends read as HTML tags. A markdown renderer or an importer that
+    sanitises HTML drops them, so the reader is told to run
+    `build_report.py canslim-recommendations-.html`. Placeholders use {braces} throughout.
+
+    README's `<html>` is exempt: it names the actual element whose data-theme you edit.
+    """
+    for rel in ["SKILL.md", "README.md"] + ["references/" + f for f in
+                                            sorted(os.listdir(os.path.join(ROOT, "references")))
+                                            if f.endswith(".md")]:
+        text = io.open(os.path.join(ROOT, rel), encoding="utf-8").read()
+        found = [t for t in re.findall(r"</?[a-zA-Z][a-zA-Z0-9_ -]*/?>", text)
+                 if not (rel == "README.md" and t == "<html>")]
+        assert not found, "%s uses angle-bracket placeholders %s - use {braces}" % (rel, sorted(set(found)))
+
+
 def check_skill_documents_step_zero():
     s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
     assert "### 0 — Check this copy of the skill is current" in s

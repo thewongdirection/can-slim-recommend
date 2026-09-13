@@ -134,7 +134,7 @@ Feed every screener row into the script exactly as it came back — never retype
 { "asOf": "2026-08-21 (close)",
   "window": "Perf.6M",
   "benchmark": {"symbol": "AMEX:SPY", "perf": {"Perf.6M": 11.2}},
-  "sectors": { "Electronic Technology": [ <row>, <row>, ... ], "Health Technology": [ ... ] } }
+  "sectors": { "Electronic Technology": [ {row}, {row}, ... ], "Health Technology": [ ... ] } }
 ```
 
 ```

@@ -506,7 +506,7 @@ pivot).
 
 ### 7 — Deliver: PDF by default, HTML on request (`--format` decides)
 1. **Fill the report.** Copy `assets/dashboard_template.html` to
-   `canslim-recommendations-<date>.html` and fill the `CONFIG` object — the *only* thing you
+   `canslim-recommendations-{date}.html` and fill the `CONFIG` object — the *only* thing you
    edit; the page renders itself. Populate `market` (verdict + tone + **`mGrade`** + implication),
    `sweep` (the funnel — its `graded` count must equal `picks.length`), `sectors[]` (the sector
    ranking from `sector_screen.py`), `picks[]` (every graded name), `gradeThreshold` /
@@ -524,9 +524,9 @@ pivot).
    page says, so verify before exporting.
 3. **Build the deliverable — one command, and the format is an argument.**
    ```
-   python scripts/build_report.py canslim-recommendations-<date>.html [--format pdf|html|both]
+   python scripts/build_report.py canslim-recommendations-{date}.html [--format pdf|html|both]
    ```
-   **`--format` defaults to `pdf`**, so plain `build_report.py <file>` is the default run. Pass
+   **`--format` defaults to `pdf`**, so plain `build_report.py {file}` is the default run. Pass
    `--format html` when the user asks for HTML, `--format both` when they want each. Read the
    user's own words: *"as a PDF"*, *"send me the HTML"*, *"both"* — and if they said nothing about
    format, produce the PDF. Add `--theme light` only if someone wants a light HTML; the PDF is
@@ -574,7 +574,7 @@ pivot).
 **Per-ticker deep dive (clickable ticker → in-page report window):** give a pick a `reviewUrl`
 and its ticker becomes a link that opens that report in a modal iframe. Save each
 `can-slim-grader` (or `ibkr-review-ticker`) report next to the dashboard as
-`reviews/<SYM>-canslim.html` and set `reviewUrl:"reviews/<SYM>-canslim.html"`. Because the modal
+`reviews/{SYM}-canslim.html` and set `reviewUrl:"reviews/{SYM}-canslim.html"`. Because the modal
 loads via an iframe, the review files must be **same-origin** with the dashboard (same folder,
 served locally) — a full `https://` URL also works. Omit `reviewUrl` and the ticker is plain text.
 These links are HTML-only; they flatten in the PDF.
@@ -594,7 +594,7 @@ admits reused data that `freshness.failures` does not declare.
 market-wide gate — it contributes equally to every name rather than being re-judged per row. This
 is the sister skill's exact scale, which is what makes the **4.5 cut** portable between the two.
 
-### As-of / historical mode (optional) — "run it as of <past date>"
+### As-of / historical mode (optional) — "run it as of {past date}"
 If the user asks for the sweep **as of a past date** ("what did CAN SLIM flag in Jan 2023"),
 switch to **point-in-time reconstruction**. This is a **best-effort historical view, NOT a
 survivorship-bias-free backtest** — say so, and stamp the output as a reconstruction.
@@ -608,7 +608,7 @@ survivorship-bias-free backtest** — say so, and stamp the output as a reconstr
   with `to` = the as-of date), giving native point-in-time OHLC. Live snapshots and
   `get_quotes_batch` are **live-only — do not use them for history**; take price, the 52-week
   high and % off-high from the in-window bars. Pass the cutoff to `scripts/relative_strength.py`
-  via `--asof <cutoff>` so RS / base / breakout use only in-window bars.
+  via `--asof {cutoff}` so RS / base / breakout use only in-window bars.
 - **M, N, S, L** reconstruct cleanly from the truncated SPY/QQQ + candidate bars.
 - **C, A, I (avoid look-ahead):** use only the most recent quarter/annual **reported ON OR BEFORE
   the as-of date** — e.g. for Jan 2023 that is **Q3 2022** (filed Oct–Nov 2022), **not** Q4 2022
@@ -820,7 +820,7 @@ rules, and the classic mistakes to avoid.
 One command produces either format, and the format is an argument rather than a convention:
 
 ```
-python scripts/build_report.py canslim-recommendations-<date>.html [--format pdf|html|both]
+python scripts/build_report.py canslim-recommendations-{date}.html [--format pdf|html|both]
 ```
 
 `--format` **defaults to `pdf`**. The script also enforces the dashboard's self-audit — it renders
@@ -1441,7 +1441,7 @@ Feed every screener row into the script exactly as it came back — never retype
 { "asOf": "2026-08-21 (close)",
   "window": "Perf.6M",
   "benchmark": {"symbol": "AMEX:SPY", "perf": {"Perf.6M": 11.2}},
-  "sectors": { "Electronic Technology": [ <row>, <row>, ... ], "Health Technology": [ ... ] } }
+  "sectors": { "Electronic Technology": [ {row}, {row}, ... ], "Health Technology": [ ... ] } }
 ```
 
 ```
@@ -1719,7 +1719,7 @@ historical mode"). **Massive** does this natively — its Custom Bars take an ex
 needed. **IBKR** `get_price_history` has **no as-of parameter** and always ends now, so pull
 `period: "FIVE_YEARS"` (it spans the date) and use only bars dated **≤ the as-of date**;
 `get_price_snapshot` / FMP `batch-quote` are **live-only — skip them** and take price / 52-wk
-high / % off-high from the in-window bars. Feed the cutoff to `scripts/relative_strength.py` with `--asof <cutoff>` (same
+high / % off-high from the in-window bars. Feed the cutoff to `scripts/relative_strength.py` with `--asof {cutoff}` (same
 units as the bar timestamps; a bare `YYYY-MM-DD` is inclusive of that day) so RS, base, and
 breakout are computed only from in-window bars. For **C/A/I**, use only filings dated **on/before**
 the as-of date (no look-ahead), and remember `get_theme_details` / web "current leaders" are
@@ -1738,7 +1738,7 @@ themes**, with the FMP screener as a breadth cross-check.
 
 1. **Leading themes/groups (primary, most CAN-SLIM-aligned).** The user may name a theme,
    or you infer the current leading areas. For each leading trend/sector:
-   - `search_investment_topics { query: "<singular root noun>", max: 5 }` — use short
+   - `search_investment_topics { query: "{singular root noun}", max: 5 }` — use short
      singular keywords ("battery", "robot", "solar", "nuclear", "obesity", "cyber", "ai",
      "datacenter"). Retry with a synonym if empty.
    - `get_theme_details { key, max: 25 }` — returns companies **relevance-ranked** (rank 1 =
@@ -5553,6 +5553,46 @@ def check_skill_description_fits_the_frontmatter_limit():
     for must in ("CAN SLIM", "can-slim-grader", "recommend some stocks", "what should I buy",
                  "4.5", "never personalized investment advice"):
         assert must in d, "the description no longer mentions %r" % must
+
+
+def check_skill_frontmatter_conforms(tmp):
+    """The rules an importer enforces before it will load the skill at all. Each of these fails
+    SILENTLY somewhere - a BOM hides the opening '---', a tab makes the YAML unparseable, an
+    unrecognised key is rejected wholesale - so the skill simply does not appear, with no error
+    pointing at the file."""
+    raw = io.open(os.path.join(ROOT, "SKILL.md"), "rb").read()
+    assert not raw.startswith(b"\xef\xbb\xbf"), "a UTF-8 BOM hides the opening '---'"
+    assert b"\r\n" not in raw, "CRLF line endings"
+    assert raw.endswith(b"\n"), "no trailing newline"
+    src = raw.decode("utf-8")
+    assert src.startswith("---\n"), "frontmatter must start on line 1"
+    fm, body = src.split("---", 2)[1], src.split("---", 2)[2]
+    assert "\t" not in fm, "YAML forbids tabs for indentation"
+
+    keys = re.findall(r"^([A-Za-z_][A-Za-z0-9_-]*):", fm, re.M)
+    assert set(keys) <= {"name", "description", "license", "allowed-tools", "metadata", "version"}, \
+        "unrecognised frontmatter key in %r" % keys
+    assert {"name", "description"} <= set(keys), "name and description are both required"
+    name = re.search(r"^name:\s*(.+)$", fm, re.M).group(1).strip()
+    assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name), "name %r must be lowercase-and-hyphen" % name
+    assert len(name) <= 64, "name is %d chars (limit 64)" % len(name)
+    assert re.search(r"^#\s+\S", body, re.M), "the body needs a top-level heading"
+
+
+def check_no_angle_bracket_placeholders(tmp):
+    """`<date>`, `<SYM>` and friends read as HTML tags. A markdown renderer or an importer that
+    sanitises HTML drops them, so the reader is told to run
+    `build_report.py canslim-recommendations-.html`. Placeholders use {braces} throughout.
+
+    README's `<html>` is exempt: it names the actual element whose data-theme you edit.
+    """
+    for rel in ["SKILL.md", "README.md"] + ["references/" + f for f in
+                                            sorted(os.listdir(os.path.join(ROOT, "references")))
+                                            if f.endswith(".md")]:
+        text = io.open(os.path.join(ROOT, rel), encoding="utf-8").read()
+        found = [t for t in re.findall(r"</?[a-zA-Z][a-zA-Z0-9_ -]*/?>", text)
+                 if not (rel == "README.md" and t == "<html>")]
+        assert not found, "%s uses angle-bracket placeholders %s - use {braces}" % (rel, sorted(set(found)))
 
 
 def check_skill_documents_step_zero():
