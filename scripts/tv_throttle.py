@@ -49,6 +49,7 @@ Pure standard library.
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -69,6 +70,15 @@ DEFAULTS = {
     # A 403 is not a slow-down, it is a door closing for many minutes. Treat it as such.
     "block_base": 300.0,
     "block_cap": 1800.0,
+    # Adaptive pacing. The endpoint publishes no limit, so the rate is LEARNED: start well under
+    # anything plausible, ease up after a run of clean calls, halve on any rate signal. The cap is
+    # a hard ceiling regardless of how well things are going - there is no throughput worth the
+    # block, and a sweep needs ~20 screener calls, not hundreds.
+    "start_rate": 12,
+    "min_rate": 4,
+    "max_rate": 90,          # deliberately under 100/min
+    "raise_after": 10,       # clean calls before easing up
+    "raise_by": 2,
 }
 
 
@@ -112,15 +122,23 @@ def next_free(s, cfg, now, scope="scanner"):
         gap_ready = now
     recent = [t for t in s["calls"] if now - t < cfg["window"]]
     win_ready = now
-    if len(recent) >= cfg["max_in_window"]:
+    budget = effective_budget(s, cfg)
+    if len(recent) >= budget:
         # wait until the oldest call in the window ages out
         win_ready = min(recent) + cfg["window"]
     when = max(gap_ready, win_ready, now)
     if when <= now:
         return now, "clear"
     why = "min gap %.1fs" % cfg["min_gap"] if gap_ready >= win_ready else \
-          "budget %d/%.0fs is full" % (cfg["max_in_window"], cfg["window"])
+          "budget %d/%.0fs is full" % (effective_budget(s, cfg), cfg["window"])
     return when, why
+
+
+def effective_budget(s, cfg):
+    """Calls allowed this window: the LEARNED rate, floored, capped, and never over --max-rate."""
+    r = int(s.get("rate", cfg["start_rate"]))
+    r = max(cfg["min_rate"], min(r, cfg["max_rate"]))
+    return max(1, int(r * cfg["window"] / 60.0))
 
 
 def cmd_wait(cfg, max_wait, quiet, scope):
@@ -175,8 +193,10 @@ def cmd_status(cfg, scope):
     s = prune(load(), cfg, time.time())
     now = time.time()
     recent = [t for t in s["calls"] if now - t < cfg["window"]]
+    print("learned rate           : %d/min (cap %d, floor %d)"
+          % (int(s.get("rate", cfg["start_rate"])), cfg["max_rate"], cfg["min_rate"]))
     print("calls in the last %.0fs : %d / %d  (shared across endpoints)"
-          % (cfg["window"], len(recent), cfg["max_in_window"]))
+          % (cfg["window"], len(recent), effective_budget(s, cfg)))
     for k in SCOPES:
         b = s["blocked"][k]
         left = max(0.0, b["until"] - now)
@@ -188,6 +208,65 @@ def cmd_status(cfg, scope):
     return 0
 
 
+# The only authoritative rate signals for scanner.tradingview.com. It is an undocumented internal
+# endpoint - TradingView publishes no limit for it anywhere, and the figures that turn up in a
+# search ("2 req/sec Basic, 5 req/sec Pro") belong to tradingviewapi.com, an unrelated commercial
+# reseller. So the limit is DISCOVERED from what the endpoint says back, not read from a doc.
+RETRY_AFTER = re.compile(r"retry\s+after\s+(\d+(?:\.\d+)?)\s*s", re.I)
+RATE_WORDS = re.compile(r"rate[\s_-]?limit|too\s+many\s+requests|\b429\b", re.I)
+BLOCK_WORDS = re.compile(r"\b403\b|forbidden|blocked", re.I)
+
+
+def observe(text, cfg, scope="scanner"):
+    """Read one TradingView response and adapt the pace to it. Returns (verdict, note).
+
+    This is the "check the limit" half of the throttle, and it is the only honest way to do it:
+    ask the endpoint, every call, rather than hard-coding a number nobody publishes. Three
+    signals, in descending order of authority:
+
+      * "Retry after 32s"  - TradingView naming its own cooldown. Obeyed exactly; a number from
+                             the server always beats a number we guessed.
+      * a rate-limit phrase - back off multiplicatively (halve the rate) and cool down.
+      * 403 / forbidden     - a block, not a slow-down: escalate per the block ladder.
+
+    Success moves the other way, additively: after a run of clean calls the allowed rate creeps
+    up by one. That is AIMD, and it is the standard answer to an undocumented limit - it finds
+    the ceiling by approaching it slowly and retreats from it fast, so the cost of being wrong is
+    a pause rather than a block.
+    """
+    s = load()
+    t = text or ""
+    m = RETRY_AFTER.search(t)
+    if m:
+        secs = float(m.group(1))
+        s["blocked"][scope] = {"n": s["blocked"][scope]["n"] + 1, "until": time.time() + secs}
+        s["rate"] = max(cfg["min_rate"], int(s.get("rate", cfg["start_rate"]) / 2))
+        save(s)
+        return "retry-after", ("TradingView asked for %.0fs - obeying it exactly, and halving the "
+                               "rate to %d/min" % (secs, s["rate"]))
+    if BLOCK_WORDS.search(t) and not RATE_WORDS.search(t):
+        s["rate"] = max(cfg["min_rate"], int(s.get("rate", cfg["start_rate"]) / 2))
+        save(s)
+        cmd_blocked(cfg, scope)
+        return "blocked", "rate halved to %d/min" % s["rate"]
+    if RATE_WORDS.search(t):
+        s["rate"] = max(cfg["min_rate"], int(s.get("rate", cfg["start_rate"]) / 2))
+        s["blocked"][scope]["until"] = max(s["blocked"][scope]["until"], time.time() + 60)
+        save(s)
+        return "rate-limited", "rate halved to %d/min, holding 60s" % s["rate"]
+
+    # clean response: additive increase, but only after a run of them, and never past the cap
+    s["streak"] = s.get("streak", 0) + 1
+    old = s.get("rate", cfg["start_rate"])
+    if s["streak"] >= cfg["raise_after"] and old < cfg["max_rate"]:
+        s["rate"] = min(cfg["max_rate"], old + cfg["raise_by"])
+        s["streak"] = 0
+        save(s)
+        return "ok", "%d clean calls - easing the rate up to %d/min" % (cfg["raise_after"], s["rate"])
+    save(s)
+    return "ok", ""
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -197,11 +276,21 @@ def main():
     g.add_argument("--blocked", action="store_true", help="403/rate-limited; escalate the cooldown")
     g.add_argument("--status", action="store_true", help="budget, penalty and next safe time")
     g.add_argument("--reset", action="store_true", help="clear state")
+    g.add_argument("--observe", metavar="TEXT",
+                   help="feed one TradingView response (or '-' for stdin) and adapt the pace to "
+                        "it. This is the 'check the limit' step: scanner.tradingview.com "
+                        "publishes no rate limit, so it is learned from what the endpoint says "
+                        "back - 'Retry after Ns' is obeyed exactly, a rate-limit phrase halves "
+                        "the rate, a 403 escalates the block ladder, and a run of clean calls "
+                        "eases the rate up.")
     ap.add_argument("--min-gap", type=float, default=DEFAULTS["min_gap"],
                     help="seconds between calls (default %(default)s)")
     ap.add_argument("--window", type=float, default=DEFAULTS["window"])
     ap.add_argument("--max-in-window", type=int, default=DEFAULTS["max_in_window"],
                     help="calls allowed per window (default %(default)s)")
+    ap.add_argument("--max-rate", type=int, default=DEFAULTS["max_rate"],
+                    help="hard ceiling on calls per minute, whatever the learned rate says "
+                         "(default %(default)s)")
     ap.add_argument("--max-wait", type=float, default=90.0,
                     help="refuse rather than sleep longer than this (default %(default)s)")
     ap.add_argument("--scope", choices=SCOPES, default="scanner",
@@ -212,7 +301,8 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
-    cfg = dict(DEFAULTS, min_gap=a.min_gap, window=a.window, max_in_window=a.max_in_window)
+    cfg = dict(DEFAULTS, min_gap=a.min_gap, window=a.window, max_in_window=a.max_in_window,
+               max_rate=a.max_rate)
     if a.reset:
         try:
             os.remove(STATE)
@@ -220,6 +310,11 @@ def main():
             pass
         print("throttle state cleared")
         return 0
+    if a.observe is not None:
+        text = sys.stdin.read() if a.observe == "-" else a.observe
+        verdict, note = observe(text, cfg, a.scope)
+        print("%s%s" % (verdict, (": " + note) if note else ""))
+        return 0 if verdict == "ok" else 2
     if a.wait:
         return cmd_wait(cfg, a.max_wait, a.quiet, a.scope)
     if a.blocked:
@@ -230,4 +325,14 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        # `tv_throttle.py --status | head -2` is an ordinary thing to type, and a traceback is a
+        # poor reward for it. Close stderr too, or the interpreter prints the same complaint again
+        # while shutting down.
+        try:
+            os.close(sys.stderr.fileno())
+        except OSError:
+            pass
+        sys.exit(0)

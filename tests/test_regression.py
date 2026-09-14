@@ -1128,11 +1128,69 @@ def check_a_scanner_block_does_not_halt_bar_calls(tmp):
     assert "1 / 12" in st.replace("  ", " "), st
 
 
+def check_a_named_retry_after_is_obeyed_exactly(tmp):
+    """When TradingView names its own cooldown ("Retry after 32s") that number beats any we
+    guessed, so it is used verbatim rather than fed into the block ladder."""
+    _thr(tmp, "--reset")
+    _, rc, out = _thr(tmp, "--observe", "Rate limit exceeded. Retry after 32s")
+    assert rc == 2 and "32s" in out and "obeying it exactly" in out, out
+    _, _, st = _thr(tmp, "--status")
+    assert "learned rate           : 6/min" in st, st        # halved from the 12 default
+    _, rc, out = _thr(tmp, "--wait", "--max-wait", "5")
+    assert rc == 1, "the named cooldown must actually hold calls"
+
+
+def check_rate_signals_halve_and_clean_calls_ease_up(tmp):
+    """AIMD, which is the standard answer to an UNDOCUMENTED limit: approach it slowly, retreat
+    fast. scanner.tradingview.com publishes no rate limit anywhere - the numbers that turn up in
+    a search belong to tradingviewapi.com, an unrelated commercial reseller - so the only honest
+    source is what the endpoint says back."""
+    _thr(tmp, "--reset")
+    _, _, out = _thr(tmp, "--observe", '{"error":"Too Many Requests"}')
+    assert "halved to 6/min" in out, out
+    _thr(tmp, "--reset")
+    for _ in range(10):
+        _thr(tmp, "--observe", '{"success":true}')
+    _, _, st = _thr(tmp, "--status")
+    assert "learned rate           : 14/min" in st, st       # 12 + raise_by after raise_after
+
+
+def check_the_rate_cap_holds_however_well_it_is_going(tmp):
+    """A hard ceiling regardless of the learned rate. There is no throughput worth the block, and
+    a sweep needs about twenty screener calls, not hundreds."""
+    _thr(tmp, "--reset")
+    for _ in range(60):
+        _thr(tmp, "--observe", '{"success":true}', "--max-rate", "16")
+    _, _, st = _thr(tmp, "--status", "--max-rate", "16")
+    assert "learned rate           : 16/min (cap 16" in st, st
+
+
+def check_a_403_observation_escalates_the_block_ladder(tmp):
+    """A 403 is a block, not a slow-down: it must reach the cooldown ladder, not just trim the
+    rate, or the next call walks straight back into it."""
+    _thr(tmp, "--reset")
+    _, rc, out = _thr(tmp, "--observe",
+                      "HTTPStatusError: Client error '403 Forbidden' for url "
+                      "https://scanner.tradingview.com/america/scan")
+    assert rc == 2 and "block #1" in out, out
+    _, rc, _ = _thr(tmp, "--wait", "--max-wait", "5")
+    assert rc == 1
+
+
+def check_status_survives_a_closed_pipe(tmp):
+    """`--status | head -2` is an ordinary thing to type; a traceback is a poor reward for it."""
+    r = subprocess.run("%s %s --status 2>&1 | head -2"
+                       % (sys.executable, os.path.join(ROOT, "scripts", "tv_throttle.py")),
+                       shell=True, capture_output=True, text=True, timeout=60)
+    assert "BrokenPipeError" not in r.stdout, r.stdout
+
+
 def check_skill_documents_the_throttle():
     """A throttle nobody is told to call is not a throttle."""
     s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
     assert "tv_throttle.py" in s, "SKILL.md never tells the run to pace its TradingView calls"
     assert "--wait" in s
+    assert "--observe" in s, "SKILL.md never tells the run to CHECK the limit it is pacing against"
 
 # ---------------------------------------------------------------- doc/consistency
 

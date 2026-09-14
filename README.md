@@ -185,7 +185,10 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
   volume from OHLCV bars. Shared with `can-slim-grader`.
 - `scripts/tv_throttle.py` — paces TradingView calls so a sweep never earns a block. `--wait`
   blocks the caller rather than advising it, because the connector gives no warning: a burst
-  succeeds, then the screener 403s for twenty minutes with no server-side way out.
+  succeeds, then the screener 403s for twenty minutes with no server-side way out. The rate is
+  **learned**, not configured — `scanner.tradingview.com` publishes no limit, so `--observe` reads
+  each response and adapts (obeying a named `Retry after Ns` exactly, halving on a rate signal,
+  easing up after clean calls), hard-capped at 90/min.
 - `scripts/institutional_cache.py` — grades **I** from SEC Form 13F, aggregated once per quarter
   and cached so a run spends no network on it. Discovers the available data sets from SEC's own
   index rather than constructing URLs, and fails open to the proxy below.

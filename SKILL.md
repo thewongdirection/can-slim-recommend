@@ -220,11 +220,28 @@ do. That ends the sweep. A few seconds of waiting per call costs a minute; one b
 run, so pace for the failure you cannot recover from.
 
 ```
-python scripts/tv_throttle.py --wait     # blocks until safe (4s gap, 12 calls/min)
+python scripts/tv_throttle.py --wait               # blocks until safe
 {the TradingView call}
-python scripts/tv_throttle.py --ok       # worked — relax any penalty
-python scripts/tv_throttle.py --blocked  # 403/rate-limited — escalate the cooldown
+python scripts/tv_throttle.py --observe '{response}'   # ALWAYS — adapt to what it just said
 ```
+
+**Feed every response back through `--observe`.** That is the "check the limit" step, and it is
+the only honest way to do it: `scanner.tradingview.com` is an undocumented internal endpoint and
+publishes no rate limit anywhere. (Figures that surface in a search — "2 req/sec Basic, 5 req/sec
+Pro" — belong to **tradingviewapi.com**, an unrelated commercial reseller, and do not govern this
+connector. Do not pace against them.) So the limit is learned from what the endpoint says back,
+on every call:
+
+| What came back | What the throttle does |
+|---|---|
+| `Retry after 32s` | obeys that number **exactly** — a cooldown from the server beats any guess |
+| `rate limit` / `429` | halves the learned rate, holds 60s |
+| `403` / forbidden | escalates the block ladder (5 → 10 → 20 min) and halves the rate |
+| a clean response | after 10 in a row, eases the rate up by 2/min |
+
+That is additive-increase / multiplicative-decrease — approach an unknown ceiling slowly, retreat
+from it fast — starting at 12 calls/min and **hard-capped at 90**, under any plausible limit. A
+sweep needs roughly twenty screener calls, so there is no throughput worth risking the block for.
 
 Blocks are tracked **per endpoint family** via `--scope`, because that is how they are imposed:
 measured on this connector, `scanner.tradingview.com` returned 403 while `get_ohlcv` kept
