@@ -3488,6 +3488,27 @@ def build(args, cfg):
     known, detail = {}, {}
 
     universe, cusip_map, floats = {}, {}, {}
+    # SEC's own ticker->registrant-name map covers every US registrant (~10k), so the cache can be
+    # built ONCE for the whole market instead of only for the names one sweep happened to surface.
+    # That is what makes it a quarterly artifact rather than a per-run one.
+    if getattr(args, "sec_tickers", None):
+        src = args.sec_tickers
+        if src == "auto":
+            body, why = http("https://www.sec.gov/files/company_tickers.json",
+                             args.contact, args.timeout)
+            if body is None:
+                meta["notes"].append("company_tickers.json: %s" % why)
+                body = b"{}"
+        else:
+            body = io.open(src, "rb").read()
+        try:
+            for e in json.loads(body.decode("utf-8", "replace")).values():
+                t = (e.get("ticker") or "").strip().upper()
+                if t:
+                    universe.setdefault(t, e.get("title") or "")
+            meta["notes"].append("universe: %d tickers from SEC company_tickers.json" % len(universe))
+        except Exception as e:
+            meta["notes"].append("could not read company_tickers.json (%s)" % e)
     if getattr(args, "universe", None):
         blob = json.load(open(args.universe, encoding="utf-8"))
         sec = blob.get("sectors") or {}
@@ -3595,7 +3616,12 @@ def main():
     ap.add_argument("--list", action="store_true",
                     help="print the data sets SEC currently publishes, newest first, and exit")
     ap.add_argument("--universe", metavar="FILE",
-                    help="the sweep JSON, used to resolve CUSIPs by issuer name")
+                    help="the sweep JSON, used to resolve CUSIPs by issuer name. Layered OVER "
+                         "--sec-tickers, so a sweep name wins where the two disagree.")
+    ap.add_argument("--sec-tickers", metavar="FILE|auto",
+                    help="SEC's company_tickers.json as the ticker->name map, covering every US "
+                         "registrant - 'auto' downloads it. Use this to build a MARKET-WIDE cache "
+                         "once a quarter rather than one limited to a single sweep's candidates.")
     ap.add_argument("--cusip-map", metavar="FILE", help='{"67066G104": "NVDA", ...}')
     ap.add_argument("--fallback", metavar="FILE",
                     help="accumulation.py output, used for tickers 13F could not answer")
@@ -6463,6 +6489,46 @@ def check_the_right_dataset_is_picked_for_a_quarter():
     assert ic.dataset_for_period(ds, "31-MAR-2026")["name"] == "01mar2026-31may2026_form13f.zip"
     assert ic.dataset_for_period(ds, "31-DEC-2025")["name"] == "01dec2025-28feb2026_form13f.zip"
     assert ic.dataset_for_period(ds, "31-DEC-2030") is None      # nothing published yet
+
+
+def check_sec_ticker_map_builds_a_market_wide_universe(tmp):
+    """CUSIPs resolve against a ticker->name map, and which map you hand it decides how much of
+    the market the cache covers. SEC's own company_tickers.json carries every US registrant
+    (~10k), which is what makes this a QUARTERLY artifact rather than a per-run one - a cache
+    built from a single sweep's candidates only ever answers for that sweep.
+    """
+    ct = os.path.join(tmp, "ct.json")
+    io.open(ct, "w", encoding="utf-8").write(json.dumps({
+        "0": {"cik_str": 1045810, "ticker": "NVDA", "title": "NVIDIA CORP"},
+        "1": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}))
+    zp = os.path.join(tmp, "q.zip")
+    _mk13f(zp, [("A%d" % i, str(100 + i), "13F-HR", None, None,
+                 [("NVIDIA CORPORATION", "67066G104", 1000, "SH", ""),
+                  ("APPLE INC", "037833100", 500, "SH", "")]) for i in range(25)])
+
+    class A:
+        quarter, prior = "2026Q1", None
+        universe = cusip_map = None
+        sec_tickers = ct
+        cache_dir = tmp
+        contact, timeout = "", 5
+
+    # point the picker at the local zip by naming it as the dataset the quarter resolves to
+    real_list, real_pick = ic.list_datasets, ic.dataset_for_period
+    ic.list_datasets = lambda *a: ([{"name": "q.zip", "start": "2026-04-01",
+                                     "end": "2026-05-31", "url": "file://" + zp}], None)
+    ic.dataset_for_period = lambda ds, period: ds[0]
+    try:
+        meta, known, detail, un = ic.build(A(), dict(ic.DEFAULTS))
+    finally:
+        ic.list_datasets, ic.dataset_for_period = real_list, real_pick
+
+    assert any("company_tickers.json" in n for n in meta["notes"]), meta["notes"]
+    assert set(known) == {"NVDA", "AAPL"}, known
+    assert detail["NVDA"]["holders"] == 25
+    # no prior quarter means the TREND is unverified, and an unverified trend is never a pass
+    assert all(v["grade"] == "partial" for v in detail.values()), detail
+    assert any("NO PRIOR QUARTER" in n for n in meta["notes"]), meta["notes"]
 
 
 def check_13f_fails_open_when_it_cannot_fetch(tmp):

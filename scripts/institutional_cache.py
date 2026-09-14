@@ -474,6 +474,27 @@ def build(args, cfg):
     known, detail = {}, {}
 
     universe, cusip_map, floats = {}, {}, {}
+    # SEC's own ticker->registrant-name map covers every US registrant (~10k), so the cache can be
+    # built ONCE for the whole market instead of only for the names one sweep happened to surface.
+    # That is what makes it a quarterly artifact rather than a per-run one.
+    if getattr(args, "sec_tickers", None):
+        src = args.sec_tickers
+        if src == "auto":
+            body, why = http("https://www.sec.gov/files/company_tickers.json",
+                             args.contact, args.timeout)
+            if body is None:
+                meta["notes"].append("company_tickers.json: %s" % why)
+                body = b"{}"
+        else:
+            body = io.open(src, "rb").read()
+        try:
+            for e in json.loads(body.decode("utf-8", "replace")).values():
+                t = (e.get("ticker") or "").strip().upper()
+                if t:
+                    universe.setdefault(t, e.get("title") or "")
+            meta["notes"].append("universe: %d tickers from SEC company_tickers.json" % len(universe))
+        except Exception as e:
+            meta["notes"].append("could not read company_tickers.json (%s)" % e)
     if getattr(args, "universe", None):
         blob = json.load(open(args.universe, encoding="utf-8"))
         sec = blob.get("sectors") or {}
@@ -581,7 +602,12 @@ def main():
     ap.add_argument("--list", action="store_true",
                     help="print the data sets SEC currently publishes, newest first, and exit")
     ap.add_argument("--universe", metavar="FILE",
-                    help="the sweep JSON, used to resolve CUSIPs by issuer name")
+                    help="the sweep JSON, used to resolve CUSIPs by issuer name. Layered OVER "
+                         "--sec-tickers, so a sweep name wins where the two disagree.")
+    ap.add_argument("--sec-tickers", metavar="FILE|auto",
+                    help="SEC's company_tickers.json as the ticker->name map, covering every US "
+                         "registrant - 'auto' downloads it. Use this to build a MARKET-WIDE cache "
+                         "once a quarter rather than one limited to a single sweep's candidates.")
     ap.add_argument("--cusip-map", metavar="FILE", help='{"67066G104": "NVDA", ...}')
     ap.add_argument("--fallback", metavar="FILE",
                     help="accumulation.py output, used for tickers 13F could not answer")

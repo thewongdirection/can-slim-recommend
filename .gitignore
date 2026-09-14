@@ -11,3 +11,10 @@ canslim-*.pdf
 # the .zip is not (GitHub can zip the repo itself). Regenerate both with
 # `python scripts/export_portable.py` - never hand-edit the bundle.
 dist/*.zip
+
+# Quarterly I-cache built from SEC 13F bulk data (institutional_cache.py). Rebuildable in ~40s
+# and ~2MB per build, so it is regenerated rather than committed - and it must be, since a stale
+# one would grade sponsorship from last quarter without saying so. The zips it reads are ~90MB
+# each and never belong in git either.
+data/i-cache.json
+data/13f/

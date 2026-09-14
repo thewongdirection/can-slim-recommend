@@ -629,6 +629,46 @@ def check_the_right_dataset_is_picked_for_a_quarter():
     assert ic.dataset_for_period(ds, "31-DEC-2030") is None      # nothing published yet
 
 
+def check_sec_ticker_map_builds_a_market_wide_universe(tmp):
+    """CUSIPs resolve against a ticker->name map, and which map you hand it decides how much of
+    the market the cache covers. SEC's own company_tickers.json carries every US registrant
+    (~10k), which is what makes this a QUARTERLY artifact rather than a per-run one - a cache
+    built from a single sweep's candidates only ever answers for that sweep.
+    """
+    ct = os.path.join(tmp, "ct.json")
+    io.open(ct, "w", encoding="utf-8").write(json.dumps({
+        "0": {"cik_str": 1045810, "ticker": "NVDA", "title": "NVIDIA CORP"},
+        "1": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}))
+    zp = os.path.join(tmp, "q.zip")
+    _mk13f(zp, [("A%d" % i, str(100 + i), "13F-HR", None, None,
+                 [("NVIDIA CORPORATION", "67066G104", 1000, "SH", ""),
+                  ("APPLE INC", "037833100", 500, "SH", "")]) for i in range(25)])
+
+    class A:
+        quarter, prior = "2026Q1", None
+        universe = cusip_map = None
+        sec_tickers = ct
+        cache_dir = tmp
+        contact, timeout = "", 5
+
+    # point the picker at the local zip by naming it as the dataset the quarter resolves to
+    real_list, real_pick = ic.list_datasets, ic.dataset_for_period
+    ic.list_datasets = lambda *a: ([{"name": "q.zip", "start": "2026-04-01",
+                                     "end": "2026-05-31", "url": "file://" + zp}], None)
+    ic.dataset_for_period = lambda ds, period: ds[0]
+    try:
+        meta, known, detail, un = ic.build(A(), dict(ic.DEFAULTS))
+    finally:
+        ic.list_datasets, ic.dataset_for_period = real_list, real_pick
+
+    assert any("company_tickers.json" in n for n in meta["notes"]), meta["notes"]
+    assert set(known) == {"NVDA", "AAPL"}, known
+    assert detail["NVDA"]["holders"] == 25
+    # no prior quarter means the TREND is unverified, and an unverified trend is never a pass
+    assert all(v["grade"] == "partial" for v in detail.values()), detail
+    assert any("NO PRIOR QUARTER" in n for n in meta["notes"]), meta["notes"]
+
+
 def check_13f_fails_open_when_it_cannot_fetch(tmp):
     """No network, a moved URL, an egress policy - none of these may stop a run."""
     class A:
