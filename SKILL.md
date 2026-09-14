@@ -220,10 +220,15 @@ do. That ends the sweep. A few seconds of waiting per call costs a minute; one b
 run, so pace for the failure you cannot recover from.
 
 ```
-python scripts/tv_throttle.py --wait               # blocks until safe
+python scripts/tv_throttle.py --wait --scope scanner               # blocks until safe
 {the TradingView call}
-python scripts/tv_throttle.py --observe '{response}'   # ALWAYS — adapt to what it just said
+python scripts/tv_throttle.py --observe '{response}' --scope scanner   # ALWAYS — adapt to it
 ```
+
+**Pass the same `--scope` to both, and match it to the endpoint** — `scanner` for `run_screener`
+/ `get_symbol_data` / `get_quote`, `ohlcv` for bars, `other` for financials. It defaults to
+`scanner`, so observing a bar-endpoint 403 without it records the block against the *scanner* and
+pauses the sweep for a failure that happened somewhere else.
 
 **Feed every response back through `--observe`.** That is the "check the limit" step, and it is
 the only honest way to do it: `scanner.tradingview.com` is an undocumented internal endpoint and

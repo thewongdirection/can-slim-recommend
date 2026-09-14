@@ -75,9 +75,11 @@ DEFAULTS = {
     # learned rate climbs - which made the 90/min ceiling decorative. Never in parallel either way.
     "min_gap": 0.75,
     # A rolling budget on top of the gap, so a long sweep cannot creep up on the limit by
-    # staying just inside the per-call spacing for a hundred calls.
+    # staying just inside the per-call spacing for a hundred calls. Its SIZE comes from the
+    # learned rate (see effective_budget), not from a separate constant - there was a
+    # `max_in_window` here that nothing read, so `--max-in-window 2` was accepted in full and
+    # then quietly ignored. `--max-rate` is the one knob that caps throughput.
     "window": 60.0,
-    "max_in_window": 12,
     # A 403 is not a slow-down, it is a door closing for many minutes. Treat it as such.
     "block_base": 300.0,
     "block_cap": 1800.0,
@@ -327,8 +329,6 @@ def main():
     ap.add_argument("--min-gap", type=float, default=DEFAULTS["min_gap"],
                     help="seconds between calls (default %(default)s)")
     ap.add_argument("--window", type=float, default=DEFAULTS["window"])
-    ap.add_argument("--max-in-window", type=int, default=DEFAULTS["max_in_window"],
-                    help="calls allowed per window (default %(default)s)")
     ap.add_argument("--max-rate", type=int, default=DEFAULTS["max_rate"],
                     help="hard ceiling on calls per minute, whatever the learned rate says "
                          "(default %(default)s)")
@@ -342,8 +342,7 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
-    cfg = dict(DEFAULTS, min_gap=a.min_gap, window=a.window, max_in_window=a.max_in_window,
-               max_rate=a.max_rate)
+    cfg = dict(DEFAULTS, min_gap=a.min_gap, window=a.window, max_rate=a.max_rate)
     if a.reset:
         try:
             os.remove(STATE)

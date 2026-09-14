@@ -1249,12 +1249,36 @@ def check_preferred_and_warrant_rows_are_not_graded():
         assert out["triage"] == "grade", (sym, out["drop_reasons"])
 
 
+def check_the_throttle_has_no_flag_that_does_nothing(tmp):
+    """`--max-in-window` was accepted, threaded into cfg, and then never read - so
+    `--max-in-window 2` ran at 12 and told the user nothing. A flag that is silently ignored is
+    worse than one that does not exist: it reads as a working safety limit.
+
+    Guards the general case, not just that one flag: every knob in DEFAULTS must be read
+    somewhere, and every CLI option must reach cfg or be used by name in main().
+    """
+    src = io.open(os.path.join(ROOT, "scripts", "tv_throttle.py"), encoding="utf-8").read()
+    body = src.split("DEFAULTS = {", 1)[1]
+    keys = re.findall(r'^\s*"([a-z_]+)":', body.split("}", 1)[0], re.M)
+    assert keys, "could not read the DEFAULTS block"
+    for k in keys:
+        uses = len(re.findall(r'cfg\["%s"\]' % k, src))
+        assert uses > 0, "DEFAULTS['%s'] is never read - dead config" % k
+
+
 def check_skill_documents_the_throttle():
     """A throttle nobody is told to call is not a throttle."""
     s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
     assert "tv_throttle.py" in s, "SKILL.md never tells the run to pace its TradingView calls"
     assert "--wait" in s
     assert "--observe" in s, "SKILL.md never tells the run to CHECK the limit it is pacing against"
+    # --scope defaults to "scanner", so a bar-endpoint 403 observed without it records the block
+    # against the SCANNER and pauses the sweep for a failure that happened somewhere else. The
+    # documented flow has to carry it, or the default quietly misattributes.
+    assert "--scope" in s, "SKILL.md's throttle flow omits --scope, so blocks misattribute"
+    flow = s[s.index("tv_throttle.py --wait"):]
+    flow = flow[:flow.index("```")]
+    assert "--scope" in flow, "the --wait/--observe flow itself must pass --scope: %r" % flow
 
 # ---------------------------------------------------------------- doc/consistency
 

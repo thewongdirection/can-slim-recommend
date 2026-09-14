@@ -378,10 +378,15 @@ do. That ends the sweep. A few seconds of waiting per call costs a minute; one b
 run, so pace for the failure you cannot recover from.
 
 ```
-python scripts/tv_throttle.py --wait               # blocks until safe
+python scripts/tv_throttle.py --wait --scope scanner               # blocks until safe
 {the TradingView call}
-python scripts/tv_throttle.py --observe '{response}'   # ALWAYS — adapt to what it just said
+python scripts/tv_throttle.py --observe '{response}' --scope scanner   # ALWAYS — adapt to it
 ```
+
+**Pass the same `--scope` to both, and match it to the endpoint** — `scanner` for `run_screener`
+/ `get_symbol_data` / `get_quote`, `ohlcv` for bars, `other` for financials. It defaults to
+`scanner`, so observing a bar-endpoint 403 without it records the block against the *scanner* and
+pauses the sweep for a failure that happened somewhere else.
 
 **Feed every response back through `--observe`.** That is the "check the limit" step, and it is
 the only honest way to do it: `scanner.tradingview.com` is an undocumented internal endpoint and
@@ -3170,9 +3175,11 @@ DEFAULTS = {
     # learned rate climbs - which made the 90/min ceiling decorative. Never in parallel either way.
     "min_gap": 0.75,
     # A rolling budget on top of the gap, so a long sweep cannot creep up on the limit by
-    # staying just inside the per-call spacing for a hundred calls.
+    # staying just inside the per-call spacing for a hundred calls. Its SIZE comes from the
+    # learned rate (see effective_budget), not from a separate constant - there was a
+    # `max_in_window` here that nothing read, so `--max-in-window 2` was accepted in full and
+    # then quietly ignored. `--max-rate` is the one knob that caps throughput.
     "window": 60.0,
-    "max_in_window": 12,
     # A 403 is not a slow-down, it is a door closing for many minutes. Treat it as such.
     "block_base": 300.0,
     "block_cap": 1800.0,
@@ -3422,8 +3429,6 @@ def main():
     ap.add_argument("--min-gap", type=float, default=DEFAULTS["min_gap"],
                     help="seconds between calls (default %(default)s)")
     ap.add_argument("--window", type=float, default=DEFAULTS["window"])
-    ap.add_argument("--max-in-window", type=int, default=DEFAULTS["max_in_window"],
-                    help="calls allowed per window (default %(default)s)")
     ap.add_argument("--max-rate", type=int, default=DEFAULTS["max_rate"],
                     help="hard ceiling on calls per minute, whatever the learned rate says "
                          "(default %(default)s)")
@@ -3437,8 +3442,7 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
-    cfg = dict(DEFAULTS, min_gap=a.min_gap, window=a.window, max_in_window=a.max_in_window,
-               max_rate=a.max_rate)
+    cfg = dict(DEFAULTS, min_gap=a.min_gap, window=a.window, max_rate=a.max_rate)
     if a.reset:
         try:
             os.remove(STATE)
@@ -7579,12 +7583,36 @@ def check_preferred_and_warrant_rows_are_not_graded():
         assert out["triage"] == "grade", (sym, out["drop_reasons"])
 
 
+def check_the_throttle_has_no_flag_that_does_nothing(tmp):
+    """`--max-in-window` was accepted, threaded into cfg, and then never read - so
+    `--max-in-window 2` ran at 12 and told the user nothing. A flag that is silently ignored is
+    worse than one that does not exist: it reads as a working safety limit.
+
+    Guards the general case, not just that one flag: every knob in DEFAULTS must be read
+    somewhere, and every CLI option must reach cfg or be used by name in main().
+    """
+    src = io.open(os.path.join(ROOT, "scripts", "tv_throttle.py"), encoding="utf-8").read()
+    body = src.split("DEFAULTS = {", 1)[1]
+    keys = re.findall(r'^\s*"([a-z_]+)":', body.split("}", 1)[0], re.M)
+    assert keys, "could not read the DEFAULTS block"
+    for k in keys:
+        uses = len(re.findall(r'cfg\["%s"\]' % k, src))
+        assert uses > 0, "DEFAULTS['%s'] is never read - dead config" % k
+
+
 def check_skill_documents_the_throttle():
     """A throttle nobody is told to call is not a throttle."""
     s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
     assert "tv_throttle.py" in s, "SKILL.md never tells the run to pace its TradingView calls"
     assert "--wait" in s
     assert "--observe" in s, "SKILL.md never tells the run to CHECK the limit it is pacing against"
+    # --scope defaults to "scanner", so a bar-endpoint 403 observed without it records the block
+    # against the SCANNER and pauses the sweep for a failure that happened somewhere else. The
+    # documented flow has to carry it, or the default quietly misattributes.
+    assert "--scope" in s, "SKILL.md's throttle flow omits --scope, so blocks misattribute"
+    flow = s[s.index("tv_throttle.py --wait"):]
+    flow = flow[:flow.index("```")]
+    assert "--scope" in flow, "the --wait/--observe flow itself must pass --scope: %r" % flow
 
 # ---------------------------------------------------------------- doc/consistency
 
