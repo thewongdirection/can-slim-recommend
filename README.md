@@ -214,7 +214,8 @@ skipped, never failed), `@page` margin parsing, the dashboard's self-audit rules
 `check_for_updates` git matrix including that it fails open and refuses to pull over a dirty tree.
 
 ## Requirements
-- **TradingView MCP connector** (primary). Falls back to IBKR / Massive Market Data / FMP / web.
+- **TradingView MCP connector** (primary). Falls back to IBKR / Massive Market Data / web, and
+  to FMP last — it is verified plan-gated, so it ranks below web search on every ladder.
 - **`can-slim-grader`** — the sister skill that grades each candidate:
   https://github.com/thewongdirection/can-slim-grader
 - **`securities-filings-lookup`** — the primary source for **C**/**A**: the company's own

@@ -6,7 +6,7 @@ against the CAN SLIM hard filters, hand the survivors to the sister skill **`can
 and turn the grades into the two recommendation lists.
 
 `ibkr-data-guide.md` is the **fallback** guide — read it when TradingView is not connected, or
-for the fundamental-source ladder (Daloopa / SEC EDGAR / FMP / web) that both paths share.
+for the fundamental-source ladder (Daloopa / SEC EDGAR / web / FMP last) that both paths share.
 
 TradingView tools are **deferred** — load them with `ToolSearch` before use, e.g.
 `ToolSearch("select:mcp__Trading_View__run_screener,mcp__Trading_View__get_ohlcv,mcp__Trading_View__get_symbol_data,mcp__Trading_View__get_financial_history,mcp__Trading_View__get_earnings_history,mcp__Trading_View__get_financials,mcp__Trading_View__get_quotes_batch,mcp__Trading_View__search_symbols")`.
@@ -323,14 +323,21 @@ as a test, and if it is gated or empty, drop to the next rung rather than retryi
 
 | Need | Fallback order |
 |---|---|
-| Sector top performers | FMP `search-company-screener` (ranks by market cap, not performance - re-rank yourself) → IBKR `search_investment_topics` + `get_theme_details` → web new-high/leaders lists |
+| Sector top performers | IBKR `search_investment_topics` + `get_theme_details` → web new-high/leaders lists → FMP `search-company-screener` (last: ranks by market cap, not performance, so it needs re-ranking before it answers the question at all) |
 | Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period:"TWO_YEARS"`, `step:"ONE_DAY"`) |
-| Live last price | FMP `batch-quote` → IBKR `get_price_snapshot` |
-| C / A fundamentals | **`securities-filings-lookup` (primary — the 10-K/10-Q itself, verified working Sept 2026)** → Daloopa → bigdata.com → LSEG → FMP → web |
-| I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → FMP `form13F` (**verified plan-gated**: ACCESS DENIED on a free tier, Sept 2026) → web |
+| Live last price | IBKR `get_price_snapshot` → FMP `batch-quote` (last) |
+| C / A fundamentals | **`securities-filings-lookup` (primary — the 10-K/10-Q itself, verified working Sept 2026)** → Daloopa → bigdata.com → LSEG → web → FMP (last) |
+| I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → web → FMP `form13F` (last, and **verified dead on this account**: ACCESS DENIED, needs Ultimate/Enterprise) |
 
-FMP in particular has been **plan-gated** in past checks of the sister skill (`statements` and
-`quote` returned ACCESS DENIED in an August-2026 check), which is why it sits low on every rung.
+**FMP is the LAST rung on every ladder above — below web search.** That ordering is deliberate
+and evidence-based, not a preference. Checked on this account in September 2026, `form13F`
+returns `ACCESS DENIED ... requires the Ultimate or Enterprise plan` and `insiderTrades` returns
+`ACCESS DENIED ... requires the Starter, Premium, Ultimate, or Enterprise plan`; an August-2026
+check of the sister skill saw the same from `statements` and `quote`. Gating is per-endpoint, so
+something may still answer - but a source that refuses more often than it answers belongs below
+one that always returns something. Web search is slower and messier than a structured API and
+still beats an ACCESS DENIED. Probe FMP only when every rung above it has failed, treat the first
+call as the test, and never retry a gated endpoint in the same run.
 
 Gating is per-endpoint and often intermittent: keep whatever a source *does* answer and fill only
 the gaps from the next rung - never drop a letter because one call failed. Whatever you fall back

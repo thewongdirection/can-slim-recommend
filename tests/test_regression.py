@@ -1079,6 +1079,32 @@ def check_skill_documents_step_zero():
     assert "does NOT take effect this run" in s.replace("**", "")
 
 
+def check_fmp_is_last_on_every_source_ladder():
+    """FMP ranks below web search on every ladder, which is evidence rather than taste: on this
+    account `form13F` needs Ultimate/Enterprise and `insiderTrades` needs Starter or above, and
+    both returned ACCESS DENIED. A source that refuses more often than it answers belongs under
+    one that always returns something.
+
+    Pinned because a ladder is prose: reordering one back is a two-word edit that changes which
+    source a run actually reaches for, and nothing else in the suite would notice.
+    """
+    for rel in ["SKILL.md", "README.md"] + ["references/" + f for f in
+                                            sorted(os.listdir(os.path.join(ROOT, "references")))
+                                            if f.endswith(".md")]:
+        for i, line in enumerate(io.open(os.path.join(ROOT, rel), encoding="utf-8"), 1):
+            if "FMP" not in line or "\u2192" not in line:
+                continue
+            # Only real source ladders: a fallback-table row, or prose that calls itself a ladder.
+            # An arrow also joins ENDPOINTS of one source ("`search` -> `search-company-screener`"),
+            # which is a call chain, not a ranking - the first version of this test flagged one.
+            if not (line.lstrip().startswith("|") or "ladder" in line.lower()):
+                continue
+            hops = line.split("\u2192")
+            bad = [h.strip() for h in hops[:-1] if "FMP" in h]
+            assert not bad, ("%s:%d puts FMP ahead of %r on a source ladder - it is the last rung "
+                             "everywhere, below web search" % (rel, i, hops[-1].strip()[:40]))
+
+
 def check_docs_have_no_dead_scale():
     for f in ("SKILL.md", "README.md", "references/canslim-methodology.md"):
         s = io.open(os.path.join(ROOT, f), encoding="utf-8").read()

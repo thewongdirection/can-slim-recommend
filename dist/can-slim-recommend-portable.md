@@ -255,7 +255,9 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
   `CONFIG.sourceMap`; the cache carries `detail[ticker].source` per name.
 - **Web search** for the market read and the "new" in N.
 - **Fallbacks — unverified, use only when the proven path fails:** IBKR MCP, Massive Market Data,
-  FMP (commonly plan-gated) — the Tier 2 table in `tradingview-sector-sweep.md`. None has been
+  then web, and **FMP last of all** — it is verified plan-gated on this account (`form13F` and
+  `insiderTrades` both return ACCESS DENIED), so it sits below web search on every ladder in the
+  Tier 2 table in `tradingview-sector-sweep.md`. None has been
   exercised by a live run of this skill, so treat a first call as a test: if it is gated or empty,
   drop to the next rung rather than retrying. Fall through and say so in `dataWarning`; never
   block the run.
@@ -946,7 +948,8 @@ skipped, never failed), `@page` margin parsing, the dashboard's self-audit rules
 `check_for_updates` git matrix including that it fails open and refuses to pull over a dirty tree.
 
 ## Requirements
-- **TradingView MCP connector** (primary). Falls back to IBKR / Massive Market Data / FMP / web.
+- **TradingView MCP connector** (primary). Falls back to IBKR / Massive Market Data / web, and
+  to FMP last — it is verified plan-gated, so it ranks below web search on every ladder.
 - **`can-slim-grader`** — the sister skill that grades each candidate:
   https://github.com/thewongdirection/can-slim-grader
 - **`securities-filings-lookup`** — the primary source for **C**/**A**: the company's own
@@ -1341,7 +1344,7 @@ against the CAN SLIM hard filters, hand the survivors to the sister skill **`can
 and turn the grades into the two recommendation lists.
 
 `ibkr-data-guide.md` is the **fallback** guide — read it when TradingView is not connected, or
-for the fundamental-source ladder (Daloopa / SEC EDGAR / FMP / web) that both paths share.
+for the fundamental-source ladder (Daloopa / SEC EDGAR / web / FMP last) that both paths share.
 
 TradingView tools are **deferred** — load them with `ToolSearch` before use, e.g.
 `ToolSearch("select:mcp__Trading_View__run_screener,mcp__Trading_View__get_ohlcv,mcp__Trading_View__get_symbol_data,mcp__Trading_View__get_financial_history,mcp__Trading_View__get_earnings_history,mcp__Trading_View__get_financials,mcp__Trading_View__get_quotes_batch,mcp__Trading_View__search_symbols")`.
@@ -1658,14 +1661,21 @@ as a test, and if it is gated or empty, drop to the next rung rather than retryi
 
 | Need | Fallback order |
 |---|---|
-| Sector top performers | FMP `search-company-screener` (ranks by market cap, not performance - re-rank yourself) → IBKR `search_investment_topics` + `get_theme_details` → web new-high/leaders lists |
+| Sector top performers | IBKR `search_investment_topics` + `get_theme_details` → web new-high/leaders lists → FMP `search-company-screener` (last: ranks by market cap, not performance, so it needs re-ranking before it answers the question at all) |
 | Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period:"TWO_YEARS"`, `step:"ONE_DAY"`) |
-| Live last price | FMP `batch-quote` → IBKR `get_price_snapshot` |
-| C / A fundamentals | **`securities-filings-lookup` (primary — the 10-K/10-Q itself, verified working Sept 2026)** → Daloopa → bigdata.com → LSEG → FMP → web |
-| I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → FMP `form13F` (**verified plan-gated**: ACCESS DENIED on a free tier, Sept 2026) → web |
+| Live last price | IBKR `get_price_snapshot` → FMP `batch-quote` (last) |
+| C / A fundamentals | **`securities-filings-lookup` (primary — the 10-K/10-Q itself, verified working Sept 2026)** → Daloopa → bigdata.com → LSEG → web → FMP (last) |
+| I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → web → FMP `form13F` (last, and **verified dead on this account**: ACCESS DENIED, needs Ultimate/Enterprise) |
 
-FMP in particular has been **plan-gated** in past checks of the sister skill (`statements` and
-`quote` returned ACCESS DENIED in an August-2026 check), which is why it sits low on every rung.
+**FMP is the LAST rung on every ladder above — below web search.** That ordering is deliberate
+and evidence-based, not a preference. Checked on this account in September 2026, `form13F`
+returns `ACCESS DENIED ... requires the Ultimate or Enterprise plan` and `insiderTrades` returns
+`ACCESS DENIED ... requires the Starter, Premium, Ultimate, or Enterprise plan`; an August-2026
+check of the sister skill saw the same from `statements` and `quote`. Gating is per-endpoint, so
+something may still answer - but a source that refuses more often than it answers belongs below
+one that always returns something. Web search is slower and messier than a structured API and
+still beats an ACCESS DENIED. Probe FMP only when every rung above it has failed, treat the first
+call as the test, and never retry a gated endpoint in the same run.
 
 Gating is per-endpoint and often intermittent: keep whatever a source *does* answer and fill only
 the gaps from the next rung - never drop a letter because one call failed. Whatever you fall back
@@ -1710,9 +1720,9 @@ earnings, institutional ownership). So:
 - **Fundamental-data connectors** (preferred) or web research cover the fundamental letters:
   **C** (quarterly EPS & sales), **A** (annual EPS, ROE, margins), and the ownership half of
   **I**. Prefer connected financial sources over generic web search — see Step 3 for the
-  source-priority ladder (Daloopa → bigdata.com → LSEG → SEC EDGAR → FMP → web; FMP is the
-  lowest-priority connector because it is commonly gated/throttled) and when to delegate
-  to the `ibkr-review-ticker` / `securities-filings-lookup` skills.
+  source-priority ladder (Daloopa → bigdata.com → LSEG → SEC EDGAR → web → FMP; FMP is LAST,
+  below web search, because it refuses more often than it answers on lower-tier plans) and when
+  to delegate to the `ibkr-review-ticker` / `securities-filings-lookup` skills.
 
 Load IBKR tools with `ToolSearch` (query e.g. `"search contracts price history price
 snapshot investment topics company themes"`) before use — they are deferred. This skill is
@@ -1747,8 +1757,9 @@ discover paths, then `call_api`:
 - **Plan boundary (this account):** historical **aggregates + indicators WORK**; the
   **real-time snapshot** endpoints (`/v2/snapshot/...`, `/v3/snapshot`) return **403
   NOT_AUTHORIZED**. Daily aggregates also lag live by up to one session. So: use **Massive for
-  history / RS / MAs**, and get the **live last price** from **FMP `batch-quote`** or **IBKR
-  `get_price_snapshot`**. If a Massive call 403s, fall through to IBKR/FMP for that datum.
+  history / RS / MAs**, and get the **live last price** from **IBKR `get_price_snapshot`**,
+  falling through to **FMP `batch-quote`** only if IBKR cannot answer. If a Massive call 403s,
+  fall through to IBKR for that datum, and to FMP last.
 
 ---
 
@@ -1775,12 +1786,13 @@ the as-of date (no look-ahead), and remember `get_theme_details` / web "current 
 
 The **IBKR** connector has no bulk market screener, so build a candidate universe from
 several sources, then filter it down. Aim to *start* with 60–120 names so ~20 survive.
-**FMP does have a screener** (`search` → `search-company-screener`: filter by market cap,
-price, volume, sector, country, `isEtf`/`isFund`/`isActivelyTrading`) — use it to pull a
-liquid starting universe by sector, but note it ranks by market cap, not growth/RS, so it
-surfaces mega-caps first and still needs the near-high + earnings filter below. In practice
-the most CAN-SLIM-aligned candidates come from **web new-high/leaders lists + IBKR leading
-themes**, with the FMP screener as a breadth cross-check.
+The most CAN-SLIM-aligned candidates come from **web new-high/leaders lists + IBKR leading
+themes** — start there. FMP also has a screener (`search` → `search-company-screener`: filter by
+market cap, price, volume, sector, country, `isEtf`/`isFund`/`isActivelyTrading`), but it is the
+**last resort** for this, on its own merits as well as its gating: it ranks by market cap rather
+than growth or RS, so it surfaces mega-caps first and still needs the near-high + earnings filter
+below before it answers the question being asked. Use it as a breadth cross-check, never as the
+starting universe.
 
 1. **Leading themes/groups (primary, most CAN-SLIM-aligned).** The user may name a theme,
    or you infer the current leading areas. For each leading trend/sector:
@@ -1893,12 +1905,15 @@ research only for finalists that already survived the technical cut.
    statement / balance sheet / cash flow, and for **I** (13F institutional ownership, Form 4
    management ownership).
 5. **Financial Modeling Prep (FMP)** — a structured fundamentals MCP (deferred; load its tools
-   with `ToolSearch`). **Deliberately the lowest-priority connector:** on lower-tier plans it is
-   heavily gated *and* throttled — bursts of calls return `ACCESS DENIED ... requires a higher
-   plan` even for endpoints that worked moments earlier — so it is unreliable as a primary
-   fundamentals source. Prefer the higher rungs above; reach for FMP mainly as a **cheap breadth
-   cross-check** or when the higher rungs are not connected. Probe cheaply and drop to web (rung
-   6) for whatever's gated. What tends to work on lower tiers, and how to use it:
+   with `ToolSearch`). **THE LAST RUNG ON EVERY LADDER, below web search**, and the only connector
+   ranked beneath generic web research. On lower-tier plans it is heavily gated *and* throttled —
+   bursts of calls return `ACCESS DENIED ... requires a higher plan` even for endpoints that
+   worked moments earlier. Verified on this account in September 2026: `form13F` needs
+   Ultimate/Enterprise and `insiderTrades` needs Starter or above; both refused. A source that
+   refuses more often than it answers belongs below one that always returns something, even when
+   that something is slower and messier to parse. Exhaust every rung above — including web —
+   before probing it, treat the first call as the test, and never retry a gated endpoint in the
+   same run. If it does answer, here is what tends to work on lower tiers:
    - **`quote` → `batch-quote`** (the workhorse): one call takes a symbol array and returns, per
      name, `price`, `yearHigh`/`yearLow`, `priceAvg50`/`priceAvg200`, `volume`, `marketCap`.
      That single call gives you **% off 52-wk high** and **50/200-day trend** for a whole
@@ -6898,6 +6913,32 @@ def check_skill_documents_step_zero():
     assert "### 0 — Check this copy of the skill is current" in s
     assert "check_for_updates.py" in s
     assert "does NOT take effect this run" in s.replace("**", "")
+
+
+def check_fmp_is_last_on_every_source_ladder():
+    """FMP ranks below web search on every ladder, which is evidence rather than taste: on this
+    account `form13F` needs Ultimate/Enterprise and `insiderTrades` needs Starter or above, and
+    both returned ACCESS DENIED. A source that refuses more often than it answers belongs under
+    one that always returns something.
+
+    Pinned because a ladder is prose: reordering one back is a two-word edit that changes which
+    source a run actually reaches for, and nothing else in the suite would notice.
+    """
+    for rel in ["SKILL.md", "README.md"] + ["references/" + f for f in
+                                            sorted(os.listdir(os.path.join(ROOT, "references")))
+                                            if f.endswith(".md")]:
+        for i, line in enumerate(io.open(os.path.join(ROOT, rel), encoding="utf-8"), 1):
+            if "FMP" not in line or "\u2192" not in line:
+                continue
+            # Only real source ladders: a fallback-table row, or prose that calls itself a ladder.
+            # An arrow also joins ENDPOINTS of one source ("`search` -> `search-company-screener`"),
+            # which is a call chain, not a ranking - the first version of this test flagged one.
+            if not (line.lstrip().startswith("|") or "ladder" in line.lower()):
+                continue
+            hops = line.split("\u2192")
+            bad = [h.strip() for h in hops[:-1] if "FMP" in h]
+            assert not bad, ("%s:%d puts FMP ahead of %r on a source ladder - it is the last rung "
+                             "everywhere, below web search" % (rel, i, hops[-1].strip()[:40]))
 
 
 def check_docs_have_no_dead_scale():

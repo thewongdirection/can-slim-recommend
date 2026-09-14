@@ -97,7 +97,9 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
   `CONFIG.sourceMap`; the cache carries `detail[ticker].source` per name.
 - **Web search** for the market read and the "new" in N.
 - **Fallbacks — unverified, use only when the proven path fails:** IBKR MCP, Massive Market Data,
-  FMP (commonly plan-gated) — the Tier 2 table in `tradingview-sector-sweep.md`. None has been
+  then web, and **FMP last of all** — it is verified plan-gated on this account (`form13F` and
+  `insiderTrades` both return ACCESS DENIED), so it sits below web search on every ladder in the
+  Tier 2 table in `tradingview-sector-sweep.md`. None has been
   exercised by a live run of this skill, so treat a first call as a test: if it is gated or empty,
   drop to the next rung rather than retrying. Fall through and say so in `dataWarning`; never
   block the run.
