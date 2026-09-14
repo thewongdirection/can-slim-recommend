@@ -88,8 +88,13 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
 - **`can-slim-grader`** — the sister skill that grades each candidate. If it isn't installed,
   say so, prompt the user to add it from **https://github.com/thewongdirection/can-slim-grader**,
   and apply its rubric inline from the shared methodology rather than inventing a different scale.
-- **Institutional sponsorship (I)** is the one letter TradingView cannot answer — take it from
-  13F/Form 4 (FMP `form13F`, `securities-filings-lookup`) or the web, and say which.
+- **Institutional sponsorship (I)** is the one letter TradingView cannot answer. Run
+  `scripts/institutional_cache.py` ONCE PER QUARTER (after each 13F deadline: mid-Feb/May/Aug/Nov)
+  to build `data/i-cache.json` from SEC Form 13F, then pass it to every run with `--known`. It
+  falls open to `scripts/accumulation.py`, which reads institutional buying pressure from the
+  up/down volume footprint — a proxy, and its reason strings say so. Only if BOTH are unavailable
+  does I fall back to a blanket `--i-grade partial`. Record which source graded it in
+  `CONFIG.sourceMap`; the cache carries `detail[ticker].source` per name.
 - **Web search** for the market read and the "new" in N.
 - **Fallbacks — unverified, use only when the proven path fails:** IBKR MCP, Massive Market Data,
   FMP (commonly plan-gated) — the Tier 2 table in `tradingview-sector-sweep.md`. None has been

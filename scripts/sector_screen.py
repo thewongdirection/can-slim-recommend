@@ -206,6 +206,11 @@ def ceiling(out, cfg, known=None):
     again, usually far enough to skip the C call entirely.
     """
     known = known or {}
+    # Normalise up front: the default M/I reasons below must not be emitted for a letter a real
+    # grade is about to replace, or a row whose sponsorship WAS sourced still reads "sponsorship
+    # not sourceable this run" next to the grade that sourced it.
+    graded = {str(k).strip().upper(): str(v).strip().lower() for k, v in known.items()}
+    graded = {k: v for k, v in graded.items() if v in WEIGHT}
     caps, why = {}, []
 
     # N - no pivot without new-high ground. The 10% band mirrors the dashboard's own audit
@@ -254,18 +259,19 @@ def ceiling(out, cfg, known=None):
     caps["A"] = "pass"   # unknown until get_financials is pulled
     caps["M"] = cfg["m_grade"]
     caps["I"] = cfg["i_grade"]
-    if cfg["m_grade"] != "pass":
+    if cfg["m_grade"] != "pass" and "M" not in graded:
         why.append("M = %s: graded once market-wide, so it bounds every row" % cfg["m_grade"])
-    if cfg["i_grade"] != "pass":
+    if cfg["i_grade"] != "pass" and "I" not in graded:
         why.append("I <= %s: sponsorship not sourceable this run" % cfg["i_grade"])
 
     # a real grade always overrides the assumption
-    for k, v in known.items():
-        k = str(k).strip().upper()
-        v = str(v).strip().lower()
-        if k in caps and v in WEIGHT:
-            if WEIGHT[v] < WEIGHT[caps[k]]:
-                why.append("%s = %s (graded)" % (k, v))
+    for k, v in graded.items():
+        if k in caps:
+            # Recorded even when the grade MATCHES the assumption it replaces. "I = partial
+            # (graded)" and "I <= partial: sponsorship not sourceable" are the same number and
+            # completely different evidence - one was measured, the other is an admission - and
+            # the report has to be able to tell them apart.
+            why.append("%s = %s (graded)" % (k, v))
             caps[k] = v
 
     total = round(sum(WEIGHT[caps[k]] for k in ("C", "A", "N", "S", "L", "I", "M")) * 2) / 2.0
@@ -387,6 +393,25 @@ def run(blob, cfg, known=None):
     }
 
 
+def load_known(paths):
+    """Merge one or more graded-letter files into the {symbol: {letter: grade}} map run() wants.
+
+    Accepts the bare map AND the {"meta", "known", "detail"} wrapper that institutional_cache.py
+    and accumulation.py emit - without the unwrap, passing an I-cache here would look like it
+    worked and grade nothing, because every lookup would miss. Later files win on a conflict, so
+    the A-screen result can be layered over a quarterly I-cache.
+    """
+    merged = {}
+    for path in paths or []:
+        blob = json.loads(open(path, encoding="utf-8").read())
+        if isinstance(blob.get("known"), dict):
+            blob = blob["known"]
+        for sym, letters in blob.items():
+            if isinstance(letters, dict):
+                merged.setdefault(sym, {}).update(letters)
+    return merged
+
+
 def n(v, dp=1, suffix=""):
     return "-" if v is None else ("%.*f%s" % (dp, v, suffix))
 
@@ -489,17 +514,19 @@ def main():
                          "N cannot even reach partial (default %(default)s)")
     ap.add_argument("--thin-vol", type=float, default=DEFAULTS["thin_vol"],
                     help="relative volume under which S cannot pass at all (default %(default)s)")
-    ap.add_argument("--known", metavar="FILE",
+    ap.add_argument("--known", metavar="FILE", action="append",
                     help='letters already graded, so the ceiling can be re-cut: '
                          '{"NASDAQ:OKTA": {"A": "fail"}}. Re-run with this after the A-screen - '
                          'every name that drops below the threshold is eliminated without '
-                         'spending the C call on it.')
+                         'spending the C call on it. Also takes an I-cache from '
+                         'institutional_cache.py or accumulation.py (their {"meta","known",...} '
+                         'wrapper is unwrapped automatically). Repeatable; later files win.')
     ap.add_argument("--md", action="store_true", help="print markdown instead of JSON")
     a = ap.parse_args()
 
     raw = open(a.input).read() if a.input else sys.stdin.read()
     blob = json.loads(raw)
-    known = json.loads(open(a.known).read()) if a.known else {}
+    known = load_known(a.known)
     cfg = {"top": a.top, "fallback": a.fallback, "min_price": a.min_price,
            "min_dollar_vol": a.min_dollar_vol, "min_market_cap": a.min_market_cap,
            "max_off_high": a.max_off_high, "min_rs": a.min_rs, "threshold": a.threshold,

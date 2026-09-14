@@ -246,8 +246,13 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
 - **`can-slim-grader`** — the sister skill that grades each candidate. If it isn't installed,
   say so, prompt the user to add it from **https://github.com/thewongdirection/can-slim-grader**,
   and apply its rubric inline from the shared methodology rather than inventing a different scale.
-- **Institutional sponsorship (I)** is the one letter TradingView cannot answer — take it from
-  13F/Form 4 (FMP `form13F`, `securities-filings-lookup`) or the web, and say which.
+- **Institutional sponsorship (I)** is the one letter TradingView cannot answer. Run
+  `scripts/institutional_cache.py` ONCE PER QUARTER (after each 13F deadline: mid-Feb/May/Aug/Nov)
+  to build `data/i-cache.json` from SEC Form 13F, then pass it to every run with `--known`. It
+  falls open to `scripts/accumulation.py`, which reads institutional buying pressure from the
+  up/down volume footprint — a proxy, and its reason strings say so. Only if BOTH are unavailable
+  does I fall back to a blanket `--i-grade partial`. Record which source graded it in
+  `CONFIG.sourceMap`; the cache carries `detail[ticker].source` per name.
 - **Web search** for the market read and the "new" in N.
 - **Fallbacks — unverified, use only when the proven path fails:** IBKR MCP, Massive Market Data,
   FMP (commonly plan-gated) — the Tier 2 table in `tradingview-sector-sweep.md`. None has been
@@ -899,6 +904,10 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `scripts/sector_screen.py` — sector sweep arithmetic + CAN SLIM triage over the screener rows.
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
+- `scripts/institutional_cache.py` — grades **I** from SEC Form 13F, aggregated once per quarter
+  and cached so a run spends no network on it. Fails open to the proxy below.
+- `scripts/accumulation.py` — the **I** fallback: institutional buying pressure read from the
+  up/down volume footprint. A proxy, and every reason string says so.
 - `scripts/build_report.py` — produces the PDF (default), the HTML, or both, and enforces the
   self-audit before emitting.
 - `scripts/html_to_pdf.py` — the PDF engine chain behind it. Shared with `can-slim-grader`.
@@ -1598,7 +1607,7 @@ Every one of these returned complete, correct data in live end-to-end runs:
 | A - annual EPS record | `get_financial_history` `period="fy"` | 4 fiscal years back |
 | A - ROE, margins, debt, TTM growth | `get_financials` | the fastest way to screen A before spending calls on history |
 | C cross-check - street EPS vs consensus | `get_earnings_history` | grade C on `eps_actual`, not the GAAP `eps` |
-| I - institutional sponsorship | web search for published 13F ownership summaries | returns the ownership **level** reliably; the quarter-over-quarter **trend** did not come back, so I stayed capped at PARTIAL |
+| I - institutional sponsorship | `scripts/institutional_cache.py` (SEC Form 13F, cached quarterly) -> `scripts/accumulation.py` (volume proxy) | 13F is filed by MANAGER not by issuer, so "who owns X" is an aggregation, not a lookup - which is why the cache exists and why it is built once a quarter, not once a run. Web search returns the ownership **level** reliably but not the **trend**, which is the half that grades the letter |
 
 **A cheap ordering that saves calls:** run `get_financials` on every candidate first. ROE and TTM
 EPS growth alone disqualify most names on **A**, and a name that cannot pass A cannot reach the
@@ -1616,7 +1625,7 @@ as a test, and if it is gated or empty, drop to the next rung rather than retryi
 | Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period:"TWO_YEARS"`, `step:"ONE_DAY"`) |
 | Live last price | FMP `batch-quote` → IBKR `get_price_snapshot` |
 | C / A fundamentals | Daloopa → bigdata.com → LSEG → SEC EDGAR via `securities-filings-lookup` → FMP → web |
-| I sponsorship trend | FMP `form13F` → `securities-filings-lookup` (compare two consecutive quarters) → web |
+| I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → FMP `form13F` (**verified plan-gated**: ACCESS DENIED on a free tier, Sept 2026) → web |
 
 FMP in particular has been **plan-gated** in past checks of the sister skill (`statements` and
 `quote` returned ACCESS DENIED in an August-2026 check), which is why it sits low on every rung.
@@ -2417,6 +2426,11 @@ def ceiling(out, cfg, known=None):
     again, usually far enough to skip the C call entirely.
     """
     known = known or {}
+    # Normalise up front: the default M/I reasons below must not be emitted for a letter a real
+    # grade is about to replace, or a row whose sponsorship WAS sourced still reads "sponsorship
+    # not sourceable this run" next to the grade that sourced it.
+    graded = {str(k).strip().upper(): str(v).strip().lower() for k, v in known.items()}
+    graded = {k: v for k, v in graded.items() if v in WEIGHT}
     caps, why = {}, []
 
     # N - no pivot without new-high ground. The 10% band mirrors the dashboard's own audit
@@ -2465,18 +2479,19 @@ def ceiling(out, cfg, known=None):
     caps["A"] = "pass"   # unknown until get_financials is pulled
     caps["M"] = cfg["m_grade"]
     caps["I"] = cfg["i_grade"]
-    if cfg["m_grade"] != "pass":
+    if cfg["m_grade"] != "pass" and "M" not in graded:
         why.append("M = %s: graded once market-wide, so it bounds every row" % cfg["m_grade"])
-    if cfg["i_grade"] != "pass":
+    if cfg["i_grade"] != "pass" and "I" not in graded:
         why.append("I <= %s: sponsorship not sourceable this run" % cfg["i_grade"])
 
     # a real grade always overrides the assumption
-    for k, v in known.items():
-        k = str(k).strip().upper()
-        v = str(v).strip().lower()
-        if k in caps and v in WEIGHT:
-            if WEIGHT[v] < WEIGHT[caps[k]]:
-                why.append("%s = %s (graded)" % (k, v))
+    for k, v in graded.items():
+        if k in caps:
+            # Recorded even when the grade MATCHES the assumption it replaces. "I = partial
+            # (graded)" and "I <= partial: sponsorship not sourceable" are the same number and
+            # completely different evidence - one was measured, the other is an admission - and
+            # the report has to be able to tell them apart.
+            why.append("%s = %s (graded)" % (k, v))
             caps[k] = v
 
     total = round(sum(WEIGHT[caps[k]] for k in ("C", "A", "N", "S", "L", "I", "M")) * 2) / 2.0
@@ -2598,6 +2613,25 @@ def run(blob, cfg, known=None):
     }
 
 
+def load_known(paths):
+    """Merge one or more graded-letter files into the {symbol: {letter: grade}} map run() wants.
+
+    Accepts the bare map AND the {"meta", "known", "detail"} wrapper that institutional_cache.py
+    and accumulation.py emit - without the unwrap, passing an I-cache here would look like it
+    worked and grade nothing, because every lookup would miss. Later files win on a conflict, so
+    the A-screen result can be layered over a quarterly I-cache.
+    """
+    merged = {}
+    for path in paths or []:
+        blob = json.loads(open(path, encoding="utf-8").read())
+        if isinstance(blob.get("known"), dict):
+            blob = blob["known"]
+        for sym, letters in blob.items():
+            if isinstance(letters, dict):
+                merged.setdefault(sym, {}).update(letters)
+    return merged
+
+
 def n(v, dp=1, suffix=""):
     return "-" if v is None else ("%.*f%s" % (dp, v, suffix))
 
@@ -2700,17 +2734,19 @@ def main():
                          "N cannot even reach partial (default %(default)s)")
     ap.add_argument("--thin-vol", type=float, default=DEFAULTS["thin_vol"],
                     help="relative volume under which S cannot pass at all (default %(default)s)")
-    ap.add_argument("--known", metavar="FILE",
+    ap.add_argument("--known", metavar="FILE", action="append",
                     help='letters already graded, so the ceiling can be re-cut: '
                          '{"NASDAQ:OKTA": {"A": "fail"}}. Re-run with this after the A-screen - '
                          'every name that drops below the threshold is eliminated without '
-                         'spending the C call on it.')
+                         'spending the C call on it. Also takes an I-cache from '
+                         'institutional_cache.py or accumulation.py (their {"meta","known",...} '
+                         'wrapper is unwrapped automatically). Repeatable; later files win.')
     ap.add_argument("--md", action="store_true", help="print markdown instead of JSON")
     a = ap.parse_args()
 
     raw = open(a.input).read() if a.input else sys.stdin.read()
     blob = json.loads(raw)
-    known = json.loads(open(a.known).read()) if a.known else {}
+    known = load_known(a.known)
     cfg = {"top": a.top, "fallback": a.fallback, "min_price": a.min_price,
            "min_dollar_vol": a.min_dollar_vol, "min_market_cap": a.min_market_cap,
            "max_off_high": a.max_off_high, "min_rs": a.min_rs, "threshold": a.threshold,
@@ -2911,6 +2947,651 @@ def main():
     if asof is not None:
         data["asof"] = asof
     json.dump(analyze(data), sys.stdout, indent=2)
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+
+## `scripts/institutional_cache.py`
+
+Grades I (institutional sponsorship) from SEC Form 13F, aggregated once per quarter and cached. 13F is filed by manager, not by issuer, so this is the aggregation that makes 'who owns it' answerable at all. Fails open to the volume proxy.
+
+```python
+#!/usr/bin/env python3
+"""
+institutional_cache.py - grade I (institutional sponsorship) from SEC Form 13F, cached quarterly.
+
+THE PROBLEM THIS SOLVES. 13F is filed by MANAGER, not by issuer. EDGAR indexes a filing under the
+CIK of the fund that filed it, so "who owns NVDA" is not an endpoint anywhere - it is an
+aggregation across every filer in the quarter. That is the entire reason ownership data is sold
+rather than looked up, and the reason this skill graded I=partial for every name in every run.
+
+THE SHAPE THAT MAKES IT CHEAP. 13F updates four times a year, so paying the aggregation cost once
+per quarter and caching the result turns a per-run impossibility into a file read. Run this after
+each 13F deadline (45 days past quarter-end: mid-Feb, mid-May, mid-Aug, mid-Nov); the sweep then
+reads the cache and spends no network at all on I.
+
+WHAT IT COMPUTES. For every issuer, in two consecutive quarters: the number of distinct managers
+holding it, and the total shares they hold. The quarter-over-quarter change in BOTH is what the
+rubric actually asks for - "ownership rising over recent quarters", not merely "institutionally
+owned". The level alone is free everywhere; this trend is the part that is hard, and it is the
+part that grades the letter.
+
+THE CUSIP PROBLEM, STATED HONESTLY. INFOTABLE identifies holdings by CUSIP and issuer NAME - not
+by ticker - and there is no free authoritative CUSIP-to-ticker map. So this script resolves
+tickers two ways, in order: an explicit map you supply (--cusip-map), then normalised issuer-name
+matching against the candidate list from the sweep (--universe). Names that resolve neither way
+are reported in `unresolved` rather than silently dropped, because a name missing from the cache
+must fall through to the proxy, not be graded on absent data.
+
+FAILS OPEN, ALWAYS. No network, a moved URL, a corrupt zip - none of these stop a run. The script
+says what it could not do and exits 0 with an empty cache, and `--fallback` merges in
+accumulation.py's volume proxy for every ticker 13F could not answer. Provenance is recorded per
+ticker in `detail[t]["source"]`, so the report can say which evidence graded each letter.
+
+Usage:
+  # once per quarter, after the 13F deadline
+  python institutional_cache.py --quarter 2026Q2 --prior 2026Q1 -o data/i-cache.json
+  # resolve tickers using the sweep's own candidate list, and fill gaps with the volume proxy
+  python institutional_cache.py --quarter 2026Q2 --prior 2026Q1 \\
+      --universe sweep.json --fallback accum.json -o data/i-cache.json
+  # then, per run:
+  python sector_screen.py sweep.json --known data/i-cache.json --md
+
+OUTPUT: the same three-part shape accumulation.py emits - meta / known / detail - so either can
+feed `sector_screen.py --known`.
+Pure standard library.
+"""
+import argparse
+import csv
+import io
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.request
+import zipfile
+
+DEFAULTS = {
+    "thin_holders": 20,     # fewer managers than this is a neglected name, not a sponsored one
+    "rising_pct": 2.0,      # shares held must move more than this to count as a real change
+    "over_owned_pct": 95.0, # institutions holding more than this of the float leaves no new buyer
+}
+
+# The bulk files have lived under two prefixes over the years. Both are tried, in order, and the
+# one that answers is recorded in meta - guessing a single URL and reporting "unreachable" when
+# it 404s would blame the network for a moved file.
+URL_PATTERNS = [
+    "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/{q}_form13f.zip",
+    "https://www.sec.gov/files/dera/data/form-13f-data-sets/{q}_form13f.zip",
+]
+
+# SEC requires a declared User-Agent with contact details and returns 403 without one. This is
+# their stated access policy, not an obstacle to route around.
+UA = "can-slim-recommend/1.0 (contact: set --contact)"
+
+STOP = re.compile(r"\b(inc|corp|corporation|co|company|ltd|limited|plc|holdings?|group|the|"
+                  r"cl|class|a|b|com|common|stock|shs|sa|nv|ag|lp|llc|trust|reit)\b")
+
+
+def norm_name(s):
+    """Normalise an issuer name for matching: case, punctuation and the corporate-suffix noise
+    that differs between EDGAR ('NVIDIA CORPORATION') and a screener ('NVIDIA Corp')."""
+    s = (s or "").lower()
+    s = re.sub(r"[^a-z0-9 ]+", " ", s)
+    s = STOP.sub(" ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def fetch(quarter, contact, timeout, cache_dir=None):
+    """Download one quarter's zip. Returns (bytes, url) or (None, why). Never raises."""
+    q = quarter.lower()
+    if cache_dir:
+        local = os.path.join(cache_dir, "%s_form13f.zip" % q)
+        if os.path.exists(local) and os.path.getsize(local) > 1000:
+            return open(local, "rb").read(), "file://" + local
+    why = []
+    for pat in URL_PATTERNS:
+        url = pat.format(q=q)
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "can-slim-recommend/1.0 (contact: %s)" % contact if contact else UA,
+                "Accept-Encoding": "gzip, deflate"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = r.read()
+            if len(data) < 1000:
+                why.append("%s returned %d bytes" % (url, len(data)))
+                continue
+            if cache_dir:
+                os.makedirs(cache_dir, exist_ok=True)
+                open(os.path.join(cache_dir, "%s_form13f.zip" % q), "wb").write(data)
+            return data, url
+        except urllib.error.HTTPError as e:
+            why.append("%s -> HTTP %s" % (url, e.code))
+        except Exception as e:                       # network down, DNS, TLS, egress policy
+            why.append("%s -> %s" % (url, e))
+    return None, "; ".join(why)
+
+
+def _member(z, want):
+    """Find a table inside the zip regardless of casing or an added directory level."""
+    for n in z.namelist():
+        base = n.rsplit("/", 1)[-1].lower()
+        if base in (want + ".tsv", want + ".txt"):
+            return n
+    return None
+
+
+def aggregate(zbytes):
+    """Aggregate one quarter's holdings by CUSIP. Returns ({cusip: {...}}, note).
+
+    Streamed row by row on purpose: INFOTABLE runs to millions of rows per quarter and reading it
+    into memory is the difference between this working on a laptop and not. Only the per-CUSIP
+    totals are retained.
+
+    Two filters matter for correctness. SSHPRNAMTTYPE must be 'SH' - a 'PRN' row is a principal
+    amount of debt, not a share count, and summing the two together produces nonsense. And a row
+    with PUTCALL set is an option position, not ownership of the stock; counting it would credit
+    a fund that is short the name via puts as a sponsor.
+    """
+    try:
+        z = zipfile.ZipFile(io.BytesIO(zbytes))
+    except Exception as e:
+        return None, "not a readable zip (%s)" % e
+    cover, info = _member(z, "coverpage"), _member(z, "infotable")
+    if not info:
+        return None, "no INFOTABLE in the archive (members: %s)" % ", ".join(z.namelist()[:8])
+
+    # accession -> filer CIK, so "holders" counts distinct MANAGERS rather than distinct filings
+    acc_cik = {}
+    if cover:
+        with z.open(cover) as f:
+            for row in csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"),
+                                      delimiter="\t"):
+                a = (row.get("ACCESSION_NUMBER") or "").strip()
+                c = (row.get("CIK") or "").strip()
+                if a:
+                    acc_cik[a] = c or a
+
+    out = {}
+    rows = kept = 0
+    with z.open(info) as f:
+        for row in csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"), delimiter="\t"):
+            rows += 1
+            if (row.get("PUTCALL") or "").strip():
+                continue                                  # an option, not ownership
+            if (row.get("SSHPRNAMTTYPE") or "SH").strip().upper() != "SH":
+                continue                                  # principal amount, not shares
+            cusip = (row.get("CUSIP") or "").strip().upper()
+            if not cusip:
+                continue
+            try:
+                sh = float(row.get("SSHPRNAMT") or 0)
+            except ValueError:
+                continue
+            acc = (row.get("ACCESSION_NUMBER") or "").strip()
+            e = out.setdefault(cusip, {"name": (row.get("NAMEOFISSUER") or "").strip(),
+                                       "shares": 0.0, "value": 0.0, "filers": set()})
+            e["shares"] += sh
+            try:
+                e["value"] += float(row.get("VALUE") or 0)
+            except ValueError:
+                pass
+            e["filers"].add(acc_cik.get(acc, acc))
+            kept += 1
+    for e in out.values():
+        e["holders"] = len(e["filers"])
+        del e["filers"]
+    return out, "%d rows read, %d share positions kept, %d issuers" % (rows, kept, len(out))
+
+
+def resolve_tickers(agg, cusip_map, universe):
+    """cusip -> ticker, via an explicit map first and normalised issuer names second.
+
+    Ambiguity is dropped rather than guessed: if two issuers normalise to the same name, neither
+    is matched. A wrong ticker here attaches one company's sponsorship to another's scorecard,
+    which is far worse than leaving the letter to the proxy.
+    """
+    by_ticker, unresolved = {}, []
+    name_to_tick = {}
+    dupes = set()
+    for tick, comp in (universe or {}).items():
+        k = norm_name(comp)
+        if not k:
+            continue
+        if k in name_to_tick and name_to_tick[k] != tick:
+            dupes.add(k)
+        name_to_tick[k] = tick
+    for k in dupes:
+        name_to_tick.pop(k, None)
+
+    for cusip, e in agg.items():
+        tick = (cusip_map or {}).get(cusip) or name_to_tick.get(norm_name(e["name"]))
+        if not tick:
+            unresolved.append({"cusip": cusip, "name": e["name"], "holders": e["holders"]})
+            continue
+        # Two CUSIPs (share classes) can map to one ticker - sum them.
+        cur = by_ticker.setdefault(tick, {"name": e["name"], "shares": 0.0, "holders": 0,
+                                          "value": 0.0, "cusips": []})
+        cur["shares"] += e["shares"]
+        cur["value"] += e["value"]
+        cur["holders"] = max(cur["holders"], e["holders"])
+        cur["cusips"].append(cusip)
+    unresolved.sort(key=lambda d: -d["holders"])
+    return by_ticker, unresolved
+
+
+def grade(now, prior, cfg, float_shares=None):
+    """Grade I from the two quarters. Returns (grade, reason, metrics).
+
+    Follows the rubric in references/canslim-methodology.md: PASS is ownership RISING with a real
+    base of holders and room left for new buyers; PARTIAL is adequate ownership whose trend is
+    flat or unverifiable; FAIL is thin, neglected, or declining.
+    """
+    h, sh = now["holders"], now["shares"]
+    m = {"holders": h, "shares": sh, "holders_prior": None, "shares_prior": None,
+         "holders_delta": None, "shares_delta_pct": None, "pct_of_float": None}
+
+    if float_shares:
+        try:
+            m["pct_of_float"] = round(100.0 * sh / float(float_shares), 1)
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+
+    if h < cfg["thin_holders"]:
+        return ("fail", "I: only %d institutional holders - thin and neglected, below the "
+                        "sponsorship test" % h, m)
+
+    if not prior:
+        return ("partial", "I: %d institutional holders (%.1fM shares), but no prior quarter to "
+                           "compare - the trend is unverified" % (h, sh / 1e6), m)
+
+    m["holders_prior"], m["shares_prior"] = prior["holders"], prior["shares"]
+    m["holders_delta"] = h - prior["holders"]
+    if prior["shares"]:
+        m["shares_delta_pct"] = round(100.0 * (sh - prior["shares"]) / prior["shares"], 1)
+
+    dh, ds = m["holders_delta"], (m["shares_delta_pct"] or 0.0)
+    over = m["pct_of_float"] is not None and m["pct_of_float"] >= cfg["over_owned_pct"]
+
+    if dh > 0 and ds > cfg["rising_pct"]:
+        if over:
+            return ("partial", "I: sponsorship rising (%+d holders to %d, shares %+.1f%%) but "
+                               "institutions already hold %.1f%% of the float - little room for "
+                               "new sponsorship" % (dh, h, ds, m["pct_of_float"]), m)
+        return ("pass", "I: %d institutional holders, %+d on the quarter, shares held %+.1f%% - "
+                        "sponsorship is increasing (SEC 13F)" % (h, dh, ds), m)
+    if dh < 0 and ds < -cfg["rising_pct"]:
+        return ("fail", "I: sponsorship declining - %d holders (%+d) and shares held %+.1f%% "
+                        "(SEC 13F)" % (h, dh, ds), m)
+    return ("partial", "I: %d institutional holders (%+d, shares %+.1f%%) - adequate ownership "
+                       "but the trend is flat (SEC 13F)" % (h, dh, ds), m)
+
+
+def build(args, cfg):
+    meta = {"source": "sec-13f", "is_proxy": False, "quarter": args.quarter, "prior": args.prior,
+            "thresholds": dict(cfg), "urls": {}, "notes": [], "ok": False}
+    known, detail = {}, {}
+
+    universe, cusip_map, floats = {}, {}, {}
+    if args.universe:
+        blob = json.load(open(args.universe, encoding="utf-8"))
+        for _, rows in (blob.get("sectors") or {}).items() if isinstance(
+                blob.get("sectors"), dict) else []:
+            for r in rows or []:
+                t = (r.get("symbol") or "").split(":")[-1]
+                if t:
+                    universe[t] = r.get("description") or r.get("name") or ""
+                    if r.get("float_shares_outstanding_current"):
+                        floats[t] = r["float_shares_outstanding_current"]
+        meta["notes"].append("universe: %d tickers from %s" % (len(universe), args.universe))
+    if args.cusip_map:
+        cusip_map = {k.strip().upper(): v for k, v in
+                     json.load(open(args.cusip_map, encoding="utf-8")).items()}
+        meta["notes"].append("cusip map: %d entries" % len(cusip_map))
+
+    aggs = {}
+    for label, q in (("quarter", args.quarter), ("prior", args.prior)):
+        if not q:
+            continue
+        data, where = fetch(q, args.contact, args.timeout, args.cache_dir)
+        meta["urls"][q] = where
+        if data is None:
+            meta["notes"].append("%s %s could not be fetched: %s" % (label, q, where))
+            continue
+        agg, note = aggregate(data)
+        meta["notes"].append("%s %s: %s" % (label, q, note))
+        if agg:
+            aggs[label] = agg
+
+    if "quarter" not in aggs:
+        meta["notes"].append("no 13F data for the current quarter - every ticker falls through "
+                             "to the fallback, if one was given")
+        return meta, known, detail, []
+
+    now_t, unresolved = resolve_tickers(aggs["quarter"], cusip_map, universe)
+    prior_t = resolve_tickers(aggs["prior"], cusip_map, universe)[0] if "prior" in aggs else {}
+    meta["ok"] = True
+    meta["notes"].append("resolved %d tickers; %d issuers unresolved" % (len(now_t), len(unresolved)))
+
+    for tick, e in now_t.items():
+        g, why, m = grade(e, prior_t.get(tick), cfg, floats.get(tick))
+        known[tick] = {"I": g}
+        detail[tick] = dict(m, grade=g, ceiling_cap=g, reason=why, source="sec-13f",
+                            issuer=e["name"], cusips=e["cusips"])
+    return meta, known, detail, unresolved
+
+
+def merge_fallback(meta, known, detail, path):
+    """Fill every ticker 13F could not answer from accumulation.py's volume proxy.
+
+    Only gaps are filled - a real 13F grade is never overwritten by a proxy. Each entry keeps its
+    own `source`, so the report can say which evidence graded which name instead of implying the
+    whole column came from one place.
+    """
+    try:
+        fb = json.load(open(path, encoding="utf-8"))
+    except Exception as e:
+        meta["notes"].append("fallback %s could not be read: %s" % (path, e))
+        return 0
+    n = 0
+    for tick, v in (fb.get("known") or {}).items():
+        if tick in known:
+            continue
+        known[tick] = v
+        d = (fb.get("detail") or {}).get(tick) or {}
+        detail[tick] = dict(d, source=(fb.get("meta") or {}).get("source", "accumulation-proxy"))
+        n += 1
+    meta["notes"].append("fallback filled %d ticker(s) 13F did not cover" % n)
+    meta["fallback"] = {"path": path, "source": (fb.get("meta") or {}).get("source"), "filled": n}
+    return n
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--quarter", required=True, help="e.g. 2026Q2 (the latest 13F deadline past)")
+    ap.add_argument("--prior", help="the quarter before it, e.g. 2026Q1 - needed for the TREND")
+    ap.add_argument("--universe", metavar="FILE",
+                    help="the sweep JSON, used to resolve CUSIPs by issuer name")
+    ap.add_argument("--cusip-map", metavar="FILE", help='{"67066G104": "NVDA", ...}')
+    ap.add_argument("--fallback", metavar="FILE",
+                    help="accumulation.py output, used for tickers 13F could not answer")
+    ap.add_argument("--cache-dir", default="data/13f", help="keep the zips (default %(default)s)")
+    ap.add_argument("--contact", default="", help="contact address for SEC's User-Agent policy")
+    ap.add_argument("--timeout", type=float, default=120.0)
+    ap.add_argument("--thin-holders", type=int, default=DEFAULTS["thin_holders"])
+    ap.add_argument("-o", "--out", metavar="FILE", help="write here (default: stdout)")
+    ap.add_argument("--known-only", action="store_true", help="print just the --known map")
+    a = ap.parse_args()
+
+    cfg = dict(DEFAULTS, thin_holders=a.thin_holders)
+    meta, known, detail, unresolved = build(a, cfg)
+    if a.fallback:
+        merge_fallback(meta, known, detail, a.fallback)
+    meta["graded"] = len(known)
+
+    res = {"meta": meta, "known": known, "detail": detail,
+           "unresolved": unresolved[:200]}
+    text = json.dumps(known if a.known_only else res, indent=2)
+    if a.out:
+        os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+        open(a.out, "w", encoding="utf-8").write(text + "\n")
+        print("%s: %d ticker(s) graded%s" % (a.out, len(known),
+              "" if meta["ok"] else " - 13F UNAVAILABLE, see meta.notes"), file=sys.stderr)
+        for nte in meta["notes"]:
+            print("  " + nte, file=sys.stderr)
+    else:
+        print(text)
+    return 0        # fails open: a run continues on the proxy, or on I=partial
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+
+## `scripts/accumulation.py`
+
+The I fallback: reads institutional buying pressure from the up/down volume footprint when 13F ownership is unavailable. A proxy, and every reason string says so.
+
+```python
+#!/usr/bin/env python3
+"""
+accumulation.py - grade I (institutional sponsorship) from the volume footprint, when 13F
+ownership is unavailable.
+
+WHY THIS EXISTS. I is the letter this skill routinely cannot source. 13F is filed by MANAGER,
+not by issuer, so "who owns NVDA" is not an endpoint anywhere - it is an aggregation over every
+filer - and the vendors that pre-compute it charge for it. The result was that every name in
+every run scored I=partial by default, which is an admission, not a grade.
+
+WHAT THIS MEASURES INSTEAD. Institutions cannot accumulate a position quietly: buying millions of
+shares leaves a footprint in the tape, and that footprint is readable from bars this skill already
+pulls. The up/down volume ratio - volume on advancing days over volume on declining days - is the
+standard reading of it (IBD publishes the same idea as its Accumulation/Distribution Rating).
+Above ~1.25 the stock is being accumulated; below ~0.9 it is under distribution, and a stock under
+distribution is not one whose sponsorship is increasing, whatever last quarter's 13F said.
+
+WHAT IT IS NOT. This is a PROXY and the output says so in every reason string. It reads buying
+PRESSURE, not ownership: it cannot tell you the number of holders, whether the buyers are quality
+funds, or whether the name is already so over-owned that new sponsorship is impossible - all three
+of which the real rubric asks about. Prefer `institutional_cache.py` (SEC 13F) whenever it has
+data; use this when it does not.
+
+THE ASYMMETRY THAT DRIVES THE DEFAULT. The ceiling in sector_screen.py is an UPPER bound, and its
+soundness depends on never being too low: a ceiling above the truth only wastes API calls, but a
+ceiling below it silently drops a name that would have qualified. A proxy that reports "pass"
+is therefore safe to feed the ceiling. A proxy that reports "fail" is not - it would be asserting,
+from volume alone, that no amount of real ownership data could lift the letter. So by default a
+proxy FAIL caps the ceiling at `partial`, never at `fail`; `--strict` lets it cap at fail for
+anyone who would rather prune harder and accept the risk. The report grade is unaffected either
+way - `detail` always carries the honest estimate.
+
+INPUT: the same JSON `relative_strength.py` takes -
+  {"candidates": [{"symbol": "NVDA", "daily": [[t,o,h,l,c,v], ...]}, ...]}
+Bars are oldest-first; ~3 months (65 bars) is the minimum and ~1 year is comfortable.
+
+OUTPUT: JSON with three parts -
+  meta    what was measured and under which thresholds
+  known   {ticker: {"I": grade}} - the CEILING-SAFE cap, ready for `sector_screen.py --known`
+  detail  {ticker: {...}} - the honest estimate, the numbers behind it, and the reason string
+          the report should print
+
+Usage:
+  python accumulation.py bars.json
+  python accumulation.py bars.json --window 50 --strict
+  cat bars.json | python accumulation.py --known-only > known.json
+Pure standard library.
+"""
+import argparse
+import json
+import sys
+
+DEFAULTS = {
+    "window": 50,        # trading days of tape to read; ~10 weeks, IBD's usual U/D lookback
+    "accumulate": 1.25,  # U/D at or above this is accumulation
+    "distribute": 0.90,  # U/D below this is distribution
+    "big_vol": 1.40,     # a day at >= this multiple of average volume is an institutional print
+    "min_prints": 3,     # ... and a pass wants at least this many of them in the window
+    "min_bars": 30,      # below this there is not enough tape to say anything
+}
+
+ORDER = {"fail": 0, "partial": 1, "pass": 2}
+
+
+def _rows(bars):
+    """(close, volume) pairs, skipping bars with either value missing.
+
+    Accepts BOTH bar shapes in use here: the positional [t,o,h,l,c,v] that relative_strength.py
+    documents, and the {"t":..,"c":..,"v":..} dicts the TradingView connector actually returns from
+    get_ohlcv. Taking the native shape removes a hand-conversion step between the two, and a
+    hand-conversion step between a connector and a grader is exactly where a column silently
+    shifts by one.
+    """
+    out = []
+    for b in bars or []:
+        try:
+            if isinstance(b, dict):
+                c, v = float(b["c"]), float(b["v"])
+            else:
+                c, v = float(b[4]), float(b[5])
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
+        out.append((c, v))
+    return out
+
+
+def up_down_volume(bars, window):
+    """Volume on advancing days over volume on declining days, across the last `window` days.
+
+    Unchanged closes are excluded rather than assigned to either side: a flat day carries no
+    directional information, and bucketing it with the buyers is how this ratio gets quietly
+    inflated on thin names that print the same close repeatedly.
+    """
+    r = _rows(bars)
+    if len(r) < 2:
+        return None
+    seg = r[-(window + 1):] if len(r) > window else r
+    up = dn = 0.0
+    for i in range(1, len(seg)):
+        prev, cur = seg[i - 1][0], seg[i][0]
+        vol = seg[i][1]
+        if cur > prev:
+            up += vol
+        elif cur < prev:
+            dn += vol
+    if dn == 0:
+        return None if up == 0 else float("inf")   # nothing but up days: no ratio, but not weak
+    return up / dn
+
+
+def big_volume_up_days(bars, window, mult):
+    """Advancing days on volume at least `mult` times the window average.
+
+    This is the part that separates accumulation from drift. A U/D ratio a little over 1 can come
+    from many small up days; institutions buying size leave a handful of conspicuously heavy ones,
+    and requiring a few of those keeps a quiet uptrend from reading as sponsorship.
+    """
+    r = _rows(bars)
+    if len(r) < 2:
+        return None
+    seg = r[-(window + 1):] if len(r) > window else r
+    vols = [v for _, v in seg[1:]]
+    if not vols:
+        return None
+    avg = sum(vols) / len(vols)
+    if avg <= 0:
+        return None
+    n = 0
+    for i in range(1, len(seg)):
+        if seg[i][0] > seg[i - 1][0] and seg[i][1] >= mult * avg:
+            n += 1
+    return n
+
+
+def grade(bars, cfg):
+    """Return (grade, ceiling_cap, reason, metrics). `grade` is the honest estimate for the
+    report; `ceiling_cap` is what is safe to hand the ceiling - see the module docstring."""
+    r = _rows(bars)
+    if len(r) < cfg["min_bars"]:
+        return ("partial", "partial",
+                "I: not graded - only %d usable bars, too little tape to read accumulation "
+                "(no 13F data either)" % len(r),
+                {"bars": len(r), "ud_ratio": None, "big_up_days": None})
+
+    ud = up_down_volume(bars, cfg["window"])
+    prints = big_volume_up_days(bars, cfg["window"], cfg["big_vol"])
+    m = {"bars": len(r), "ud_ratio": (None if ud is None else
+                                      (None if ud == float("inf") else round(ud, 2))),
+         "all_up_days": ud == float("inf"),
+         "big_up_days": prints, "window": cfg["window"]}
+
+    if ud is None:
+        return ("partial", "partial",
+                "I: not graded - no directional volume in the last %d days (proxy; no 13F data)"
+                % cfg["window"], m)
+
+    strong = ud == float("inf") or ud >= cfg["accumulate"]
+    weak = ud != float("inf") and ud < cfg["distribute"]
+    shown = "all advancing days" if ud == float("inf") else "%.2fx" % ud
+
+    if strong and (prints or 0) >= cfg["min_prints"]:
+        return ("pass", "pass",
+                "I: up/down volume %s over %d days with %d heavy accumulation days - "
+                "institutional buying pressure (proxy: volume footprint, not 13F ownership)"
+                % (shown, cfg["window"], prints or 0), m)
+    if weak:
+        return ("fail", "partial",
+                "I: up/down volume %s over %d days - under distribution, sponsorship is not "
+                "building (proxy: volume footprint, not 13F ownership)" % (shown, cfg["window"]), m)
+    return ("partial", "partial",
+            "I: up/down volume %s over %d days with %d heavy days - no clear accumulation either "
+            "way (proxy: volume footprint, not 13F ownership)"
+            % (shown, cfg["window"], prints or 0), m)
+
+
+def analyze(data, cfg, strict=False):
+    known, detail = {}, {}
+    for cand in data.get("candidates") or []:
+        sym = cand.get("symbol") or ""
+        tick = sym.split(":")[-1] if sym else ""
+        if not tick:
+            continue
+        g, cap, why, m = grade(cand.get("daily") or [], cfg)
+        if strict:
+            cap = g                      # let a proxy fail prune; see the module docstring
+        known[tick] = {"I": cap}
+        detail[tick] = dict(m, symbol=sym, grade=g, ceiling_cap=cap, reason=why)
+    return {
+        "meta": {
+            "source": "accumulation-proxy",
+            "measures": "up/down volume ratio and heavy accumulation days",
+            "is_proxy": True,
+            "caveat": ("Volume footprint, NOT 13F ownership. It reads institutional buying "
+                       "PRESSURE; it cannot count holders, identify quality funds, or detect an "
+                       "over-owned name. Prefer institutional_cache.py when it has data."),
+            "ceiling_policy": ("proxy fail caps the ceiling at partial" if not strict
+                               else "STRICT: proxy fail caps the ceiling at fail"),
+            "thresholds": dict(cfg),
+            "graded": len(known),
+        },
+        "known": known,
+        "detail": detail,
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("input", nargs="?", help="bars JSON (default: stdin)")
+    ap.add_argument("--window", type=int, default=DEFAULTS["window"],
+                    help="trading days of tape to read (default %(default)s)")
+    ap.add_argument("--accumulate", type=float, default=DEFAULTS["accumulate"],
+                    help="U/D at or above this is accumulation (default %(default)s)")
+    ap.add_argument("--distribute", type=float, default=DEFAULTS["distribute"],
+                    help="U/D below this is distribution (default %(default)s)")
+    ap.add_argument("--big-vol", type=float, default=DEFAULTS["big_vol"],
+                    help="volume multiple that marks an institutional print (default %(default)s)")
+    ap.add_argument("--min-prints", type=int, default=DEFAULTS["min_prints"],
+                    help="heavy up days a pass requires (default %(default)s)")
+    ap.add_argument("--strict", action="store_true",
+                    help="let a proxy FAIL cap the ceiling at fail rather than partial - prunes "
+                         "harder, at the risk of dropping a name real 13F data would have kept")
+    ap.add_argument("--known-only", action="store_true",
+                    help="print just the --known map, ready for sector_screen.py")
+    a = ap.parse_args()
+
+    cfg = dict(DEFAULTS)
+    cfg.update({"window": a.window, "accumulate": a.accumulate, "distribute": a.distribute,
+                "big_vol": a.big_vol, "min_prints": a.min_prints})
+    data = json.load(open(a.input, encoding="utf-8")) if a.input else json.load(sys.stdin)
+    res = analyze(data, cfg, strict=a.strict)
+    json.dump(res["known"] if a.known_only else res, sys.stdout, indent=2)
     sys.stdout.write("\n")
 
 
@@ -4901,6 +5582,8 @@ import relative_strength as rs                              # noqa: E402
 import html_to_pdf as h2p                                   # noqa: E402
 import build_report as br                                   # noqa: E402
 import check_for_updates as cfu                             # noqa: E402
+import accumulation as acc                                  # noqa: E402
+import institutional_cache as ic                            # noqa: E402
 
 W = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
 CFG = dict(ss.DEFAULTS)
@@ -5250,6 +5933,284 @@ def check_base_metrics_flags_a_wide_loose_base():
     m = rs.base_metrics(_bars([100] * 10 + [50] + [60] * 5))
     assert m["wide_and_loose_flag"] is True and m["base_depth_pct"] == 0.5
     assert rs.base_metrics(_bars([1, 2])) is None
+
+
+# ---------------------------------------------------------------- accumulation (I proxy)
+
+def _tape(pattern, vol=None):
+    """pattern: 'u'/'d'/'f' per bar (up, down, flat). vol: per-bar multiplier of 1M."""
+    bars, price = [], 100.0
+    for i, ch in enumerate(pattern):
+        price += 1.0 if ch == "u" else (-1.0 if ch == "d" else 0.0)
+        v = 1_000_000 * ((vol or [1] * len(pattern))[i])
+        bars.append([i, price, price, price, round(price, 2), v])
+    return bars
+
+
+def check_up_down_volume_ignores_flat_days():
+    """A flat close carries no directional information. Bucketing it with the buyers is how this
+    ratio gets quietly inflated on thin names that reprint the same close."""
+    assert acc.up_down_volume(_tape("xuudd"), 50) == 1.0        # 2 up, 2 down, equal volume
+    # inserting flat days must not move the ratio
+    assert acc.up_down_volume(_tape("xuffuddff"), 50) == 1.0
+    assert acc.up_down_volume(_tape("xuuu"), 50) == float("inf")   # nothing to divide by
+    assert acc.up_down_volume([], 50) is None
+
+
+def check_up_down_volume_weights_by_volume_not_by_day_count():
+    # one heavy up day outweighs three light down days
+    r = acc.up_down_volume(_tape("xuddd", [1, 9, 1, 1, 1]), 50)
+    assert abs(r - 3.0) < 1e-9, r
+
+
+def check_big_volume_up_days_counts_only_heavy_advances():
+    v = [1] * 20 + [5]                       # last bar heavy
+    assert acc.big_volume_up_days(_tape("x" + "ud" * 10, v), 50, 1.4) >= 0
+    up_heavy = acc.big_volume_up_days(_tape("x" + "u" * 20, v), 50, 1.4)
+    dn_heavy = acc.big_volume_up_days(_tape("x" + "d" * 20, v), 50, 1.4)
+    assert up_heavy == 1 and dn_heavy == 0, (up_heavy, dn_heavy)
+
+
+def check_accumulation_accepts_both_bar_shapes():
+    """get_ohlcv returns dicts; relative_strength.py documents positional lists. A grader that
+    took only one would need a hand conversion, which is where a column shifts by one."""
+    lists = _tape("xuuddu")
+    dicts = [{"t": b[0], "o": b[1], "h": b[2], "l": b[3], "c": b[4], "v": b[5]} for b in lists]
+    assert acc.up_down_volume(lists, 50) == acc.up_down_volume(dicts, 50)
+
+
+def _heavy_on(pattern, ch, mult=4, every=6):
+    """Volume derived FROM the pattern, so the heavy days land on the intended side, and heavy
+    days stay OCCASIONAL.
+
+    Two fixture mistakes are baked into this helper's shape, both found here rather than in the
+    code. Building pattern and volume independently put the accumulation volume on the down days.
+    And making every up day heavy scores ZERO heavy days - the count is relative to the window
+    average, so a uniformly heavy tape has no spikes to find. That is the right behaviour (if
+    every day looks the same you cannot pick out the institutions) but it is not what real
+    accumulation looks like, which is ordinary volume punctuated by prints.
+    """
+    out, n = [], 0
+    for c in pattern:
+        if c == ch:
+            n += 1
+            out.append(mult if n % every == 0 else 1)
+        else:
+            out.append(1)
+    return out
+
+
+def check_accumulation_grades_the_three_regimes():
+    cfg = dict(acc.DEFAULTS)
+    # accumulation: more up days than down, and the heavy prints are on the up days
+    p = "uud" * 27
+    g, cap, why, m = acc.grade(_tape(p, _heavy_on(p, "u")), cfg)
+    assert (g, cap) == ("pass", "pass"), (g, cap, m)
+    assert "proxy" in why and m["ud_ratio"] > cfg["accumulate"]
+    # distribution: the heavy prints are on the down days
+    q = "ddu" * 27
+    g2, cap2, _, m2 = acc.grade(_tape(q, _heavy_on(q, "d")), cfg)
+    assert g2 == "fail" and m2["ud_ratio"] < cfg["distribute"], (g2, m2)
+    # neutral tape sits between the two and must claim nothing
+    r = "ud" * 40
+    g3, _, _, _ = acc.grade(_tape(r), cfg)
+    assert g3 == "partial", g3
+
+
+def check_a_proxy_fail_never_caps_the_ceiling_at_fail_by_default():
+    """THE safety property for the proxy. The ceiling is an upper bound: too high only wastes API
+    calls, too low silently drops a qualifier. Volume alone cannot prove no amount of ownership
+    data would lift the letter, so a proxy FAIL caps at partial unless --strict is asked for."""
+    cfg = dict(acc.DEFAULTS)
+    data = {"candidates": [{"symbol": "NYSE:DIST", "daily": _tape("d" * 60 + "dddu" * 8)}]}
+    lenient = acc.analyze(data, cfg)
+    assert lenient["detail"]["DIST"]["grade"] == "fail"
+    assert lenient["known"]["DIST"]["I"] == "partial", "a proxy fail must not cap at fail"
+    strict = acc.analyze(data, cfg, strict=True)
+    assert strict["known"]["DIST"]["I"] == "fail", "--strict must let it prune"
+    # and no proxy output may ever be worse than its own honest grade
+    for out in (lenient, strict):
+        for t, k in out["known"].items():
+            assert acc.ORDER[k["I"]] >= acc.ORDER[out["detail"][t]["grade"]]
+
+
+def check_too_little_tape_is_partial_never_fail():
+    """Same rule as triage: missing data is skipped, never treated as a disqualification."""
+    g, cap, why, m = acc.grade(_tape("ud" * 5), dict(acc.DEFAULTS))
+    assert g == "partial" and cap == "partial", (g, cap)
+    assert "too little tape" in why
+
+
+# ---------------------------------------------------------------- institutional_cache (I, 13F)
+
+def _mk13f(path, spec, quarter="06-30-2026"):
+    """spec: {cusip: (issuer, n_managers, shares_each)} -> a zip shaped like SEC's data set."""
+    import zipfile
+    cover = ["ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER"]
+    info = ["ACCESSION_NUMBER\tINFOTABLE_SK\tNAMEOFISSUER\tTITLEOFCLASS\tCUSIP\tVALUE\t"
+            "SSHPRNAMT\tSSHPRNAMTTYPE\tPUTCALL"]
+    seen, k = set(), 0
+    for cusip, (name, nf, sh) in spec.items():
+        for i in range(nf):
+            a = "0001-%s-%03d" % (cusip[:4], i)
+            if a not in seen:
+                seen.add(a)
+                cover.append("%s\t%d\tFUND %d\t%s" % (a, 9000 + i, i, quarter))
+            k += 1
+            info.append("%s\t%d\t%s\tCOM\t%s\t%d\t%d\tSH\t" % (a, k, name, cusip, sh * 50, sh))
+    z = zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED)
+    z.writestr("COVERPAGE.tsv", "\n".join(cover))
+    z.writestr("INFOTABLE.tsv", "\n".join(info))
+    z.close()
+    return info
+
+
+def check_13f_excludes_options_and_principal_rows(tmp):
+    """Two filters that are silent if wrong. A PUTCALL row is an option, so counting it credits a
+    fund that is SHORT the name via puts as a sponsor. A PRN row is a principal amount of debt,
+    and summing it with share counts produces a number that means nothing."""
+    import zipfile
+    p = os.path.join(tmp, "q.zip")
+    _mk13f(p, {"67066G104": ("NVIDIA CORPORATION", 3, 1000)})
+    z = zipfile.ZipFile(p, "a")
+    rows = z.read("INFOTABLE.tsv").decode()
+    rows += ("\n0001-6706-000\t901\tNVIDIA CORPORATION\tCOM\t67066G104\t9\t500000\tSH\tCall"
+             "\n0001-6706-000\t902\tNVIDIA CORPORATION\tNOTE\t67066G104\t9\t400000\tPRN\t")
+    z.close()
+    z2 = zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED)
+    z2.writestr("COVERPAGE.tsv", zipfile.ZipFile(os.path.join(tmp, "q.zip.bak"), "r").read(
+        "COVERPAGE.tsv").decode() if False else
+        "ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER\n"
+        "0001-6706-000\t9000\tFUND 0\t06-30-2026\n0001-6706-001\t9001\tFUND 1\t06-30-2026\n"
+        "0001-6706-002\t9002\tFUND 2\t06-30-2026")
+    z2.writestr("INFOTABLE.tsv", rows)
+    z2.close()
+    agg, note = ic.aggregate(io.open(p, "rb").read())
+    e = agg["67066G104"]
+    assert e["shares"] == 3000, "options/principal leaked into the share count: %s" % e["shares"]
+    assert e["holders"] == 3, e["holders"]
+
+
+def check_13f_counts_distinct_managers_not_filings(tmp):
+    """A manager can appear on several accessions. Counting filings would inflate the holder
+    count, which is the number the whole grade turns on."""
+    import zipfile
+    p = os.path.join(tmp, "q.zip")
+    z = zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED)
+    z.writestr("COVERPAGE.tsv",
+               "ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER\n"
+               "A1\t555\tONE FUND\t06-30-2026\nA2\t555\tONE FUND\t06-30-2026\n"
+               "A3\t777\tOTHER FUND\t06-30-2026")
+    z.writestr("INFOTABLE.tsv",
+               "ACCESSION_NUMBER\tINFOTABLE_SK\tNAMEOFISSUER\tTITLEOFCLASS\tCUSIP\tVALUE\t"
+               "SSHPRNAMT\tSSHPRNAMTTYPE\tPUTCALL\n"
+               "A1\t1\tACME CORP\tCOM\tAAA\t1\t100\tSH\t\n"
+               "A2\t2\tACME CORP\tCOM\tAAA\t1\t100\tSH\t\n"
+               "A3\t3\tACME CORP\tCOM\tAAA\t1\t100\tSH\t")
+    z.close()
+    agg, _ = ic.aggregate(io.open(p, "rb").read())
+    assert agg["AAA"]["holders"] == 2, agg["AAA"]["holders"]
+    assert agg["AAA"]["shares"] == 300
+
+
+def check_issuer_name_matching_and_its_refusal_to_guess():
+    assert ic.norm_name("NVIDIA CORPORATION") == ic.norm_name("NVIDIA Corp")
+    assert ic.norm_name("Laggard Industries, Inc.") == ic.norm_name("LAGGARD INDUSTRIES INC")
+    agg = {"C1": {"name": "AMBIGUOUS HOLDINGS", "shares": 1.0, "holders": 30, "value": 1.0},
+           "C2": {"name": "NVIDIA CORPORATION", "shares": 1.0, "holders": 40, "value": 1.0}}
+    # two tickers claiming the same normalised name must resolve to NEITHER - a wrong ticker
+    # attaches one company's sponsorship to another's scorecard
+    by, un = ic.resolve_tickers(agg, {}, {"AMB": "Ambiguous Holdings", "AMB2": "Ambiguous Holdings",
+                                          "NVDA": "NVIDIA Corp"})
+    assert "NVDA" in by and "AMB" not in by and "AMB2" not in by
+    assert [u["cusip"] for u in un] == ["C1"]
+
+
+def check_share_classes_collapse_onto_one_ticker():
+    agg = {"C1": {"name": "DUAL CO", "shares": 100.0, "holders": 30, "value": 1.0},
+           "C2": {"name": "DUAL CO", "shares": 50.0, "holders": 25, "value": 1.0}}
+    by, _ = ic.resolve_tickers(agg, {"C1": "DUAL", "C2": "DUAL"}, {})
+    assert by["DUAL"]["shares"] == 150.0 and by["DUAL"]["holders"] == 30
+    assert sorted(by["DUAL"]["cusips"]) == ["C1", "C2"]
+
+
+def check_13f_grades_follow_the_rubric():
+    cfg = dict(ic.DEFAULTS)
+    rise = ic.grade({"holders": 60, "shares": 100.0}, {"holders": 52, "shares": 80.0}, cfg)
+    assert rise[0] == "pass", rise
+    drop = ic.grade({"holders": 30, "shares": 50.0}, {"holders": 38, "shares": 90.0}, cfg)
+    assert drop[0] == "fail", drop
+    flat = ic.grade({"holders": 40, "shares": 100.0}, {"holders": 40, "shares": 100.1}, cfg)
+    assert flat[0] == "partial", flat
+    thin = ic.grade({"holders": 5, "shares": 10.0}, {"holders": 4, "shares": 9.0}, cfg)
+    assert thin[0] == "fail" and "thin" in thin[1]
+    # no prior quarter = the TREND is unverified, which is partial, never a pass
+    solo = ic.grade({"holders": 90, "shares": 100.0}, None, cfg)
+    assert solo[0] == "partial" and "unverified" in solo[1]
+    # rising but already over-owned: no room left for new sponsorship
+    over = ic.grade({"holders": 60, "shares": 99.0}, {"holders": 52, "shares": 80.0}, cfg,
+                    float_shares=100.0)
+    assert over[0] == "partial" and "float" in over[1], over
+
+
+def check_13f_fails_open_when_it_cannot_fetch(tmp):
+    """No network, a moved URL, an egress policy - none of these may stop a run."""
+    class A:
+        quarter, prior = "2099Q4", "2099Q3"
+        universe = cusip_map = None
+        cache_dir = os.path.join(tmp, "nope")
+        contact, timeout = "", 0.2
+    meta, known, detail, un = ic.build(A(), dict(ic.DEFAULTS))
+    assert meta["ok"] is False and known == {} and detail == {}
+    assert any("could not be fetched" in n for n in meta["notes"]), meta["notes"]
+
+
+def check_fallback_fills_gaps_and_never_overwrites(tmp):
+    meta = {"notes": []}
+    known = {"NVDA": {"I": "pass"}}
+    detail = {"NVDA": {"grade": "pass", "source": "sec-13f"}}
+    fb = os.path.join(tmp, "fb.json")
+    io.open(fb, "w", encoding="utf-8").write(json.dumps({
+        "meta": {"source": "accumulation-proxy"},
+        "known": {"NVDA": {"I": "fail"}, "OTHER": {"I": "partial"}},
+        "detail": {"NVDA": {"grade": "fail"}, "OTHER": {"grade": "partial"}}}))
+    n = ic.merge_fallback(meta, known, detail, fb)
+    assert n == 1
+    assert known["NVDA"]["I"] == "pass", "a proxy overwrote a real 13F grade"
+    assert detail["NVDA"]["source"] == "sec-13f"
+    assert detail["OTHER"]["source"] == "accumulation-proxy"
+
+
+# ---------------------------------------------------------------- known-file plumbing
+
+def check_load_known_unwraps_the_cache_shape(tmp):
+    """Without the unwrap, passing an I-cache to --known looks like it worked and grades nothing:
+    every lookup misses, silently, and the run reports I=partial for the whole market."""
+    a = os.path.join(tmp, "a.json")
+    io.open(a, "w", encoding="utf-8").write(json.dumps({
+        "meta": {"source": "sec-13f"}, "known": {"NVDA": {"I": "pass"}}, "detail": {}}))
+    assert ss.load_known([a]) == {"NVDA": {"I": "pass"}}
+    b = os.path.join(tmp, "b.json")          # the bare shape still works
+    io.open(b, "w", encoding="utf-8").write(json.dumps({"NVDA": {"A": "fail"}}))
+    merged = ss.load_known([a, b])
+    assert merged["NVDA"] == {"I": "pass", "A": "fail"}, merged
+    c = os.path.join(tmp, "c.json")          # later file wins on a conflict
+    io.open(c, "w", encoding="utf-8").write(json.dumps({"NVDA": {"I": "fail"}}))
+    assert ss.load_known([a, c])["NVDA"]["I"] == "fail"
+
+
+def check_a_sourced_letter_is_distinguishable_from_an_unsourced_one():
+    """"I = partial (graded)" and "I <= partial: not sourceable" are the same number and entirely
+    different evidence. A report that cannot tell them apart cannot say where the grade came from.
+    """
+    graded = _ceiling_of()
+    ss.ceiling(graded, CFG, {"I": "partial"})
+    assert any("I = partial (graded)" in r for r in graded["ceiling_reasons"])
+    assert not any("not sourceable" in r for r in graded["ceiling_reasons"])
+    bare = _ceiling_of()
+    ss.ceiling(bare, CFG)
+    assert any("not sourceable" in r for r in bare["ceiling_reasons"])
+    assert graded["ceiling"] == bare["ceiling"]      # same number, different provenance
 
 
 # ---------------------------------------------------------------- html_to_pdf

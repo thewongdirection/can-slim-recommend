@@ -36,6 +36,8 @@ import relative_strength as rs                              # noqa: E402
 import html_to_pdf as h2p                                   # noqa: E402
 import build_report as br                                   # noqa: E402
 import check_for_updates as cfu                             # noqa: E402
+import accumulation as acc                                  # noqa: E402
+import institutional_cache as ic                            # noqa: E402
 
 W = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
 CFG = dict(ss.DEFAULTS)
@@ -385,6 +387,284 @@ def check_base_metrics_flags_a_wide_loose_base():
     m = rs.base_metrics(_bars([100] * 10 + [50] + [60] * 5))
     assert m["wide_and_loose_flag"] is True and m["base_depth_pct"] == 0.5
     assert rs.base_metrics(_bars([1, 2])) is None
+
+
+# ---------------------------------------------------------------- accumulation (I proxy)
+
+def _tape(pattern, vol=None):
+    """pattern: 'u'/'d'/'f' per bar (up, down, flat). vol: per-bar multiplier of 1M."""
+    bars, price = [], 100.0
+    for i, ch in enumerate(pattern):
+        price += 1.0 if ch == "u" else (-1.0 if ch == "d" else 0.0)
+        v = 1_000_000 * ((vol or [1] * len(pattern))[i])
+        bars.append([i, price, price, price, round(price, 2), v])
+    return bars
+
+
+def check_up_down_volume_ignores_flat_days():
+    """A flat close carries no directional information. Bucketing it with the buyers is how this
+    ratio gets quietly inflated on thin names that reprint the same close."""
+    assert acc.up_down_volume(_tape("xuudd"), 50) == 1.0        # 2 up, 2 down, equal volume
+    # inserting flat days must not move the ratio
+    assert acc.up_down_volume(_tape("xuffuddff"), 50) == 1.0
+    assert acc.up_down_volume(_tape("xuuu"), 50) == float("inf")   # nothing to divide by
+    assert acc.up_down_volume([], 50) is None
+
+
+def check_up_down_volume_weights_by_volume_not_by_day_count():
+    # one heavy up day outweighs three light down days
+    r = acc.up_down_volume(_tape("xuddd", [1, 9, 1, 1, 1]), 50)
+    assert abs(r - 3.0) < 1e-9, r
+
+
+def check_big_volume_up_days_counts_only_heavy_advances():
+    v = [1] * 20 + [5]                       # last bar heavy
+    assert acc.big_volume_up_days(_tape("x" + "ud" * 10, v), 50, 1.4) >= 0
+    up_heavy = acc.big_volume_up_days(_tape("x" + "u" * 20, v), 50, 1.4)
+    dn_heavy = acc.big_volume_up_days(_tape("x" + "d" * 20, v), 50, 1.4)
+    assert up_heavy == 1 and dn_heavy == 0, (up_heavy, dn_heavy)
+
+
+def check_accumulation_accepts_both_bar_shapes():
+    """get_ohlcv returns dicts; relative_strength.py documents positional lists. A grader that
+    took only one would need a hand conversion, which is where a column shifts by one."""
+    lists = _tape("xuuddu")
+    dicts = [{"t": b[0], "o": b[1], "h": b[2], "l": b[3], "c": b[4], "v": b[5]} for b in lists]
+    assert acc.up_down_volume(lists, 50) == acc.up_down_volume(dicts, 50)
+
+
+def _heavy_on(pattern, ch, mult=4, every=6):
+    """Volume derived FROM the pattern, so the heavy days land on the intended side, and heavy
+    days stay OCCASIONAL.
+
+    Two fixture mistakes are baked into this helper's shape, both found here rather than in the
+    code. Building pattern and volume independently put the accumulation volume on the down days.
+    And making every up day heavy scores ZERO heavy days - the count is relative to the window
+    average, so a uniformly heavy tape has no spikes to find. That is the right behaviour (if
+    every day looks the same you cannot pick out the institutions) but it is not what real
+    accumulation looks like, which is ordinary volume punctuated by prints.
+    """
+    out, n = [], 0
+    for c in pattern:
+        if c == ch:
+            n += 1
+            out.append(mult if n % every == 0 else 1)
+        else:
+            out.append(1)
+    return out
+
+
+def check_accumulation_grades_the_three_regimes():
+    cfg = dict(acc.DEFAULTS)
+    # accumulation: more up days than down, and the heavy prints are on the up days
+    p = "uud" * 27
+    g, cap, why, m = acc.grade(_tape(p, _heavy_on(p, "u")), cfg)
+    assert (g, cap) == ("pass", "pass"), (g, cap, m)
+    assert "proxy" in why and m["ud_ratio"] > cfg["accumulate"]
+    # distribution: the heavy prints are on the down days
+    q = "ddu" * 27
+    g2, cap2, _, m2 = acc.grade(_tape(q, _heavy_on(q, "d")), cfg)
+    assert g2 == "fail" and m2["ud_ratio"] < cfg["distribute"], (g2, m2)
+    # neutral tape sits between the two and must claim nothing
+    r = "ud" * 40
+    g3, _, _, _ = acc.grade(_tape(r), cfg)
+    assert g3 == "partial", g3
+
+
+def check_a_proxy_fail_never_caps_the_ceiling_at_fail_by_default():
+    """THE safety property for the proxy. The ceiling is an upper bound: too high only wastes API
+    calls, too low silently drops a qualifier. Volume alone cannot prove no amount of ownership
+    data would lift the letter, so a proxy FAIL caps at partial unless --strict is asked for."""
+    cfg = dict(acc.DEFAULTS)
+    data = {"candidates": [{"symbol": "NYSE:DIST", "daily": _tape("d" * 60 + "dddu" * 8)}]}
+    lenient = acc.analyze(data, cfg)
+    assert lenient["detail"]["DIST"]["grade"] == "fail"
+    assert lenient["known"]["DIST"]["I"] == "partial", "a proxy fail must not cap at fail"
+    strict = acc.analyze(data, cfg, strict=True)
+    assert strict["known"]["DIST"]["I"] == "fail", "--strict must let it prune"
+    # and no proxy output may ever be worse than its own honest grade
+    for out in (lenient, strict):
+        for t, k in out["known"].items():
+            assert acc.ORDER[k["I"]] >= acc.ORDER[out["detail"][t]["grade"]]
+
+
+def check_too_little_tape_is_partial_never_fail():
+    """Same rule as triage: missing data is skipped, never treated as a disqualification."""
+    g, cap, why, m = acc.grade(_tape("ud" * 5), dict(acc.DEFAULTS))
+    assert g == "partial" and cap == "partial", (g, cap)
+    assert "too little tape" in why
+
+
+# ---------------------------------------------------------------- institutional_cache (I, 13F)
+
+def _mk13f(path, spec, quarter="06-30-2026"):
+    """spec: {cusip: (issuer, n_managers, shares_each)} -> a zip shaped like SEC's data set."""
+    import zipfile
+    cover = ["ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER"]
+    info = ["ACCESSION_NUMBER\tINFOTABLE_SK\tNAMEOFISSUER\tTITLEOFCLASS\tCUSIP\tVALUE\t"
+            "SSHPRNAMT\tSSHPRNAMTTYPE\tPUTCALL"]
+    seen, k = set(), 0
+    for cusip, (name, nf, sh) in spec.items():
+        for i in range(nf):
+            a = "0001-%s-%03d" % (cusip[:4], i)
+            if a not in seen:
+                seen.add(a)
+                cover.append("%s\t%d\tFUND %d\t%s" % (a, 9000 + i, i, quarter))
+            k += 1
+            info.append("%s\t%d\t%s\tCOM\t%s\t%d\t%d\tSH\t" % (a, k, name, cusip, sh * 50, sh))
+    z = zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED)
+    z.writestr("COVERPAGE.tsv", "\n".join(cover))
+    z.writestr("INFOTABLE.tsv", "\n".join(info))
+    z.close()
+    return info
+
+
+def check_13f_excludes_options_and_principal_rows(tmp):
+    """Two filters that are silent if wrong. A PUTCALL row is an option, so counting it credits a
+    fund that is SHORT the name via puts as a sponsor. A PRN row is a principal amount of debt,
+    and summing it with share counts produces a number that means nothing."""
+    import zipfile
+    p = os.path.join(tmp, "q.zip")
+    _mk13f(p, {"67066G104": ("NVIDIA CORPORATION", 3, 1000)})
+    z = zipfile.ZipFile(p, "a")
+    rows = z.read("INFOTABLE.tsv").decode()
+    rows += ("\n0001-6706-000\t901\tNVIDIA CORPORATION\tCOM\t67066G104\t9\t500000\tSH\tCall"
+             "\n0001-6706-000\t902\tNVIDIA CORPORATION\tNOTE\t67066G104\t9\t400000\tPRN\t")
+    z.close()
+    z2 = zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED)
+    z2.writestr("COVERPAGE.tsv", zipfile.ZipFile(os.path.join(tmp, "q.zip.bak"), "r").read(
+        "COVERPAGE.tsv").decode() if False else
+        "ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER\n"
+        "0001-6706-000\t9000\tFUND 0\t06-30-2026\n0001-6706-001\t9001\tFUND 1\t06-30-2026\n"
+        "0001-6706-002\t9002\tFUND 2\t06-30-2026")
+    z2.writestr("INFOTABLE.tsv", rows)
+    z2.close()
+    agg, note = ic.aggregate(io.open(p, "rb").read())
+    e = agg["67066G104"]
+    assert e["shares"] == 3000, "options/principal leaked into the share count: %s" % e["shares"]
+    assert e["holders"] == 3, e["holders"]
+
+
+def check_13f_counts_distinct_managers_not_filings(tmp):
+    """A manager can appear on several accessions. Counting filings would inflate the holder
+    count, which is the number the whole grade turns on."""
+    import zipfile
+    p = os.path.join(tmp, "q.zip")
+    z = zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED)
+    z.writestr("COVERPAGE.tsv",
+               "ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER\n"
+               "A1\t555\tONE FUND\t06-30-2026\nA2\t555\tONE FUND\t06-30-2026\n"
+               "A3\t777\tOTHER FUND\t06-30-2026")
+    z.writestr("INFOTABLE.tsv",
+               "ACCESSION_NUMBER\tINFOTABLE_SK\tNAMEOFISSUER\tTITLEOFCLASS\tCUSIP\tVALUE\t"
+               "SSHPRNAMT\tSSHPRNAMTTYPE\tPUTCALL\n"
+               "A1\t1\tACME CORP\tCOM\tAAA\t1\t100\tSH\t\n"
+               "A2\t2\tACME CORP\tCOM\tAAA\t1\t100\tSH\t\n"
+               "A3\t3\tACME CORP\tCOM\tAAA\t1\t100\tSH\t")
+    z.close()
+    agg, _ = ic.aggregate(io.open(p, "rb").read())
+    assert agg["AAA"]["holders"] == 2, agg["AAA"]["holders"]
+    assert agg["AAA"]["shares"] == 300
+
+
+def check_issuer_name_matching_and_its_refusal_to_guess():
+    assert ic.norm_name("NVIDIA CORPORATION") == ic.norm_name("NVIDIA Corp")
+    assert ic.norm_name("Laggard Industries, Inc.") == ic.norm_name("LAGGARD INDUSTRIES INC")
+    agg = {"C1": {"name": "AMBIGUOUS HOLDINGS", "shares": 1.0, "holders": 30, "value": 1.0},
+           "C2": {"name": "NVIDIA CORPORATION", "shares": 1.0, "holders": 40, "value": 1.0}}
+    # two tickers claiming the same normalised name must resolve to NEITHER - a wrong ticker
+    # attaches one company's sponsorship to another's scorecard
+    by, un = ic.resolve_tickers(agg, {}, {"AMB": "Ambiguous Holdings", "AMB2": "Ambiguous Holdings",
+                                          "NVDA": "NVIDIA Corp"})
+    assert "NVDA" in by and "AMB" not in by and "AMB2" not in by
+    assert [u["cusip"] for u in un] == ["C1"]
+
+
+def check_share_classes_collapse_onto_one_ticker():
+    agg = {"C1": {"name": "DUAL CO", "shares": 100.0, "holders": 30, "value": 1.0},
+           "C2": {"name": "DUAL CO", "shares": 50.0, "holders": 25, "value": 1.0}}
+    by, _ = ic.resolve_tickers(agg, {"C1": "DUAL", "C2": "DUAL"}, {})
+    assert by["DUAL"]["shares"] == 150.0 and by["DUAL"]["holders"] == 30
+    assert sorted(by["DUAL"]["cusips"]) == ["C1", "C2"]
+
+
+def check_13f_grades_follow_the_rubric():
+    cfg = dict(ic.DEFAULTS)
+    rise = ic.grade({"holders": 60, "shares": 100.0}, {"holders": 52, "shares": 80.0}, cfg)
+    assert rise[0] == "pass", rise
+    drop = ic.grade({"holders": 30, "shares": 50.0}, {"holders": 38, "shares": 90.0}, cfg)
+    assert drop[0] == "fail", drop
+    flat = ic.grade({"holders": 40, "shares": 100.0}, {"holders": 40, "shares": 100.1}, cfg)
+    assert flat[0] == "partial", flat
+    thin = ic.grade({"holders": 5, "shares": 10.0}, {"holders": 4, "shares": 9.0}, cfg)
+    assert thin[0] == "fail" and "thin" in thin[1]
+    # no prior quarter = the TREND is unverified, which is partial, never a pass
+    solo = ic.grade({"holders": 90, "shares": 100.0}, None, cfg)
+    assert solo[0] == "partial" and "unverified" in solo[1]
+    # rising but already over-owned: no room left for new sponsorship
+    over = ic.grade({"holders": 60, "shares": 99.0}, {"holders": 52, "shares": 80.0}, cfg,
+                    float_shares=100.0)
+    assert over[0] == "partial" and "float" in over[1], over
+
+
+def check_13f_fails_open_when_it_cannot_fetch(tmp):
+    """No network, a moved URL, an egress policy - none of these may stop a run."""
+    class A:
+        quarter, prior = "2099Q4", "2099Q3"
+        universe = cusip_map = None
+        cache_dir = os.path.join(tmp, "nope")
+        contact, timeout = "", 0.2
+    meta, known, detail, un = ic.build(A(), dict(ic.DEFAULTS))
+    assert meta["ok"] is False and known == {} and detail == {}
+    assert any("could not be fetched" in n for n in meta["notes"]), meta["notes"]
+
+
+def check_fallback_fills_gaps_and_never_overwrites(tmp):
+    meta = {"notes": []}
+    known = {"NVDA": {"I": "pass"}}
+    detail = {"NVDA": {"grade": "pass", "source": "sec-13f"}}
+    fb = os.path.join(tmp, "fb.json")
+    io.open(fb, "w", encoding="utf-8").write(json.dumps({
+        "meta": {"source": "accumulation-proxy"},
+        "known": {"NVDA": {"I": "fail"}, "OTHER": {"I": "partial"}},
+        "detail": {"NVDA": {"grade": "fail"}, "OTHER": {"grade": "partial"}}}))
+    n = ic.merge_fallback(meta, known, detail, fb)
+    assert n == 1
+    assert known["NVDA"]["I"] == "pass", "a proxy overwrote a real 13F grade"
+    assert detail["NVDA"]["source"] == "sec-13f"
+    assert detail["OTHER"]["source"] == "accumulation-proxy"
+
+
+# ---------------------------------------------------------------- known-file plumbing
+
+def check_load_known_unwraps_the_cache_shape(tmp):
+    """Without the unwrap, passing an I-cache to --known looks like it worked and grades nothing:
+    every lookup misses, silently, and the run reports I=partial for the whole market."""
+    a = os.path.join(tmp, "a.json")
+    io.open(a, "w", encoding="utf-8").write(json.dumps({
+        "meta": {"source": "sec-13f"}, "known": {"NVDA": {"I": "pass"}}, "detail": {}}))
+    assert ss.load_known([a]) == {"NVDA": {"I": "pass"}}
+    b = os.path.join(tmp, "b.json")          # the bare shape still works
+    io.open(b, "w", encoding="utf-8").write(json.dumps({"NVDA": {"A": "fail"}}))
+    merged = ss.load_known([a, b])
+    assert merged["NVDA"] == {"I": "pass", "A": "fail"}, merged
+    c = os.path.join(tmp, "c.json")          # later file wins on a conflict
+    io.open(c, "w", encoding="utf-8").write(json.dumps({"NVDA": {"I": "fail"}}))
+    assert ss.load_known([a, c])["NVDA"]["I"] == "fail"
+
+
+def check_a_sourced_letter_is_distinguishable_from_an_unsourced_one():
+    """"I = partial (graded)" and "I <= partial: not sourceable" are the same number and entirely
+    different evidence. A report that cannot tell them apart cannot say where the grade came from.
+    """
+    graded = _ceiling_of()
+    ss.ceiling(graded, CFG, {"I": "partial"})
+    assert any("I = partial (graded)" in r for r in graded["ceiling_reasons"])
+    assert not any("not sourceable" in r for r in graded["ceiling_reasons"])
+    bare = _ceiling_of()
+    ss.ceiling(bare, CFG)
+    assert any("not sourceable" in r for r in bare["ceiling_reasons"])
+    assert graded["ceiling"] == bare["ceiling"]      # same number, different provenance
 
 
 # ---------------------------------------------------------------- html_to_pdf

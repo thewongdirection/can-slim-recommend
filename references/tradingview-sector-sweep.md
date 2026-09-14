@@ -291,7 +291,7 @@ Every one of these returned complete, correct data in live end-to-end runs:
 | A - annual EPS record | `get_financial_history` `period="fy"` | 4 fiscal years back |
 | A - ROE, margins, debt, TTM growth | `get_financials` | the fastest way to screen A before spending calls on history |
 | C cross-check - street EPS vs consensus | `get_earnings_history` | grade C on `eps_actual`, not the GAAP `eps` |
-| I - institutional sponsorship | web search for published 13F ownership summaries | returns the ownership **level** reliably; the quarter-over-quarter **trend** did not come back, so I stayed capped at PARTIAL |
+| I - institutional sponsorship | `scripts/institutional_cache.py` (SEC Form 13F, cached quarterly) -> `scripts/accumulation.py` (volume proxy) | 13F is filed by MANAGER not by issuer, so "who owns X" is an aggregation, not a lookup - which is why the cache exists and why it is built once a quarter, not once a run. Web search returns the ownership **level** reliably but not the **trend**, which is the half that grades the letter |
 
 **A cheap ordering that saves calls:** run `get_financials` on every candidate first. ROE and TTM
 EPS growth alone disqualify most names on **A**, and a name that cannot pass A cannot reach the
@@ -309,7 +309,7 @@ as a test, and if it is gated or empty, drop to the next rung rather than retryi
 | Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period:"TWO_YEARS"`, `step:"ONE_DAY"`) |
 | Live last price | FMP `batch-quote` → IBKR `get_price_snapshot` |
 | C / A fundamentals | Daloopa → bigdata.com → LSEG → SEC EDGAR via `securities-filings-lookup` → FMP → web |
-| I sponsorship trend | FMP `form13F` → `securities-filings-lookup` (compare two consecutive quarters) → web |
+| I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → FMP `form13F` (**verified plan-gated**: ACCESS DENIED on a free tier, Sept 2026) → web |
 
 FMP in particular has been **plan-gated** in past checks of the sister skill (`statements` and
 `quote` returned ACCESS DENIED in an August-2026 check), which is why it sits low on every rung.

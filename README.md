@@ -183,6 +183,10 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `scripts/sector_screen.py` — sector sweep arithmetic + CAN SLIM triage over the screener rows.
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
+- `scripts/institutional_cache.py` — grades **I** from SEC Form 13F, aggregated once per quarter
+  and cached so a run spends no network on it. Fails open to the proxy below.
+- `scripts/accumulation.py` — the **I** fallback: institutional buying pressure read from the
+  up/down volume footprint. A proxy, and every reason string says so.
 - `scripts/build_report.py` — produces the PDF (default), the HTML, or both, and enforces the
   self-audit before emitting.
 - `scripts/html_to_pdf.py` — the PDF engine chain behind it. Shared with `can-slim-grader`.

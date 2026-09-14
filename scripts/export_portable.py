@@ -36,6 +36,8 @@ FILES = [
     ("scripts/check_for_updates.py",         "python", "Step 0: is this copy current? Compares the checkout against its remote, separates code (effective this run) from instructions (effective next run), and fails open when it cannot check."),
     ("scripts/sector_screen.py",             "python", "Sector-sweep arithmetic and CAN SLIM triage over the screener rows."),
     ("scripts/relative_strength.py",         "python", "RS proxy, % off the 52-week high, base depth/length, breakout volume, from OHLCV bars."),
+    ("scripts/institutional_cache.py",       "python", "Grades I (institutional sponsorship) from SEC Form 13F, aggregated once per quarter and cached. 13F is filed by manager, not by issuer, so this is the aggregation that makes 'who owns it' answerable at all. Fails open to the volume proxy."),
+    ("scripts/accumulation.py",              "python", "The I fallback: reads institutional buying pressure from the up/down volume footprint when 13F ownership is unavailable. A proxy, and every reason string says so."),
     ("scripts/build_report.py",              "python", "The step-7 entry point: produces the PDF (default), the HTML, or both, and refuses to emit a report that is failing its own self-audit."),
     ("scripts/html_to_pdf.py",               "python", "The PDF engine chain behind it; reads page size and margin from the document's @page rule."),
     ("assets/dashboard_template.html",       "html", "The report template. Fill its CONFIG object and it renders itself, audits itself, and refuses to ship a self-contradicting report."),
