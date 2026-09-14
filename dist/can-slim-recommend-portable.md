@@ -1513,8 +1513,17 @@ payload **as it came back**.
    per-period `yoy_pct`, never from TTM.
 
 **I (institutional sponsorship) is the one letter TradingView cannot answer.** Take it from
-13F/Form 4 — FMP `form13F`, or the `securities-filings-lookup` skill — or the web, and record
-which in `CONFIG.sourceMap`. Never leave I ungraded: the dashboard's self-audit flags it.
+`scripts/institutional_cache.py` (SEC 13F, built once a quarter), falling open to
+`scripts/accumulation.py` (volume proxy). Record which in `CONFIG.sourceMap` — the cache carries
+`detail[ticker].source` per name. Never leave I ungraded: the dashboard's self-audit flags it.
+
+**Two routes that do NOT work for I, both checked rather than assumed.** FMP `form13F` needs the
+Ultimate/Enterprise plan and returned ACCESS DENIED on a free tier (Sept 2026). And the
+`securities-filings-lookup` skill cannot answer it either, for a structural reason worth
+understanding: it resolves ticker → CIK → *that company's own* filings, but a 13F is filed by the
+FUND, so an issuer lookup returns nothing — NVIDIA files no 13Fs. Sponsorship is an aggregation
+across every filer in the quarter, which is a bulk-dataset job, not a per-company fetch. Use that
+skill for what it is good at: the official **C/A** filing PDFs.
 
 **Grades follow their evidence.** If the `actual` you print concedes a miss ("just under 25%",
 "hasn't cleared the high"), the letter **cannot be pass** — call it partial. Where a threshold
