@@ -211,6 +211,26 @@ to compensate** — state the market status prominently, switch to higher-risk f
 Also record **SPY's performance over the sweep window** — it is the benchmark for every RS figure.
 
 ### 3 — Sweep every sector for its top 10 performers (TradingView)
+
+**Pace every TradingView call through `scripts/tv_throttle.py`, without exception.** A sweep is
+~20 screener calls plus per-name follow-ups, and this connector does not warn before it blocks:
+a burst succeeds, then `scanner.tradingview.com` returns **403 for twenty minutes or more**, and
+its only stated remedy is re-running client-side from a browser — which a server-side run cannot
+do. That ends the sweep. A few seconds of waiting per call costs a minute; one block costs the
+run, so pace for the failure you cannot recover from.
+
+```
+python scripts/tv_throttle.py --wait     # blocks until safe (4s gap, 12 calls/min)
+{the TradingView call}
+python scripts/tv_throttle.py --ok       # worked — relax any penalty
+python scripts/tv_throttle.py --blocked  # 403/rate-limited — escalate the cooldown
+```
+
+Never run screener calls in parallel. If `--wait` **REFUSES** (exit 1), the connector is blocked
+rather than slow: stop, and tell the user what is blocked and what you completed. **Do not narrow
+the sweep, drop sectors, or switch ranking to get around a 403** — the call itself is fine, only
+the egress path is refused, and a quietly-narrowed sweep reports coverage it does not have.
+
 One `run_screener` call per sector, sorted on the ranking window, filtered to US primary
 listings with the method's price and liquidity floors. The exact verified call shape — and the
 traps that produce wrong answers (`analyze_sector_tool` does not rank by performance;

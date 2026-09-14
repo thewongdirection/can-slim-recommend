@@ -18,3 +18,5 @@ dist/*.zip
 # each and never belong in git either.
 data/i-cache.json
 data/13f/
+# Throttle pacing state - per-session, never shared.
+data/.tv-throttle.json

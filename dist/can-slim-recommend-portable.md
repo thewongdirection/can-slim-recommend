@@ -369,6 +369,26 @@ to compensate** — state the market status prominently, switch to higher-risk f
 Also record **SPY's performance over the sweep window** — it is the benchmark for every RS figure.
 
 ### 3 — Sweep every sector for its top 10 performers (TradingView)
+
+**Pace every TradingView call through `scripts/tv_throttle.py`, without exception.** A sweep is
+~20 screener calls plus per-name follow-ups, and this connector does not warn before it blocks:
+a burst succeeds, then `scanner.tradingview.com` returns **403 for twenty minutes or more**, and
+its only stated remedy is re-running client-side from a browser — which a server-side run cannot
+do. That ends the sweep. A few seconds of waiting per call costs a minute; one block costs the
+run, so pace for the failure you cannot recover from.
+
+```
+python scripts/tv_throttle.py --wait     # blocks until safe (4s gap, 12 calls/min)
+{the TradingView call}
+python scripts/tv_throttle.py --ok       # worked — relax any penalty
+python scripts/tv_throttle.py --blocked  # 403/rate-limited — escalate the cooldown
+```
+
+Never run screener calls in parallel. If `--wait` **REFUSES** (exit 1), the connector is blocked
+rather than slow: stop, and tell the user what is blocked and what you completed. **Do not narrow
+the sweep, drop sectors, or switch ranking to get around a 403** — the call itself is fine, only
+the egress path is refused, and a quietly-narrowed sweep reports coverage it does not have.
+
 One `run_screener` call per sector, sorted on the ranking window, filtered to US primary
 listings with the method's price and liquidity floors. The exact verified call shape — and the
 traps that produce wrong answers (`analyze_sector_tool` does not rank by performance;
@@ -917,6 +937,9 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `scripts/sector_screen.py` — sector sweep arithmetic + CAN SLIM triage over the screener rows.
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
+- `scripts/tv_throttle.py` — paces TradingView calls so a sweep never earns a block. `--wait`
+  blocks the caller rather than advising it, because the connector gives no warning: a burst
+  succeeds, then the screener 403s for twenty minutes with no server-side way out.
 - `scripts/institutional_cache.py` — grades **I** from SEC Form 13F, aggregated once per quarter
   and cached so a run spends no network on it. Discovers the available data sets from SEC's own
   index rather than constructing URLs, and fails open to the proxy below.
@@ -3004,6 +3027,225 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
+
+
+## `scripts/tv_throttle.py`
+
+Paces TradingView calls so a sweep never earns a block. --wait BLOCKS the caller rather than advising it, because the connector does not warn: a burst succeeds, then the screener 403s for 20+ minutes with no server-side remedy.
+
+```python
+#!/usr/bin/env python3
+"""
+tv_throttle.py - pace TradingView calls so a sweep never earns a block.
+
+WHY A SCRIPT AND NOT A RULE. The TradingView calls are MCP tool invocations, so nothing in this
+repo can wrap them. The only throttle that actually works is one the caller has to WAIT on, and a
+rule in a markdown file is not a wait - it is a suggestion that gets skipped the moment a sweep is
+twenty sectors deep and going well. `--wait` blocks. That is the whole design: pacing you cannot
+forget to apply, because the shell does not return until it is safe to call.
+
+WHAT EARNED THIS. Observed on this connector, in order of severity:
+  * 10 parallel calls           -> "Rate limit exceeded. Retry after 32s"
+  * 4-6 calls per message       -> fine, with a pause between batches
+  * a sustained burst           -> HTTP 403 on scanner.tradingview.com for >20 minutes, whose
+                                   stated remedy is to re-run client-side from a browser. There is
+                                   no server-side way out of that one, so it must not be reached.
+The asymmetry is what matters: a few seconds of waiting costs a sweep a minute or two, while one
+block costs the entire run and cannot be retried around. Pace for the block you cannot recover
+from, not for the throughput you would like.
+
+THE STATE IS SHARED AND PERSISTENT. Call timestamps live in a JSON file, so pacing holds ACROSS
+separate shell invocations - which is how an agent calls this, one command at a time. A throttle
+that only remembered the current process would reset on every call and enforce nothing.
+
+BLOCKS ESCALATE, SUCCESS DECAYS. Report a 403 with `--blocked` and the cooldown doubles from 5
+minutes, capped at 30. Report success with `--ok` and the penalty halves. So a connector having a
+bad afternoon is backed off hard, and one that has recovered is not punished for it all session.
+
+Usage, around every TradingView call:
+  python scripts/tv_throttle.py --wait          # blocks until safe, then records the call
+  <make the TradingView call>
+  python scripts/tv_throttle.py --ok            # it worked; relax the penalty
+  python scripts/tv_throttle.py --blocked       # 403/rate-limited; escalate the cooldown
+
+  python scripts/tv_throttle.py --status        # budget, penalty, next safe time
+  python scripts/tv_throttle.py --reset         # clear state (new session, or after a long idle)
+
+Exit status is 0 for --wait even when it had to sleep - waiting is success. It is 1 only when
+--wait would have to sleep past --max-wait, so a caller can decide to stop rather than stall.
+Pure standard library.
+"""
+import argparse
+import json
+import os
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+# Overridable so a test can pace its own state file instead of fighting the real one - and so a
+# parallel sweep in a worktree does not share a budget with the session that spawned it.
+STATE = os.environ.get("CANSLIM_THROTTLE_STATE") or os.path.join(ROOT, "data", ".tv-throttle.json")
+
+DEFAULTS = {
+    # One call every few seconds, never in parallel. The connector tolerates far more in short
+    # bursts, which is exactly the trap: the burst succeeds and the block arrives later.
+    "min_gap": 4.0,
+    # A rolling budget on top of the gap, so a long sweep cannot creep up on the limit by
+    # staying just inside the per-call spacing for a hundred calls.
+    "window": 60.0,
+    "max_in_window": 12,
+    # A 403 is not a slow-down, it is a door closing for many minutes. Treat it as such.
+    "block_base": 300.0,
+    "block_cap": 1800.0,
+}
+
+
+def load():
+    try:
+        with open(STATE, encoding="utf-8") as f:
+            s = json.load(f)
+    except (OSError, ValueError):
+        s = {}
+    s.setdefault("calls", [])
+    s.setdefault("blocks", 0)
+    s.setdefault("blocked_until", 0.0)
+    return s
+
+
+def save(s):
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    tmp = STATE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(s, f, indent=2)
+    os.replace(tmp, STATE)          # atomic, so a killed run cannot leave half a state file
+
+
+def prune(s, cfg, now):
+    s["calls"] = [t for t in s["calls"] if now - t < cfg["window"] * 2]
+    return s
+
+
+def next_free(s, cfg, now):
+    """Earliest time a call may be made. Returns (when, why)."""
+    if s["blocked_until"] > now:
+        return s["blocked_until"], "cooling down after %d block(s)" % s["blocks"]
+    if s["calls"]:
+        gap_ready = max(s["calls"]) + cfg["min_gap"]
+    else:
+        gap_ready = now
+    recent = [t for t in s["calls"] if now - t < cfg["window"]]
+    win_ready = now
+    if len(recent) >= cfg["max_in_window"]:
+        # wait until the oldest call in the window ages out
+        win_ready = min(recent) + cfg["window"]
+    when = max(gap_ready, win_ready, now)
+    if when <= now:
+        return now, "clear"
+    why = "min gap %.1fs" % cfg["min_gap"] if gap_ready >= win_ready else \
+          "budget %d/%.0fs is full" % (cfg["max_in_window"], cfg["window"])
+    return when, why
+
+
+def cmd_wait(cfg, max_wait, quiet):
+    s = prune(load(), cfg, time.time())
+    now = time.time()
+    when, why = next_free(s, cfg, now)
+    delay = max(0.0, when - now)
+    if delay > max_wait:
+        print("REFUSED: would need to wait %.0fs (%s), over --max-wait %.0fs. The connector is "
+              "blocked, not slow - stop the sweep and say so rather than stalling."
+              % (delay, why, max_wait), file=sys.stderr)
+        return 1
+    if delay > 0:
+        if not quiet:
+            print("waiting %.1fs (%s)" % (delay, why))
+        time.sleep(delay)
+    s = load()
+    s["calls"].append(time.time())
+    save(prune(s, cfg, time.time()))
+    if not quiet:
+        recent = len([t for t in s["calls"] if time.time() - t < cfg["window"]])
+        print("go (%d call(s) in the last %.0fs)" % (recent, cfg["window"]))
+    return 0
+
+
+def cmd_blocked(cfg):
+    s = load()
+    s["blocks"] += 1
+    cool = min(cfg["block_base"] * (2 ** (s["blocks"] - 1)), cfg["block_cap"])
+    s["blocked_until"] = time.time() + cool
+    save(s)
+    print("block #%d recorded - holding TradingView calls for %.0fs (until %s). Do other work, "
+          "or stop and tell the user; do NOT narrow the sweep to get around a 403, the call "
+          "itself is fine." % (s["blocks"], cool, time.strftime("%H:%M:%S",
+                                                                time.localtime(s["blocked_until"]))))
+    return 0
+
+
+def cmd_ok(cfg):
+    s = load()
+    if s["blocks"]:
+        s["blocks"] = max(0, s["blocks"] - 1)   # decay, so one bad patch is not a session-long tax
+        if not s["blocks"]:
+            s["blocked_until"] = 0.0
+        save(s)
+    return 0
+
+
+def cmd_status(cfg):
+    s = prune(load(), cfg, time.time())
+    now = time.time()
+    recent = [t for t in s["calls"] if now - t < cfg["window"]]
+    when, why = next_free(s, cfg, now)
+    print("calls in the last %.0fs : %d / %d" % (cfg["window"], len(recent), cfg["max_in_window"]))
+    print("consecutive blocks     : %d" % s["blocks"])
+    if s["blocked_until"] > now:
+        print("BLOCKED for another    : %.0fs" % (s["blocked_until"] - now))
+    print("next call allowed in   : %.1fs (%s)" % (max(0.0, when - now), why))
+    print("state file             : %s" % STATE)
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--wait", action="store_true", help="block until a call is safe, then record it")
+    g.add_argument("--ok", action="store_true", help="the call worked; decay any block penalty")
+    g.add_argument("--blocked", action="store_true", help="403/rate-limited; escalate the cooldown")
+    g.add_argument("--status", action="store_true", help="budget, penalty and next safe time")
+    g.add_argument("--reset", action="store_true", help="clear state")
+    ap.add_argument("--min-gap", type=float, default=DEFAULTS["min_gap"],
+                    help="seconds between calls (default %(default)s)")
+    ap.add_argument("--window", type=float, default=DEFAULTS["window"])
+    ap.add_argument("--max-in-window", type=int, default=DEFAULTS["max_in_window"],
+                    help="calls allowed per window (default %(default)s)")
+    ap.add_argument("--max-wait", type=float, default=90.0,
+                    help="refuse rather than sleep longer than this (default %(default)s)")
+    ap.add_argument("--quiet", action="store_true")
+    a = ap.parse_args()
+
+    cfg = dict(DEFAULTS, min_gap=a.min_gap, window=a.window, max_in_window=a.max_in_window)
+    if a.reset:
+        try:
+            os.remove(STATE)
+        except OSError:
+            pass
+        print("throttle state cleared")
+        return 0
+    if a.wait:
+        return cmd_wait(cfg, a.max_wait, a.quiet)
+    if a.blocked:
+        return cmd_blocked(cfg)
+    if a.ok:
+        return cmd_ok(cfg)
+    return cmd_status(cfg)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 ```
 
 
@@ -5888,6 +6130,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -6900,6 +7143,83 @@ def check_export_bundles_every_script(tmp):
     for fence in set(re.findall(r"^(`{3,})", md, re.M)):
         assert md.count("\n" + fence) % 2 == 0, "unbalanced %d-backtick fence" % len(fence)
 
+
+# ---------------------------------------------------------------- tv_throttle
+
+def _thr(tmp, *args):
+    """Run the throttle with its state redirected into tmp, and time how long it blocked."""
+    env = dict(os.environ, CANSLIM_THROTTLE_STATE=os.path.join(tmp, "t.json"))
+    t0 = time.time()
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "tv_throttle.py")]
+                       + list(args), capture_output=True, text=True, timeout=120, env=env)
+    return time.time() - t0, r.returncode, (r.stdout + r.stderr)
+
+
+def check_throttle_enforces_a_gap_between_calls(tmp):
+    """The point of the script rather than a written rule: --wait BLOCKS. A rule in a markdown
+    file is a suggestion that gets skipped once a sweep is twenty sectors deep and going well."""
+    _thr(tmp, "--reset")
+    d1, rc1, _ = _thr(tmp, "--wait", "--min-gap", "2", "--quiet")
+    d2, rc2, _ = _thr(tmp, "--wait", "--min-gap", "2", "--quiet")
+    assert rc1 == 0 and rc2 == 0
+    assert d1 < 1.0, "the first call should not wait (%.1fs)" % d1
+    assert d2 >= 1.8, "the second call must be held for the gap (%.1fs)" % d2
+
+
+def check_throttle_state_survives_separate_invocations(tmp):
+    """An agent calls this one shell command at a time, so pacing has to live in a file. A
+    throttle that only remembered the current process would reset on every call and enforce
+    nothing at all."""
+    _thr(tmp, "--reset")
+    _thr(tmp, "--wait", "--quiet")
+    _, _, out = _thr(tmp, "--status")
+    assert "1 / 12" in out.replace("  ", " "), out
+
+
+def check_throttle_holds_a_full_rolling_budget(tmp):
+    """The gap alone is not enough: a hundred calls each just inside the spacing still creeps up
+    on the limit. The rolling window is what stops a long sweep doing that."""
+    _thr(tmp, "--reset")
+    state = os.path.join(tmp, "t.json")
+    now = time.time()
+    io.open(state, "w", encoding="utf-8").write(json.dumps(
+        {"calls": [now - i * 0.1 for i in range(12)], "blocks": 0, "blocked_until": 0.0}))
+    _, _, out = _thr(tmp, "--status")
+    assert "budget" in out and "full" in out, out
+    _, rc, out = _thr(tmp, "--wait", "--max-wait", "5")
+    assert rc == 1 and "REFUSED" in out, out
+
+
+def check_a_block_escalates_and_success_decays_it(tmp):
+    """A 403 is a door closing for many minutes, not a slow-down, so the cooldown doubles. It
+    decays on success so a connector that has recovered is not taxed for the whole session."""
+    _thr(tmp, "--reset")
+    _, _, o1 = _thr(tmp, "--blocked")
+    _, _, o2 = _thr(tmp, "--blocked")
+    assert "300s" in o1 and "600s" in o2, (o1, o2)
+    _, _, st = _thr(tmp, "--status")
+    assert "consecutive blocks     : 2" in st, st
+    _thr(tmp, "--ok")
+    _thr(tmp, "--ok")
+    _, _, st = _thr(tmp, "--status")
+    assert "consecutive blocks     : 0" in st and "BLOCKED" not in st, st
+
+
+def check_throttle_refuses_rather_than_stalling_forever(tmp):
+    """A blocked connector is not a slow one. --wait returns non-zero rather than sleeping out
+    the cooldown, so the caller can stop and say so instead of hanging for half an hour."""
+    _thr(tmp, "--reset")
+    _thr(tmp, "--blocked")
+    d, rc, out = _thr(tmp, "--wait", "--max-wait", "3")
+    assert rc == 1 and d < 3.0, (rc, d)
+    assert "do NOT narrow the sweep" in _thr(tmp, "--blocked")[2]
+
+
+def check_skill_documents_the_throttle():
+    """A throttle nobody is told to call is not a throttle."""
+    s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    assert "tv_throttle.py" in s, "SKILL.md never tells the run to pace its TradingView calls"
+    assert "--wait" in s
 
 # ---------------------------------------------------------------- doc/consistency
 

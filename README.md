@@ -183,6 +183,9 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `scripts/sector_screen.py` — sector sweep arithmetic + CAN SLIM triage over the screener rows.
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
+- `scripts/tv_throttle.py` — paces TradingView calls so a sweep never earns a block. `--wait`
+  blocks the caller rather than advising it, because the connector gives no warning: a burst
+  succeeds, then the screener 403s for twenty minutes with no server-side way out.
 - `scripts/institutional_cache.py` — grades **I** from SEC Form 13F, aggregated once per quarter
   and cached so a run spends no network on it. Discovers the available data sets from SEC's own
   index rather than constructing URLs, and fails open to the proxy below.

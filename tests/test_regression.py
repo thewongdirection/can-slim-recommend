@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1038,6 +1039,83 @@ def check_export_bundles_every_script(tmp):
     for fence in set(re.findall(r"^(`{3,})", md, re.M)):
         assert md.count("\n" + fence) % 2 == 0, "unbalanced %d-backtick fence" % len(fence)
 
+
+# ---------------------------------------------------------------- tv_throttle
+
+def _thr(tmp, *args):
+    """Run the throttle with its state redirected into tmp, and time how long it blocked."""
+    env = dict(os.environ, CANSLIM_THROTTLE_STATE=os.path.join(tmp, "t.json"))
+    t0 = time.time()
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "tv_throttle.py")]
+                       + list(args), capture_output=True, text=True, timeout=120, env=env)
+    return time.time() - t0, r.returncode, (r.stdout + r.stderr)
+
+
+def check_throttle_enforces_a_gap_between_calls(tmp):
+    """The point of the script rather than a written rule: --wait BLOCKS. A rule in a markdown
+    file is a suggestion that gets skipped once a sweep is twenty sectors deep and going well."""
+    _thr(tmp, "--reset")
+    d1, rc1, _ = _thr(tmp, "--wait", "--min-gap", "2", "--quiet")
+    d2, rc2, _ = _thr(tmp, "--wait", "--min-gap", "2", "--quiet")
+    assert rc1 == 0 and rc2 == 0
+    assert d1 < 1.0, "the first call should not wait (%.1fs)" % d1
+    assert d2 >= 1.8, "the second call must be held for the gap (%.1fs)" % d2
+
+
+def check_throttle_state_survives_separate_invocations(tmp):
+    """An agent calls this one shell command at a time, so pacing has to live in a file. A
+    throttle that only remembered the current process would reset on every call and enforce
+    nothing at all."""
+    _thr(tmp, "--reset")
+    _thr(tmp, "--wait", "--quiet")
+    _, _, out = _thr(tmp, "--status")
+    assert "1 / 12" in out.replace("  ", " "), out
+
+
+def check_throttle_holds_a_full_rolling_budget(tmp):
+    """The gap alone is not enough: a hundred calls each just inside the spacing still creeps up
+    on the limit. The rolling window is what stops a long sweep doing that."""
+    _thr(tmp, "--reset")
+    state = os.path.join(tmp, "t.json")
+    now = time.time()
+    io.open(state, "w", encoding="utf-8").write(json.dumps(
+        {"calls": [now - i * 0.1 for i in range(12)], "blocks": 0, "blocked_until": 0.0}))
+    _, _, out = _thr(tmp, "--status")
+    assert "budget" in out and "full" in out, out
+    _, rc, out = _thr(tmp, "--wait", "--max-wait", "5")
+    assert rc == 1 and "REFUSED" in out, out
+
+
+def check_a_block_escalates_and_success_decays_it(tmp):
+    """A 403 is a door closing for many minutes, not a slow-down, so the cooldown doubles. It
+    decays on success so a connector that has recovered is not taxed for the whole session."""
+    _thr(tmp, "--reset")
+    _, _, o1 = _thr(tmp, "--blocked")
+    _, _, o2 = _thr(tmp, "--blocked")
+    assert "300s" in o1 and "600s" in o2, (o1, o2)
+    _, _, st = _thr(tmp, "--status")
+    assert "consecutive blocks     : 2" in st, st
+    _thr(tmp, "--ok")
+    _thr(tmp, "--ok")
+    _, _, st = _thr(tmp, "--status")
+    assert "consecutive blocks     : 0" in st and "BLOCKED" not in st, st
+
+
+def check_throttle_refuses_rather_than_stalling_forever(tmp):
+    """A blocked connector is not a slow one. --wait returns non-zero rather than sleeping out
+    the cooldown, so the caller can stop and say so instead of hanging for half an hour."""
+    _thr(tmp, "--reset")
+    _thr(tmp, "--blocked")
+    d, rc, out = _thr(tmp, "--wait", "--max-wait", "3")
+    assert rc == 1 and d < 3.0, (rc, d)
+    assert "do NOT narrow the sweep" in _thr(tmp, "--blocked")[2]
+
+
+def check_skill_documents_the_throttle():
+    """A throttle nobody is told to call is not a throttle."""
+    s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    assert "tv_throttle.py" in s, "SKILL.md never tells the run to pace its TradingView calls"
+    assert "--wait" in s
 
 # ---------------------------------------------------------------- doc/consistency
 
