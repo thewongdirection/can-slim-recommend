@@ -18,6 +18,32 @@ rubric actually asks for - "ownership rising over recent quarters", not merely "
 owned". The level alone is free everywhere; this trend is the part that is hard, and it is the
 part that grades the letter.
 
+WHAT REAL DATA FORCED, AND WHY FIXTURES COULD NOT HAVE CAUGHT IT. Four things about the bulk
+files are invisible until you open one, and each silently corrupts the holder count:
+
+  * COVERPAGE HAS NO CIK. The filing manager's CIK lives in SUBMISSION.tsv. Reading it off
+    COVERPAGE yields nothing, and a holder count keyed on the accession number instead counts
+    FILINGS, not managers - inflating every name that filed more than once.
+  * ONE FILE IS NOT ONE QUARTER. The Mar-May 2026 file holds 10,776 filings for 31-MAR-2026 and
+    985 late or amended ones reaching back to 2024. Aggregating the whole file blends quarters,
+    so holdings must be filtered on PERIODOFREPORT.
+  * 13F-NT IS A NOTICE, NOT A REPORT. 2,001 of 11,761 submissions in that file report no
+    holdings at all; counting them as sponsors credits managers who disclosed nothing.
+  * AMENDMENTS REPLACE OR ADD. AMENDMENTTYPE=RESTATEMENT supersedes the original filing, so
+    counting both double-counts that manager's position; NEW HOLDINGS adds to it. 108 accessions
+    in that one file are superseded restatements.
+
+The names are also not what the URL pattern suggests: from 2024 SEC switched from `2023q4_form13f.zip`
+to a filing-RECEIPT window, `01mar2026-31may2026_form13f.zip` - and that window is not the holdings
+quarter, it is when the filings arrived. Rather than encode either scheme, this script READS SEC's
+index page and picks the file whose window contains the period's due date, which keeps working the
+next time they rename things.
+
+VALIDATION. Against 01mar2026-31may2026, period 31-MAR-2026: NVDA 5,775 holders / 16.10B shares and
+AAPL 6,012 / 9.36B - about 66% and 63% of shares outstanding, matching published institutional
+ownership for both. A holder count that is wrong tends to be wrong by a lot, so this is worth
+re-checking whenever the parsing changes.
+
 THE CUSIP PROBLEM, STATED HONESTLY. INFOTABLE identifies holdings by CUSIP and issuer NAME - not
 by ticker - and there is no free authoritative CUSIP-to-ticker map. So this script resolves
 tickers two ways, in order: an explicit map you supply (--cusip-map), then normalised issuer-name
@@ -45,12 +71,14 @@ Pure standard library.
 """
 import argparse
 import csv
+import gzip
 import io
 import json
 import os
 import re
 import sys
 import urllib.error
+import time
 import urllib.request
 import zipfile
 
@@ -60,17 +88,16 @@ DEFAULTS = {
     "over_owned_pct": 95.0, # institutions holding more than this of the float leaves no new buyer
 }
 
-# The bulk files have lived under two prefixes over the years. Both are tried, in order, and the
-# one that answers is recorded in meta - guessing a single URL and reporting "unreachable" when
-# it 404s would blame the network for a moved file.
-URL_PATTERNS = [
-    "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/{q}_form13f.zip",
-    "https://www.sec.gov/files/dera/data/form-13f-data-sets/{q}_form13f.zip",
-]
+INDEX_URL = "https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets"
 
 # SEC requires a declared User-Agent with contact details and returns 403 without one. This is
 # their stated access policy, not an obstacle to route around.
 UA = "can-slim-recommend/1.0 (contact: set --contact)"
+
+MONTHS = {m: i + 1 for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
+MONTH_NAME = {v: k for k, v in MONTHS.items()}
+QUARTER_END = {1: "31-MAR", 2: "30-JUN", 3: "30-SEP", 4: "31-DEC"}
 
 STOP = re.compile(r"\b(inc|corp|corporation|co|company|ltd|limited|plc|holdings?|group|the|"
                   r"cl|class|a|b|com|common|stock|shs|sa|nv|ag|lp|llc|trust|reit)\b")
@@ -85,34 +112,135 @@ def norm_name(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
-def fetch(quarter, contact, timeout, cache_dir=None):
-    """Download one quarter's zip. Returns (bytes, url) or (None, why). Never raises."""
-    q = quarter.lower()
-    if cache_dir:
-        local = os.path.join(cache_dir, "%s_form13f.zip" % q)
-        if os.path.exists(local) and os.path.getsize(local) > 1000:
-            return open(local, "rb").read(), "file://" + local
-    why = []
-    for pat in URL_PATTERNS:
-        url = pat.format(q=q)
+def maybe_gunzip(body):
+    """Undo the gzip we asked for. urllib hands back the RAW encoded bytes.
+
+    curl decompresses transparently, which is exactly why this is easy to miss: the same URL that
+    works on the command line comes back as binary here. Left compressed, SEC's index page yields
+    no regex matches and the failure reads as "the page has no links" rather than as an encoding
+    bug. Detected by magic number rather than the Content-Encoding header, because a proxy can
+    re-encode a response without updating it.
+    """
+    return gzip.decompress(body) if body[:2] == b"\x1f\x8b" else body
+
+
+def http(url, contact, timeout, retries=6):
+    """GET with backoff on 429. Returns (bytes, None) or (None, why). Never raises.
+
+    The retry is not optional politeness. SEC throttles by source IP, and an agent sandbox reaches
+    them through a SHARED egress address, so the first request of a session routinely comes back
+    429 "Request Rate Threshold Exceeded" through no fault of this caller. Measured here: two 429s
+    then success on the third attempt. Treating the first 429 as failure would make this script
+    look broken most of the time it is run.
+    """
+    hdrs = {"User-Agent": ("can-slim-recommend/1.0 (contact: %s)" % contact) if contact else UA,
+            "Accept-Encoding": "gzip, deflate"}
+    wait, why = 5, ""
+    for _ in range(retries):
         try:
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "can-slim-recommend/1.0 (contact: %s)" % contact if contact else UA,
-                "Accept-Encoding": "gzip, deflate"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                data = r.read()
-            if len(data) < 1000:
-                why.append("%s returned %d bytes" % (url, len(data)))
-                continue
-            if cache_dir:
-                os.makedirs(cache_dir, exist_ok=True)
-                open(os.path.join(cache_dir, "%s_form13f.zip" % q), "wb").write(data)
-            return data, url
+            with urllib.request.urlopen(urllib.request.Request(url, headers=hdrs),
+                                        timeout=timeout) as r:
+                body = r.read()
+            return maybe_gunzip(body), None
         except urllib.error.HTTPError as e:
-            why.append("%s -> HTTP %s" % (url, e.code))
+            why = "HTTP %s" % e.code
+            if e.code != 429:
+                return None, why
+            time.sleep(wait)
+            wait *= 2
         except Exception as e:                       # network down, DNS, TLS, egress policy
-            why.append("%s -> %s" % (url, e))
-    return None, "; ".join(why)
+            return None, str(e)
+    return None, why + " after %d attempts (SEC rate limit did not clear)" % retries
+
+
+def parse_dataset_name(name):
+    """Both naming schemes SEC has used, as (start, end) ISO strings, or None.
+
+    Up to 2023q4 the files were named for the holdings quarter; from 2024 they are named for the
+    window in which the filings were RECEIVED ('01mar2026-31may2026'), which is a different thing
+    and lags the quarter it mostly contains. Parsing both lets a cache be rebuilt for an old
+    quarter without a special case.
+    """
+    m = re.match(r"^(\d{2})([a-z]{3})(\d{4})-(\d{2})([a-z]{3})(\d{4})_form13f\.zip$", name)
+    if m:
+        d1, m1, y1, d2, m2, y2 = m.groups()
+        if m1 in MONTHS and m2 in MONTHS:
+            return ("%s-%02d-%s" % (y1, MONTHS[m1], d1), "%s-%02d-%s" % (y2, MONTHS[m2], d2))
+    m = re.match(r"^(\d{4})q([1-4])_form13f\.zip$", name)
+    if m:
+        y, q = m.group(1), int(m.group(2))
+        first = {1: "01-01", 2: "04-01", 3: "07-01", 4: "10-01"}[q]
+        last = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}[q]
+        return ("%s-%s" % (y, first), "%s-%s" % (y, last))
+    return None
+
+
+def list_datasets(contact, timeout):
+    """Read SEC's own index page for the available bulk files. Returns (list, why).
+
+    Discovering beats constructing. The URL pattern this script originally guessed
+    ('2026q2_form13f.zip') 404s for every quarter after 2023 because SEC renamed the scheme - and
+    a guessed URL reports a rename as a dead network. The page is the authority on what exists,
+    and parsing it survives the next rename too.
+    """
+    body, why = http(INDEX_URL, contact, timeout)
+    if body is None:
+        return [], "could not read %s (%s)" % (INDEX_URL, why)
+    out = []
+    for href in re.findall(r'href="([^"]*_form13f\.zip)"', body.decode("utf-8", "replace")):
+        name = href.rsplit("/", 1)[-1]
+        span = parse_dataset_name(name)
+        if not span:
+            continue
+        out.append({"name": name, "start": span[0], "end": span[1],
+                    "url": href if href.startswith("http") else "https://www.sec.gov" + href})
+    out.sort(key=lambda d: d["end"], reverse=True)
+    return out, ("no *_form13f.zip links on the index page" if not out else None)
+
+
+def period_end(quarter):
+    """'2026Q1' or '2026-03-31' -> the EDGAR period string '31-MAR-2026'."""
+    q = str(quarter).strip().upper()
+    m = re.match(r"^(\d{4})-?Q([1-4])$", q)
+    if m:
+        return "%s-%s" % (QUARTER_END[int(m.group(2))], m.group(1))
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", q)
+    if m:
+        y, mo, d = m.groups()
+        return "%s-%s-%s" % (d, MONTH_NAME[int(mo)].upper(), y)
+    raise ValueError("cannot read %r as a quarter (want 2026Q1 or 2026-03-31)" % quarter)
+
+
+def prior_quarter(quarter):
+    """The quarter before it, in the same '2026Q1' form."""
+    m = re.match(r"^(\d{4})-?Q([1-4])$", str(quarter).strip().upper())
+    if not m:
+        return None
+    y, q = int(m.group(1)), int(m.group(2))
+    return "%dQ%d" % (y - 1, 4) if q == 1 else "%dQ%d" % (y, q - 1)
+
+
+def _iso_period(period):
+    d, mon, y = period.split("-")
+    return "%s-%02d-%s" % (y, MONTHS[mon.lower()], d)
+
+
+def dataset_for_period(datasets, period):
+    """Pick the file whose receipt window contains the period's filing deadline.
+
+    A quarter's 13Fs arrive in the window AFTER it ends, so 31-MAR-2026 holdings live in the
+    Mar-May 2026 file. Choosing by name would pick the wrong file under the post-2024 scheme;
+    choosing by deadline works under both.
+    """
+    y, m, d = (int(x) for x in _iso_period(period).split("-"))
+    m += 1                                  # ~45 days after quarter end, i.e. the due window
+    if m > 12:
+        m, y = m - 12, y + 1
+    due = "%04d-%02d-%02d" % (y, m, min(d, 28))
+    for ds in datasets:
+        if ds["start"] <= due <= ds["end"]:
+            return ds
+    return None
 
 
 def _member(z, want):
@@ -124,42 +252,93 @@ def _member(z, want):
     return None
 
 
-def aggregate(zbytes):
-    """Aggregate one quarter's holdings by CUSIP. Returns ({cusip: {...}}, note).
+def _table(z, name):
+    m = _member(z, name)
+    if not m:
+        return []
+    with z.open(m) as f:
+        return list(csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"), delimiter="\t"))
 
-    Streamed row by row on purpose: INFOTABLE runs to millions of rows per quarter and reading it
-    into memory is the difference between this working on a laptop and not. Only the per-CUSIP
-    totals are retained.
 
-    Two filters matter for correctness. SSHPRNAMTTYPE must be 'SH' - a 'PRN' row is a principal
-    amount of debt, not a share count, and summing the two together produces nonsense. And a row
-    with PUTCALL set is an option position, not ownership of the stock; counting it would credit
-    a fund that is short the name via puts as a sponsor.
+def select_filings(z, period):
+    """Which accessions count as THE holdings of each manager for `period`.
+
+    Four real-data rules, each of which silently corrupts the holder count if skipped - see the
+    module docstring for the counts that exposed them:
+
+      * the manager's CIK comes from SUBMISSION.tsv (COVERPAGE has no CIK column), so holders
+        count MANAGERS rather than filings;
+      * only PERIODOFREPORT == period, because one file carries late filings for many quarters;
+      * only 13F-HR/13F-HR/A, because 13F-NT is a notice that reports no holdings at all;
+      * a RESTATEMENT amendment SUPERSEDES that manager's earlier filing for the period, so only
+        the latest one is kept; a NEW HOLDINGS amendment adds and is kept alongside.
+
+    Returns (accession -> manager CIK, stats).
+    """
+    sub = {r["ACCESSION_NUMBER"]: r for r in _table(z, "submission")}
+    cov = {r["ACCESSION_NUMBER"]: r for r in _table(z, "coverpage")}
+    if not sub:
+        return {}, {"error": "no SUBMISSION table - cannot tell managers apart"}
+
+    cand = [a for a, r in sub.items()
+            if (r.get("PERIODOFREPORT") or "").strip().upper() == period
+            and (r.get("SUBMISSIONTYPE") or "").upper().startswith("13F-HR")]
+
+    by_cik = {}
+    for a in cand:
+        by_cik.setdefault((sub[a].get("CIK") or a).strip(), []).append(a)
+
+    keep, superseded = {}, 0
+    for cik, accs in by_cik.items():
+        restatements = [a for a in accs
+                        if (cov.get(a, {}).get("AMENDMENTTYPE") or "").strip().upper()
+                        == "RESTATEMENT"]
+        if restatements:
+            latest = max(restatements, key=lambda a: (sub[a].get("FILING_DATE") or "", a))
+            keep[latest] = cik
+            superseded += len(accs) - 1
+        else:
+            for a in accs:
+                keep[a] = cik
+    return keep, {"submissions": len(sub), "for_period": len(cand), "managers": len(by_cik),
+                  "accessions_kept": len(keep), "superseded_by_restatement": superseded}
+
+
+def aggregate(zbytes, period):
+    """Aggregate one period's holdings by CUSIP. Returns ({cusip: {...}}, note).
+
+    INFOTABLE is streamed row by row: it runs to ~4 million rows and ~400MB uncompressed per
+    file, so reading it whole is the difference between this working on a laptop and not. Only
+    the per-CUSIP totals are retained.
+
+    Two row filters matter for correctness. SSHPRNAMTTYPE must be 'SH' - a 'PRN' row is a
+    principal amount of debt, not a share count, and summing the two produces nonsense. And a row
+    with PUTCALL set is an option position, not ownership, so counting it would credit a manager
+    who is SHORT the name via puts as a sponsor.
     """
     try:
         z = zipfile.ZipFile(io.BytesIO(zbytes))
     except Exception as e:
         return None, "not a readable zip (%s)" % e
-    cover, info = _member(z, "coverpage"), _member(z, "infotable")
+    info = _member(z, "infotable")
     if not info:
         return None, "no INFOTABLE in the archive (members: %s)" % ", ".join(z.namelist()[:8])
 
-    # accession -> filer CIK, so "holders" counts distinct MANAGERS rather than distinct filings
-    acc_cik = {}
-    if cover:
-        with z.open(cover) as f:
-            for row in csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"),
-                                      delimiter="\t"):
-                a = (row.get("ACCESSION_NUMBER") or "").strip()
-                c = (row.get("CIK") or "").strip()
-                if a:
-                    acc_cik[a] = c or a
+    keep, stats = select_filings(z, period)
+    if stats.get("error"):
+        return None, stats["error"]
+    if not keep:
+        return None, ("no 13F-HR filings for period %s in this file (it holds %d submissions)"
+                      % (period, stats.get("submissions", 0)))
 
     out = {}
     rows = kept = 0
     with z.open(info) as f:
         for row in csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"), delimiter="\t"):
             rows += 1
+            cik = keep.get((row.get("ACCESSION_NUMBER") or "").strip())
+            if cik is None:
+                continue                                  # other period, a notice, or superseded
             if (row.get("PUTCALL") or "").strip():
                 continue                                  # an option, not ownership
             if (row.get("SSHPRNAMTTYPE") or "SH").strip().upper() != "SH":
@@ -171,7 +350,6 @@ def aggregate(zbytes):
                 sh = float(row.get("SSHPRNAMT") or 0)
             except ValueError:
                 continue
-            acc = (row.get("ACCESSION_NUMBER") or "").strip()
             e = out.setdefault(cusip, {"name": (row.get("NAMEOFISSUER") or "").strip(),
                                        "shares": 0.0, "value": 0.0, "filers": set()})
             e["shares"] += sh
@@ -179,12 +357,15 @@ def aggregate(zbytes):
                 e["value"] += float(row.get("VALUE") or 0)
             except ValueError:
                 pass
-            e["filers"].add(acc_cik.get(acc, acc))
+            e["filers"].add(cik)
             kept += 1
     for e in out.values():
         e["holders"] = len(e["filers"])
         del e["filers"]
-    return out, "%d rows read, %d share positions kept, %d issuers" % (rows, kept, len(out))
+    note = ("period %s: %d managers over %d filings (%d superseded), %d/%d rows kept, %d issuers"
+            % (period, stats["managers"], stats["accessions_kept"],
+               stats["superseded_by_restatement"], kept, rows, len(out)))
+    return out, note
 
 
 def resolve_tickers(agg, cusip_map, universe):
@@ -270,39 +451,76 @@ def grade(now, prior, cfg, float_shares=None):
                        "but the trend is flat (SEC 13F)" % (h, dh, ds), m)
 
 
+def get_dataset(ds, contact, timeout, cache_dir):
+    """Bytes for one dataset, from the local cache if present. Returns (bytes, where)."""
+    if cache_dir:
+        local = os.path.join(cache_dir, ds["name"])
+        if os.path.exists(local) and os.path.getsize(local) > 1000:
+            return open(local, "rb").read(), "cached " + local
+    data, why = http(ds["url"], contact, timeout)
+    if data is None:
+        return None, "%s -> %s" % (ds["url"], why)
+    if len(data) < 1000:
+        return None, "%s returned %d bytes" % (ds["url"], len(data))
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        open(os.path.join(cache_dir, ds["name"]), "wb").write(data)
+    return data, ds["url"]
+
+
 def build(args, cfg):
     meta = {"source": "sec-13f", "is_proxy": False, "quarter": args.quarter, "prior": args.prior,
-            "thresholds": dict(cfg), "urls": {}, "notes": [], "ok": False}
+            "thresholds": dict(cfg), "datasets": {}, "notes": [], "ok": False}
     known, detail = {}, {}
 
     universe, cusip_map, floats = {}, {}, {}
-    if args.universe:
+    if getattr(args, "universe", None):
         blob = json.load(open(args.universe, encoding="utf-8"))
-        for _, rows in (blob.get("sectors") or {}).items() if isinstance(
-                blob.get("sectors"), dict) else []:
+        sec = blob.get("sectors") or {}
+        groups = sec.items() if isinstance(sec, dict) else [
+            (g.get("sector"), g.get("rows") or g.get("members") or []) for g in sec]
+        for _, rows in groups:
             for r in rows or []:
-                t = (r.get("symbol") or "").split(":")[-1]
-                if t:
-                    universe[t] = r.get("description") or r.get("name") or ""
-                    if r.get("float_shares_outstanding_current"):
-                        floats[t] = r["float_shares_outstanding_current"]
+                t = (r.get("symbol") or r.get("ticker") or "").split(":")[-1]
+                if not t:
+                    continue
+                universe[t] = r.get("description") or r.get("company") or r.get("name") or ""
+                if r.get("float_shares_outstanding_current"):
+                    floats[t] = r["float_shares_outstanding_current"]
         meta["notes"].append("universe: %d tickers from %s" % (len(universe), args.universe))
-    if args.cusip_map:
+    if getattr(args, "cusip_map", None):
         cusip_map = {k.strip().upper(): v for k, v in
                      json.load(open(args.cusip_map, encoding="utf-8")).items()}
         meta["notes"].append("cusip map: %d entries" % len(cusip_map))
+
+    datasets, why = list_datasets(args.contact, args.timeout)
+    if why:
+        meta["notes"].append(why)
+    meta["available"] = [d["name"] for d in datasets[:6]]
 
     aggs = {}
     for label, q in (("quarter", args.quarter), ("prior", args.prior)):
         if not q:
             continue
-        data, where = fetch(q, args.contact, args.timeout, args.cache_dir)
-        meta["urls"][q] = where
-        if data is None:
-            meta["notes"].append("%s %s could not be fetched: %s" % (label, q, where))
+        try:
+            period = period_end(q)
+        except ValueError as e:
+            meta["notes"].append(str(e))
             continue
-        agg, note = aggregate(data)
-        meta["notes"].append("%s %s: %s" % (label, q, note))
+        ds = dataset_for_period(datasets, period)
+        if not ds:
+            meta["notes"].append(
+                "%s %s (period %s): no published data set covers it yet%s" %
+                (label, q, period,
+                 " - newest is %s" % datasets[0]["name"] if datasets else ""))
+            continue
+        meta["datasets"][q] = ds["name"]
+        data, where = get_dataset(ds, args.contact, args.timeout, args.cache_dir)
+        if data is None:
+            meta["notes"].append("%s %s: %s" % (label, q, where))
+            continue
+        agg, note = aggregate(data, period)
+        meta["notes"].append("%s %s [%s]: %s" % (label, q, ds["name"], note))
         if agg:
             aggs[label] = agg
 
@@ -315,11 +533,14 @@ def build(args, cfg):
     prior_t = resolve_tickers(aggs["prior"], cusip_map, universe)[0] if "prior" in aggs else {}
     meta["ok"] = True
     meta["notes"].append("resolved %d tickers; %d issuers unresolved" % (len(now_t), len(unresolved)))
+    if "prior" not in aggs:
+        meta["notes"].append("NO PRIOR QUARTER: every grade is capped at partial, because the "
+                             "TREND is what the letter turns on and it cannot be computed")
 
     for tick, e in now_t.items():
-        g, why, m = grade(e, prior_t.get(tick), cfg, floats.get(tick))
+        g, why_, m = grade(e, prior_t.get(tick), cfg, floats.get(tick))
         known[tick] = {"I": g}
-        detail[tick] = dict(m, grade=g, ceiling_cap=g, reason=why, source="sec-13f",
+        detail[tick] = dict(m, grade=g, ceiling_cap=g, reason=why_, source="sec-13f",
                             issuer=e["name"], cusips=e["cusips"])
     return meta, known, detail, unresolved
 
@@ -352,8 +573,13 @@ def merge_fallback(meta, known, detail, path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--quarter", required=True, help="e.g. 2026Q2 (the latest 13F deadline past)")
-    ap.add_argument("--prior", help="the quarter before it, e.g. 2026Q1 - needed for the TREND")
+    ap.add_argument("--quarter", help="the HOLDINGS quarter, e.g. 2026Q1 or 2026-03-31. Note this "
+                                      "is not the data-set file name: a quarter's 13Fs arrive in "
+                                      "the window after it ends. Omit with --list.")
+    ap.add_argument("--prior", help="the quarter before it - needed for the TREND, which is what "
+                                    "the letter turns on. Derived from --quarter if omitted.")
+    ap.add_argument("--list", action="store_true",
+                    help="print the data sets SEC currently publishes, newest first, and exit")
     ap.add_argument("--universe", metavar="FILE",
                     help="the sweep JSON, used to resolve CUSIPs by issuer name")
     ap.add_argument("--cusip-map", metavar="FILE", help='{"67066G104": "NVDA", ...}')
@@ -366,6 +592,18 @@ def main():
     ap.add_argument("-o", "--out", metavar="FILE", help="write here (default: stdout)")
     ap.add_argument("--known-only", action="store_true", help="print just the --known map")
     a = ap.parse_args()
+
+    if a.list:
+        datasets, why = list_datasets(a.contact, a.timeout)
+        if why:
+            print(why, file=sys.stderr)
+        for d in datasets:
+            print("%-34s filings received %s .. %s" % (d["name"], d["start"], d["end"]))
+        return 0
+    if not a.quarter:
+        ap.error("--quarter is required (or use --list)")
+    if not a.prior:
+        a.prior = prior_quarter(a.quarter)
 
     cfg = dict(DEFAULTS, thin_holders=a.thin_holders)
     meta, known, detail, unresolved = build(a, cfg)

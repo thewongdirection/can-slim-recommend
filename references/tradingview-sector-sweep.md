@@ -203,11 +203,20 @@ payload **as it came back**.
 
 **Two routes that do NOT work for I, both checked rather than assumed.** FMP `form13F` needs the
 Ultimate/Enterprise plan and returned ACCESS DENIED on a free tier (Sept 2026). And the
-`securities-filings-lookup` skill cannot answer it either, for a structural reason worth
-understanding: it resolves ticker → CIK → *that company's own* filings, but a 13F is filed by the
-FUND, so an issuer lookup returns nothing — NVIDIA files no 13Fs. Sponsorship is an aggregation
-across every filer in the quarter, which is a bulk-dataset job, not a per-company fetch. Use that
-skill for what it is good at: the official **C/A** filing PDFs.
+`securities-filings-lookup` skill cannot answer it either — for a subtler reason than it first
+appears, and one that produces a *wrong* answer rather than an empty one.
+
+That skill resolves ticker → CIK → *that company's own* filings. It is tempting to conclude an
+operating company files no 13Fs, so the lookup simply returns nothing. Not so: NVDA's CIK has
+eleven 13F-HRs, because NVIDIA is itself an investment manager. Fetching its 2026Q1 information
+table returns seven positions — Coherent, CoreWeave, Generate Biomedicines, Intel, Nebius, Nokia,
+Synopsys. That is what NVIDIA **owns**, not who owns NVIDIA. Grade I from it and you get a
+company's portfolio dressed up as its shareholder base, which looks entirely reasonable in a
+report and is completely wrong. Sponsorship runs the other direction and is an aggregation across
+every filer in the quarter: a bulk-dataset job, which is what `institutional_cache.py` does.
+
+Use `securities-filings-lookup` for what it is genuinely best at, where it is now the **primary**
+source: the official **C/A** statements.
 
 **Grades follow their evidence.** If the `actual` you print concedes a miss ("just under 25%",
 "hasn't cleared the high"), the letter **cannot be pass** — call it partial. Where a threshold
@@ -317,7 +326,7 @@ as a test, and if it is gated or empty, drop to the next rung rather than retryi
 | Sector top performers | FMP `search-company-screener` (ranks by market cap, not performance - re-rank yourself) → IBKR `search_investment_topics` + `get_theme_details` → web new-high/leaders lists |
 | Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period:"TWO_YEARS"`, `step:"ONE_DAY"`) |
 | Live last price | FMP `batch-quote` → IBKR `get_price_snapshot` |
-| C / A fundamentals | Daloopa → bigdata.com → LSEG → SEC EDGAR via `securities-filings-lookup` → FMP → web |
+| C / A fundamentals | **`securities-filings-lookup` (primary — the 10-K/10-Q itself, verified working Sept 2026)** → Daloopa → bigdata.com → LSEG → FMP → web |
 | I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → FMP `form13F` (**verified plan-gated**: ACCESS DENIED on a free tier, Sept 2026) → web |
 
 FMP in particular has been **plan-gated** in past checks of the sister skill (`statements` and

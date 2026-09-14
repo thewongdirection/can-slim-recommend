@@ -638,9 +638,20 @@ than doing a shallow web dig:
 - **`ibkr-review-ticker`** — the fullest single-stock dashboard (fundamentals vs. peers,
   valuation, options/volatility positioning, probability outlook). Invoke it for a candidate that
   needs an individual financial review before it earns a spot on either list.
-- **`securities-filings-lookup`** — the official filing **PDFs** (10-K / 10-Q / 20-F / annual
-  reports) from the right regulator. Use it for the ground-truth statements behind **C**/**A**,
-  and for 13F/Form 4 data for **I**.
+- **`securities-filings-lookup`** — **the primary source for C and A.** It resolves the ticker to
+  its CIK and returns that company's own 10-K / 10-Q / 20-F straight from the regulator, so a
+  contested EPS or sales figure is settled against the filing rather than a vendor's derived
+  field. Verified working: `python scripts/fetch_us_filings.py NVDA --forms 10-Q,10-K --limit 3`
+  returns real filing URLs with their periods. Reach for it whenever TradingView's financials look
+  thin, a restatement has broken TTM growth, or a number is worth arguing about. It needs
+  `www.sec.gov` and `data.sec.gov` reachable.
+  **It cannot grade I, and the reason is a trap worth knowing.** It is keyed on the ticker's OWN
+  CIK, and plenty of operating companies are themselves 13F filers — NVDA's CIK has eleven
+  13F-HRs. But those list what NVIDIA *owns* (Coherent, CoreWeave, Intel, Nebius, Nokia,
+  Synopsys), not who owns NVIDIA. Pointing this skill at I returns a company's portfolio dressed
+  as its shareholder base: a plausible-looking wrong answer, which is worse than an empty one.
+  Sponsorship runs the other way and is an aggregation across every filer — use
+  `scripts/institutional_cache.py`.
 
 **If a companion skill you need is not installed**, do not silently fall back — tell the user it's
 missing and prompt them to install it from its GitHub repo, then continue with the best available
@@ -905,7 +916,8 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
 - `scripts/institutional_cache.py` — grades **I** from SEC Form 13F, aggregated once per quarter
-  and cached so a run spends no network on it. Fails open to the proxy below.
+  and cached so a run spends no network on it. Discovers the available data sets from SEC's own
+  index rather than constructing URLs, and fails open to the proxy below.
 - `scripts/accumulation.py` — the **I** fallback: institutional buying pressure read from the
   up/down volume footprint. A proxy, and every reason string says so.
 - `scripts/build_report.py` — produces the PDF (default), the HTML, or both, and enforces the
@@ -937,6 +949,13 @@ skipped, never failed), `@page` margin parsing, the dashboard's self-audit rules
 - **TradingView MCP connector** (primary). Falls back to IBKR / Massive Market Data / FMP / web.
 - **`can-slim-grader`** — the sister skill that grades each candidate:
   https://github.com/thewongdirection/can-slim-grader
+- **`securities-filings-lookup`** — the primary source for **C**/**A**: the company's own
+  10-K/10-Q from the regulator, so a contested EPS or sales figure is settled against the filing
+  rather than a vendor's derived field.
+  https://github.com/thewongdirection/securities-filings-lookup
+- **`www.sec.gov` and `data.sec.gov` reachable** — needed by both the filings lookup and the
+  quarterly **I** cache. Without them the skill still runs: I falls back to the volume proxy and
+  C/A to the connector ladder.
 - Web search available in the session.
 - A PDF engine for the default deliverable (Chrome/Chromium/Edge, Playwright, WeasyPrint or
   wkhtmltopdf) — without one you still get the HTML.
@@ -1519,11 +1538,20 @@ payload **as it came back**.
 
 **Two routes that do NOT work for I, both checked rather than assumed.** FMP `form13F` needs the
 Ultimate/Enterprise plan and returned ACCESS DENIED on a free tier (Sept 2026). And the
-`securities-filings-lookup` skill cannot answer it either, for a structural reason worth
-understanding: it resolves ticker → CIK → *that company's own* filings, but a 13F is filed by the
-FUND, so an issuer lookup returns nothing — NVIDIA files no 13Fs. Sponsorship is an aggregation
-across every filer in the quarter, which is a bulk-dataset job, not a per-company fetch. Use that
-skill for what it is good at: the official **C/A** filing PDFs.
+`securities-filings-lookup` skill cannot answer it either — for a subtler reason than it first
+appears, and one that produces a *wrong* answer rather than an empty one.
+
+That skill resolves ticker → CIK → *that company's own* filings. It is tempting to conclude an
+operating company files no 13Fs, so the lookup simply returns nothing. Not so: NVDA's CIK has
+eleven 13F-HRs, because NVIDIA is itself an investment manager. Fetching its 2026Q1 information
+table returns seven positions — Coherent, CoreWeave, Generate Biomedicines, Intel, Nebius, Nokia,
+Synopsys. That is what NVIDIA **owns**, not who owns NVIDIA. Grade I from it and you get a
+company's portfolio dressed up as its shareholder base, which looks entirely reasonable in a
+report and is completely wrong. Sponsorship runs the other direction and is an aggregation across
+every filer in the quarter: a bulk-dataset job, which is what `institutional_cache.py` does.
+
+Use `securities-filings-lookup` for what it is genuinely best at, where it is now the **primary**
+source: the official **C/A** statements.
 
 **Grades follow their evidence.** If the `actual` you print concedes a miss ("just under 25%",
 "hasn't cleared the high"), the letter **cannot be pass** — call it partial. Where a threshold
@@ -1633,7 +1661,7 @@ as a test, and if it is gated or empty, drop to the next rung rather than retryi
 | Sector top performers | FMP `search-company-screener` (ranks by market cap, not performance - re-rank yourself) → IBKR `search_investment_topics` + `get_theme_details` → web new-high/leaders lists |
 | Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period:"TWO_YEARS"`, `step:"ONE_DAY"`) |
 | Live last price | FMP `batch-quote` → IBKR `get_price_snapshot` |
-| C / A fundamentals | Daloopa → bigdata.com → LSEG → SEC EDGAR via `securities-filings-lookup` → FMP → web |
+| C / A fundamentals | **`securities-filings-lookup` (primary — the 10-K/10-Q itself, verified working Sept 2026)** → Daloopa → bigdata.com → LSEG → FMP → web |
 | I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → FMP `form13F` (**verified plan-gated**: ACCESS DENIED on a free tier, Sept 2026) → web |
 
 FMP in particular has been **plan-gated** in past checks of the sister skill (`statements` and
@@ -2989,6 +3017,32 @@ rubric actually asks for - "ownership rising over recent quarters", not merely "
 owned". The level alone is free everywhere; this trend is the part that is hard, and it is the
 part that grades the letter.
 
+WHAT REAL DATA FORCED, AND WHY FIXTURES COULD NOT HAVE CAUGHT IT. Four things about the bulk
+files are invisible until you open one, and each silently corrupts the holder count:
+
+  * COVERPAGE HAS NO CIK. The filing manager's CIK lives in SUBMISSION.tsv. Reading it off
+    COVERPAGE yields nothing, and a holder count keyed on the accession number instead counts
+    FILINGS, not managers - inflating every name that filed more than once.
+  * ONE FILE IS NOT ONE QUARTER. The Mar-May 2026 file holds 10,776 filings for 31-MAR-2026 and
+    985 late or amended ones reaching back to 2024. Aggregating the whole file blends quarters,
+    so holdings must be filtered on PERIODOFREPORT.
+  * 13F-NT IS A NOTICE, NOT A REPORT. 2,001 of 11,761 submissions in that file report no
+    holdings at all; counting them as sponsors credits managers who disclosed nothing.
+  * AMENDMENTS REPLACE OR ADD. AMENDMENTTYPE=RESTATEMENT supersedes the original filing, so
+    counting both double-counts that manager's position; NEW HOLDINGS adds to it. 108 accessions
+    in that one file are superseded restatements.
+
+The names are also not what the URL pattern suggests: from 2024 SEC switched from `2023q4_form13f.zip`
+to a filing-RECEIPT window, `01mar2026-31may2026_form13f.zip` - and that window is not the holdings
+quarter, it is when the filings arrived. Rather than encode either scheme, this script READS SEC's
+index page and picks the file whose window contains the period's due date, which keeps working the
+next time they rename things.
+
+VALIDATION. Against 01mar2026-31may2026, period 31-MAR-2026: NVDA 5,775 holders / 16.10B shares and
+AAPL 6,012 / 9.36B - about 66% and 63% of shares outstanding, matching published institutional
+ownership for both. A holder count that is wrong tends to be wrong by a lot, so this is worth
+re-checking whenever the parsing changes.
+
 THE CUSIP PROBLEM, STATED HONESTLY. INFOTABLE identifies holdings by CUSIP and issuer NAME - not
 by ticker - and there is no free authoritative CUSIP-to-ticker map. So this script resolves
 tickers two ways, in order: an explicit map you supply (--cusip-map), then normalised issuer-name
@@ -3016,12 +3070,14 @@ Pure standard library.
 """
 import argparse
 import csv
+import gzip
 import io
 import json
 import os
 import re
 import sys
 import urllib.error
+import time
 import urllib.request
 import zipfile
 
@@ -3031,17 +3087,16 @@ DEFAULTS = {
     "over_owned_pct": 95.0, # institutions holding more than this of the float leaves no new buyer
 }
 
-# The bulk files have lived under two prefixes over the years. Both are tried, in order, and the
-# one that answers is recorded in meta - guessing a single URL and reporting "unreachable" when
-# it 404s would blame the network for a moved file.
-URL_PATTERNS = [
-    "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/{q}_form13f.zip",
-    "https://www.sec.gov/files/dera/data/form-13f-data-sets/{q}_form13f.zip",
-]
+INDEX_URL = "https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets"
 
 # SEC requires a declared User-Agent with contact details and returns 403 without one. This is
 # their stated access policy, not an obstacle to route around.
 UA = "can-slim-recommend/1.0 (contact: set --contact)"
+
+MONTHS = {m: i + 1 for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
+MONTH_NAME = {v: k for k, v in MONTHS.items()}
+QUARTER_END = {1: "31-MAR", 2: "30-JUN", 3: "30-SEP", 4: "31-DEC"}
 
 STOP = re.compile(r"\b(inc|corp|corporation|co|company|ltd|limited|plc|holdings?|group|the|"
                   r"cl|class|a|b|com|common|stock|shs|sa|nv|ag|lp|llc|trust|reit)\b")
@@ -3056,34 +3111,135 @@ def norm_name(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
-def fetch(quarter, contact, timeout, cache_dir=None):
-    """Download one quarter's zip. Returns (bytes, url) or (None, why). Never raises."""
-    q = quarter.lower()
-    if cache_dir:
-        local = os.path.join(cache_dir, "%s_form13f.zip" % q)
-        if os.path.exists(local) and os.path.getsize(local) > 1000:
-            return open(local, "rb").read(), "file://" + local
-    why = []
-    for pat in URL_PATTERNS:
-        url = pat.format(q=q)
+def maybe_gunzip(body):
+    """Undo the gzip we asked for. urllib hands back the RAW encoded bytes.
+
+    curl decompresses transparently, which is exactly why this is easy to miss: the same URL that
+    works on the command line comes back as binary here. Left compressed, SEC's index page yields
+    no regex matches and the failure reads as "the page has no links" rather than as an encoding
+    bug. Detected by magic number rather than the Content-Encoding header, because a proxy can
+    re-encode a response without updating it.
+    """
+    return gzip.decompress(body) if body[:2] == b"\x1f\x8b" else body
+
+
+def http(url, contact, timeout, retries=6):
+    """GET with backoff on 429. Returns (bytes, None) or (None, why). Never raises.
+
+    The retry is not optional politeness. SEC throttles by source IP, and an agent sandbox reaches
+    them through a SHARED egress address, so the first request of a session routinely comes back
+    429 "Request Rate Threshold Exceeded" through no fault of this caller. Measured here: two 429s
+    then success on the third attempt. Treating the first 429 as failure would make this script
+    look broken most of the time it is run.
+    """
+    hdrs = {"User-Agent": ("can-slim-recommend/1.0 (contact: %s)" % contact) if contact else UA,
+            "Accept-Encoding": "gzip, deflate"}
+    wait, why = 5, ""
+    for _ in range(retries):
         try:
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "can-slim-recommend/1.0 (contact: %s)" % contact if contact else UA,
-                "Accept-Encoding": "gzip, deflate"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                data = r.read()
-            if len(data) < 1000:
-                why.append("%s returned %d bytes" % (url, len(data)))
-                continue
-            if cache_dir:
-                os.makedirs(cache_dir, exist_ok=True)
-                open(os.path.join(cache_dir, "%s_form13f.zip" % q), "wb").write(data)
-            return data, url
+            with urllib.request.urlopen(urllib.request.Request(url, headers=hdrs),
+                                        timeout=timeout) as r:
+                body = r.read()
+            return maybe_gunzip(body), None
         except urllib.error.HTTPError as e:
-            why.append("%s -> HTTP %s" % (url, e.code))
+            why = "HTTP %s" % e.code
+            if e.code != 429:
+                return None, why
+            time.sleep(wait)
+            wait *= 2
         except Exception as e:                       # network down, DNS, TLS, egress policy
-            why.append("%s -> %s" % (url, e))
-    return None, "; ".join(why)
+            return None, str(e)
+    return None, why + " after %d attempts (SEC rate limit did not clear)" % retries
+
+
+def parse_dataset_name(name):
+    """Both naming schemes SEC has used, as (start, end) ISO strings, or None.
+
+    Up to 2023q4 the files were named for the holdings quarter; from 2024 they are named for the
+    window in which the filings were RECEIVED ('01mar2026-31may2026'), which is a different thing
+    and lags the quarter it mostly contains. Parsing both lets a cache be rebuilt for an old
+    quarter without a special case.
+    """
+    m = re.match(r"^(\d{2})([a-z]{3})(\d{4})-(\d{2})([a-z]{3})(\d{4})_form13f\.zip$", name)
+    if m:
+        d1, m1, y1, d2, m2, y2 = m.groups()
+        if m1 in MONTHS and m2 in MONTHS:
+            return ("%s-%02d-%s" % (y1, MONTHS[m1], d1), "%s-%02d-%s" % (y2, MONTHS[m2], d2))
+    m = re.match(r"^(\d{4})q([1-4])_form13f\.zip$", name)
+    if m:
+        y, q = m.group(1), int(m.group(2))
+        first = {1: "01-01", 2: "04-01", 3: "07-01", 4: "10-01"}[q]
+        last = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}[q]
+        return ("%s-%s" % (y, first), "%s-%s" % (y, last))
+    return None
+
+
+def list_datasets(contact, timeout):
+    """Read SEC's own index page for the available bulk files. Returns (list, why).
+
+    Discovering beats constructing. The URL pattern this script originally guessed
+    ('2026q2_form13f.zip') 404s for every quarter after 2023 because SEC renamed the scheme - and
+    a guessed URL reports a rename as a dead network. The page is the authority on what exists,
+    and parsing it survives the next rename too.
+    """
+    body, why = http(INDEX_URL, contact, timeout)
+    if body is None:
+        return [], "could not read %s (%s)" % (INDEX_URL, why)
+    out = []
+    for href in re.findall(r'href="([^"]*_form13f\.zip)"', body.decode("utf-8", "replace")):
+        name = href.rsplit("/", 1)[-1]
+        span = parse_dataset_name(name)
+        if not span:
+            continue
+        out.append({"name": name, "start": span[0], "end": span[1],
+                    "url": href if href.startswith("http") else "https://www.sec.gov" + href})
+    out.sort(key=lambda d: d["end"], reverse=True)
+    return out, ("no *_form13f.zip links on the index page" if not out else None)
+
+
+def period_end(quarter):
+    """'2026Q1' or '2026-03-31' -> the EDGAR period string '31-MAR-2026'."""
+    q = str(quarter).strip().upper()
+    m = re.match(r"^(\d{4})-?Q([1-4])$", q)
+    if m:
+        return "%s-%s" % (QUARTER_END[int(m.group(2))], m.group(1))
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", q)
+    if m:
+        y, mo, d = m.groups()
+        return "%s-%s-%s" % (d, MONTH_NAME[int(mo)].upper(), y)
+    raise ValueError("cannot read %r as a quarter (want 2026Q1 or 2026-03-31)" % quarter)
+
+
+def prior_quarter(quarter):
+    """The quarter before it, in the same '2026Q1' form."""
+    m = re.match(r"^(\d{4})-?Q([1-4])$", str(quarter).strip().upper())
+    if not m:
+        return None
+    y, q = int(m.group(1)), int(m.group(2))
+    return "%dQ%d" % (y - 1, 4) if q == 1 else "%dQ%d" % (y, q - 1)
+
+
+def _iso_period(period):
+    d, mon, y = period.split("-")
+    return "%s-%02d-%s" % (y, MONTHS[mon.lower()], d)
+
+
+def dataset_for_period(datasets, period):
+    """Pick the file whose receipt window contains the period's filing deadline.
+
+    A quarter's 13Fs arrive in the window AFTER it ends, so 31-MAR-2026 holdings live in the
+    Mar-May 2026 file. Choosing by name would pick the wrong file under the post-2024 scheme;
+    choosing by deadline works under both.
+    """
+    y, m, d = (int(x) for x in _iso_period(period).split("-"))
+    m += 1                                  # ~45 days after quarter end, i.e. the due window
+    if m > 12:
+        m, y = m - 12, y + 1
+    due = "%04d-%02d-%02d" % (y, m, min(d, 28))
+    for ds in datasets:
+        if ds["start"] <= due <= ds["end"]:
+            return ds
+    return None
 
 
 def _member(z, want):
@@ -3095,42 +3251,93 @@ def _member(z, want):
     return None
 
 
-def aggregate(zbytes):
-    """Aggregate one quarter's holdings by CUSIP. Returns ({cusip: {...}}, note).
+def _table(z, name):
+    m = _member(z, name)
+    if not m:
+        return []
+    with z.open(m) as f:
+        return list(csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"), delimiter="\t"))
 
-    Streamed row by row on purpose: INFOTABLE runs to millions of rows per quarter and reading it
-    into memory is the difference between this working on a laptop and not. Only the per-CUSIP
-    totals are retained.
 
-    Two filters matter for correctness. SSHPRNAMTTYPE must be 'SH' - a 'PRN' row is a principal
-    amount of debt, not a share count, and summing the two together produces nonsense. And a row
-    with PUTCALL set is an option position, not ownership of the stock; counting it would credit
-    a fund that is short the name via puts as a sponsor.
+def select_filings(z, period):
+    """Which accessions count as THE holdings of each manager for `period`.
+
+    Four real-data rules, each of which silently corrupts the holder count if skipped - see the
+    module docstring for the counts that exposed them:
+
+      * the manager's CIK comes from SUBMISSION.tsv (COVERPAGE has no CIK column), so holders
+        count MANAGERS rather than filings;
+      * only PERIODOFREPORT == period, because one file carries late filings for many quarters;
+      * only 13F-HR/13F-HR/A, because 13F-NT is a notice that reports no holdings at all;
+      * a RESTATEMENT amendment SUPERSEDES that manager's earlier filing for the period, so only
+        the latest one is kept; a NEW HOLDINGS amendment adds and is kept alongside.
+
+    Returns (accession -> manager CIK, stats).
+    """
+    sub = {r["ACCESSION_NUMBER"]: r for r in _table(z, "submission")}
+    cov = {r["ACCESSION_NUMBER"]: r for r in _table(z, "coverpage")}
+    if not sub:
+        return {}, {"error": "no SUBMISSION table - cannot tell managers apart"}
+
+    cand = [a for a, r in sub.items()
+            if (r.get("PERIODOFREPORT") or "").strip().upper() == period
+            and (r.get("SUBMISSIONTYPE") or "").upper().startswith("13F-HR")]
+
+    by_cik = {}
+    for a in cand:
+        by_cik.setdefault((sub[a].get("CIK") or a).strip(), []).append(a)
+
+    keep, superseded = {}, 0
+    for cik, accs in by_cik.items():
+        restatements = [a for a in accs
+                        if (cov.get(a, {}).get("AMENDMENTTYPE") or "").strip().upper()
+                        == "RESTATEMENT"]
+        if restatements:
+            latest = max(restatements, key=lambda a: (sub[a].get("FILING_DATE") or "", a))
+            keep[latest] = cik
+            superseded += len(accs) - 1
+        else:
+            for a in accs:
+                keep[a] = cik
+    return keep, {"submissions": len(sub), "for_period": len(cand), "managers": len(by_cik),
+                  "accessions_kept": len(keep), "superseded_by_restatement": superseded}
+
+
+def aggregate(zbytes, period):
+    """Aggregate one period's holdings by CUSIP. Returns ({cusip: {...}}, note).
+
+    INFOTABLE is streamed row by row: it runs to ~4 million rows and ~400MB uncompressed per
+    file, so reading it whole is the difference between this working on a laptop and not. Only
+    the per-CUSIP totals are retained.
+
+    Two row filters matter for correctness. SSHPRNAMTTYPE must be 'SH' - a 'PRN' row is a
+    principal amount of debt, not a share count, and summing the two produces nonsense. And a row
+    with PUTCALL set is an option position, not ownership, so counting it would credit a manager
+    who is SHORT the name via puts as a sponsor.
     """
     try:
         z = zipfile.ZipFile(io.BytesIO(zbytes))
     except Exception as e:
         return None, "not a readable zip (%s)" % e
-    cover, info = _member(z, "coverpage"), _member(z, "infotable")
+    info = _member(z, "infotable")
     if not info:
         return None, "no INFOTABLE in the archive (members: %s)" % ", ".join(z.namelist()[:8])
 
-    # accession -> filer CIK, so "holders" counts distinct MANAGERS rather than distinct filings
-    acc_cik = {}
-    if cover:
-        with z.open(cover) as f:
-            for row in csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"),
-                                      delimiter="\t"):
-                a = (row.get("ACCESSION_NUMBER") or "").strip()
-                c = (row.get("CIK") or "").strip()
-                if a:
-                    acc_cik[a] = c or a
+    keep, stats = select_filings(z, period)
+    if stats.get("error"):
+        return None, stats["error"]
+    if not keep:
+        return None, ("no 13F-HR filings for period %s in this file (it holds %d submissions)"
+                      % (period, stats.get("submissions", 0)))
 
     out = {}
     rows = kept = 0
     with z.open(info) as f:
         for row in csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"), delimiter="\t"):
             rows += 1
+            cik = keep.get((row.get("ACCESSION_NUMBER") or "").strip())
+            if cik is None:
+                continue                                  # other period, a notice, or superseded
             if (row.get("PUTCALL") or "").strip():
                 continue                                  # an option, not ownership
             if (row.get("SSHPRNAMTTYPE") or "SH").strip().upper() != "SH":
@@ -3142,7 +3349,6 @@ def aggregate(zbytes):
                 sh = float(row.get("SSHPRNAMT") or 0)
             except ValueError:
                 continue
-            acc = (row.get("ACCESSION_NUMBER") or "").strip()
             e = out.setdefault(cusip, {"name": (row.get("NAMEOFISSUER") or "").strip(),
                                        "shares": 0.0, "value": 0.0, "filers": set()})
             e["shares"] += sh
@@ -3150,12 +3356,15 @@ def aggregate(zbytes):
                 e["value"] += float(row.get("VALUE") or 0)
             except ValueError:
                 pass
-            e["filers"].add(acc_cik.get(acc, acc))
+            e["filers"].add(cik)
             kept += 1
     for e in out.values():
         e["holders"] = len(e["filers"])
         del e["filers"]
-    return out, "%d rows read, %d share positions kept, %d issuers" % (rows, kept, len(out))
+    note = ("period %s: %d managers over %d filings (%d superseded), %d/%d rows kept, %d issuers"
+            % (period, stats["managers"], stats["accessions_kept"],
+               stats["superseded_by_restatement"], kept, rows, len(out)))
+    return out, note
 
 
 def resolve_tickers(agg, cusip_map, universe):
@@ -3241,39 +3450,76 @@ def grade(now, prior, cfg, float_shares=None):
                        "but the trend is flat (SEC 13F)" % (h, dh, ds), m)
 
 
+def get_dataset(ds, contact, timeout, cache_dir):
+    """Bytes for one dataset, from the local cache if present. Returns (bytes, where)."""
+    if cache_dir:
+        local = os.path.join(cache_dir, ds["name"])
+        if os.path.exists(local) and os.path.getsize(local) > 1000:
+            return open(local, "rb").read(), "cached " + local
+    data, why = http(ds["url"], contact, timeout)
+    if data is None:
+        return None, "%s -> %s" % (ds["url"], why)
+    if len(data) < 1000:
+        return None, "%s returned %d bytes" % (ds["url"], len(data))
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        open(os.path.join(cache_dir, ds["name"]), "wb").write(data)
+    return data, ds["url"]
+
+
 def build(args, cfg):
     meta = {"source": "sec-13f", "is_proxy": False, "quarter": args.quarter, "prior": args.prior,
-            "thresholds": dict(cfg), "urls": {}, "notes": [], "ok": False}
+            "thresholds": dict(cfg), "datasets": {}, "notes": [], "ok": False}
     known, detail = {}, {}
 
     universe, cusip_map, floats = {}, {}, {}
-    if args.universe:
+    if getattr(args, "universe", None):
         blob = json.load(open(args.universe, encoding="utf-8"))
-        for _, rows in (blob.get("sectors") or {}).items() if isinstance(
-                blob.get("sectors"), dict) else []:
+        sec = blob.get("sectors") or {}
+        groups = sec.items() if isinstance(sec, dict) else [
+            (g.get("sector"), g.get("rows") or g.get("members") or []) for g in sec]
+        for _, rows in groups:
             for r in rows or []:
-                t = (r.get("symbol") or "").split(":")[-1]
-                if t:
-                    universe[t] = r.get("description") or r.get("name") or ""
-                    if r.get("float_shares_outstanding_current"):
-                        floats[t] = r["float_shares_outstanding_current"]
+                t = (r.get("symbol") or r.get("ticker") or "").split(":")[-1]
+                if not t:
+                    continue
+                universe[t] = r.get("description") or r.get("company") or r.get("name") or ""
+                if r.get("float_shares_outstanding_current"):
+                    floats[t] = r["float_shares_outstanding_current"]
         meta["notes"].append("universe: %d tickers from %s" % (len(universe), args.universe))
-    if args.cusip_map:
+    if getattr(args, "cusip_map", None):
         cusip_map = {k.strip().upper(): v for k, v in
                      json.load(open(args.cusip_map, encoding="utf-8")).items()}
         meta["notes"].append("cusip map: %d entries" % len(cusip_map))
+
+    datasets, why = list_datasets(args.contact, args.timeout)
+    if why:
+        meta["notes"].append(why)
+    meta["available"] = [d["name"] for d in datasets[:6]]
 
     aggs = {}
     for label, q in (("quarter", args.quarter), ("prior", args.prior)):
         if not q:
             continue
-        data, where = fetch(q, args.contact, args.timeout, args.cache_dir)
-        meta["urls"][q] = where
-        if data is None:
-            meta["notes"].append("%s %s could not be fetched: %s" % (label, q, where))
+        try:
+            period = period_end(q)
+        except ValueError as e:
+            meta["notes"].append(str(e))
             continue
-        agg, note = aggregate(data)
-        meta["notes"].append("%s %s: %s" % (label, q, note))
+        ds = dataset_for_period(datasets, period)
+        if not ds:
+            meta["notes"].append(
+                "%s %s (period %s): no published data set covers it yet%s" %
+                (label, q, period,
+                 " - newest is %s" % datasets[0]["name"] if datasets else ""))
+            continue
+        meta["datasets"][q] = ds["name"]
+        data, where = get_dataset(ds, args.contact, args.timeout, args.cache_dir)
+        if data is None:
+            meta["notes"].append("%s %s: %s" % (label, q, where))
+            continue
+        agg, note = aggregate(data, period)
+        meta["notes"].append("%s %s [%s]: %s" % (label, q, ds["name"], note))
         if agg:
             aggs[label] = agg
 
@@ -3286,11 +3532,14 @@ def build(args, cfg):
     prior_t = resolve_tickers(aggs["prior"], cusip_map, universe)[0] if "prior" in aggs else {}
     meta["ok"] = True
     meta["notes"].append("resolved %d tickers; %d issuers unresolved" % (len(now_t), len(unresolved)))
+    if "prior" not in aggs:
+        meta["notes"].append("NO PRIOR QUARTER: every grade is capped at partial, because the "
+                             "TREND is what the letter turns on and it cannot be computed")
 
     for tick, e in now_t.items():
-        g, why, m = grade(e, prior_t.get(tick), cfg, floats.get(tick))
+        g, why_, m = grade(e, prior_t.get(tick), cfg, floats.get(tick))
         known[tick] = {"I": g}
-        detail[tick] = dict(m, grade=g, ceiling_cap=g, reason=why, source="sec-13f",
+        detail[tick] = dict(m, grade=g, ceiling_cap=g, reason=why_, source="sec-13f",
                             issuer=e["name"], cusips=e["cusips"])
     return meta, known, detail, unresolved
 
@@ -3323,8 +3572,13 @@ def merge_fallback(meta, known, detail, path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--quarter", required=True, help="e.g. 2026Q2 (the latest 13F deadline past)")
-    ap.add_argument("--prior", help="the quarter before it, e.g. 2026Q1 - needed for the TREND")
+    ap.add_argument("--quarter", help="the HOLDINGS quarter, e.g. 2026Q1 or 2026-03-31. Note this "
+                                      "is not the data-set file name: a quarter's 13Fs arrive in "
+                                      "the window after it ends. Omit with --list.")
+    ap.add_argument("--prior", help="the quarter before it - needed for the TREND, which is what "
+                                    "the letter turns on. Derived from --quarter if omitted.")
+    ap.add_argument("--list", action="store_true",
+                    help="print the data sets SEC currently publishes, newest first, and exit")
     ap.add_argument("--universe", metavar="FILE",
                     help="the sweep JSON, used to resolve CUSIPs by issuer name")
     ap.add_argument("--cusip-map", metavar="FILE", help='{"67066G104": "NVDA", ...}')
@@ -3337,6 +3591,18 @@ def main():
     ap.add_argument("-o", "--out", metavar="FILE", help="write here (default: stdout)")
     ap.add_argument("--known-only", action="store_true", help="print just the --known map")
     a = ap.parse_args()
+
+    if a.list:
+        datasets, why = list_datasets(a.contact, a.timeout)
+        if why:
+            print(why, file=sys.stderr)
+        for d in datasets:
+            print("%-34s filings received %s .. %s" % (d["name"], d["start"], d["end"]))
+        return 0
+    if not a.quarter:
+        ap.error("--quarter is required (or use --list)")
+    if not a.prior:
+        a.prior = prior_quarter(a.quarter)
 
     cfg = dict(DEFAULTS, thin_holders=a.thin_holders)
     meta, known, detail, unresolved = build(a, cfg)
@@ -6052,74 +6318,148 @@ def check_too_little_tape_is_partial_never_fail():
 
 # ---------------------------------------------------------------- institutional_cache (I, 13F)
 
-def _mk13f(path, spec, quarter="06-30-2026"):
-    """spec: {cusip: (issuer, n_managers, shares_each)} -> a zip shaped like SEC's data set."""
+def _mk13f(path, rows, period="31-MAR-2026"):
+    """A zip shaped like SEC's real Form 13F data set: SUBMISSION + COVERPAGE + INFOTABLE.
+
+    Built to the real schema after the first version of these fixtures invented one. The manager's
+    CIK lives in SUBMISSION (COVERPAGE has no CIK column at all), one file carries several
+    PERIODOFREPORT values, 13F-NT reports no holdings, and amendments restate or add - every one
+    of which changes the holder count, and none of which a made-up fixture would have exercised.
+
+    rows: [(accession, cik, submissiontype, period, amendmenttype, [(issuer, cusip, shares,
+            sshprnamttype, putcall), ...]), ...]
+    """
     import zipfile
-    cover = ["ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER"]
-    info = ["ACCESSION_NUMBER\tINFOTABLE_SK\tNAMEOFISSUER\tTITLEOFCLASS\tCUSIP\tVALUE\t"
+    sub = ["ACCESSION_NUMBER\tFILING_DATE\tSUBMISSIONTYPE\tCIK\tPERIODOFREPORT"]
+    cov = ["ACCESSION_NUMBER\tREPORTCALENDARORQUARTER\tISAMENDMENT\tAMENDMENTNO\tAMENDMENTTYPE\t"
+           "FILINGMANAGER_NAME"]
+    info = ["ACCESSION_NUMBER\tINFOTABLE_SK\tNAMEOFISSUER\tTITLEOFCLASS\tCUSIP\tFIGI\tVALUE\t"
             "SSHPRNAMT\tSSHPRNAMTTYPE\tPUTCALL"]
-    seen, k = set(), 0
-    for cusip, (name, nf, sh) in spec.items():
-        for i in range(nf):
-            a = "0001-%s-%03d" % (cusip[:4], i)
-            if a not in seen:
-                seen.add(a)
-                cover.append("%s\t%d\tFUND %d\t%s" % (a, 9000 + i, i, quarter))
+    k = 0
+    for acc, cik, styp, per, amd, holds in rows:
+        sub.append("%s\t01-MAY-2026\t%s\t%s\t%s" % (acc, styp, cik, per or period))
+        cov.append("%s\t%s\t%s\t%s\t%s\tFUND %s" % (acc, per or period, "Y" if amd else "N",
+                                                    "1" if amd else "", amd or "", cik))
+        for issuer, cusip, sh, typ, pc in holds:
             k += 1
-            info.append("%s\t%d\t%s\tCOM\t%s\t%d\t%d\tSH\t" % (a, k, name, cusip, sh * 50, sh))
+            info.append("%s\t%d\t%s\tCOM\t%s\t\t%d\t%d\t%s\t%s"
+                        % (acc, k, issuer, cusip, sh * 10, sh, typ, pc))
     z = zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED)
-    z.writestr("COVERPAGE.tsv", "\n".join(cover))
+    z.writestr("SUBMISSION.tsv", "\n".join(sub))
+    z.writestr("COVERPAGE.tsv", "\n".join(cov))
     z.writestr("INFOTABLE.tsv", "\n".join(info))
     z.close()
-    return info
+    return io.open(path, "rb").read()
 
 
 def check_13f_excludes_options_and_principal_rows(tmp):
     """Two filters that are silent if wrong. A PUTCALL row is an option, so counting it credits a
-    fund that is SHORT the name via puts as a sponsor. A PRN row is a principal amount of debt,
+    manager who is SHORT the name via puts as a sponsor. A PRN row is a principal amount of debt,
     and summing it with share counts produces a number that means nothing."""
-    import zipfile
-    p = os.path.join(tmp, "q.zip")
-    _mk13f(p, {"67066G104": ("NVIDIA CORPORATION", 3, 1000)})
-    z = zipfile.ZipFile(p, "a")
-    rows = z.read("INFOTABLE.tsv").decode()
-    rows += ("\n0001-6706-000\t901\tNVIDIA CORPORATION\tCOM\t67066G104\t9\t500000\tSH\tCall"
-             "\n0001-6706-000\t902\tNVIDIA CORPORATION\tNOTE\t67066G104\t9\t400000\tPRN\t")
-    z.close()
-    z2 = zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED)
-    z2.writestr("COVERPAGE.tsv", zipfile.ZipFile(os.path.join(tmp, "q.zip.bak"), "r").read(
-        "COVERPAGE.tsv").decode() if False else
-        "ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER\n"
-        "0001-6706-000\t9000\tFUND 0\t06-30-2026\n0001-6706-001\t9001\tFUND 1\t06-30-2026\n"
-        "0001-6706-002\t9002\tFUND 2\t06-30-2026")
-    z2.writestr("INFOTABLE.tsv", rows)
-    z2.close()
-    agg, note = ic.aggregate(io.open(p, "rb").read())
+    b = _mk13f(os.path.join(tmp, "q.zip"), [
+        ("A1", "111", "13F-HR", None, None, [("NVIDIA CORPORATION", "67066G104", 1000, "SH", ""),
+                                             ("NVIDIA CORPORATION", "67066G104", 500, "SH", "Call"),
+                                             ("NVIDIA CORPORATION", "67066G104", 400, "PRN", "")]),
+        ("A2", "222", "13F-HR", None, None, [("NVIDIA CORPORATION", "67066G104", 2000, "SH", "")]),
+    ])
+    agg, note = ic.aggregate(b, "31-MAR-2026")
     e = agg["67066G104"]
     assert e["shares"] == 3000, "options/principal leaked into the share count: %s" % e["shares"]
-    assert e["holders"] == 3, e["holders"]
+    assert e["holders"] == 2, e["holders"]
 
 
 def check_13f_counts_distinct_managers_not_filings(tmp):
-    """A manager can appear on several accessions. Counting filings would inflate the holder
-    count, which is the number the whole grade turns on."""
-    import zipfile
-    p = os.path.join(tmp, "q.zip")
-    z = zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED)
-    z.writestr("COVERPAGE.tsv",
-               "ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER\n"
-               "A1\t555\tONE FUND\t06-30-2026\nA2\t555\tONE FUND\t06-30-2026\n"
-               "A3\t777\tOTHER FUND\t06-30-2026")
-    z.writestr("INFOTABLE.tsv",
-               "ACCESSION_NUMBER\tINFOTABLE_SK\tNAMEOFISSUER\tTITLEOFCLASS\tCUSIP\tVALUE\t"
-               "SSHPRNAMT\tSSHPRNAMTTYPE\tPUTCALL\n"
-               "A1\t1\tACME CORP\tCOM\tAAA\t1\t100\tSH\t\n"
-               "A2\t2\tACME CORP\tCOM\tAAA\t1\t100\tSH\t\n"
-               "A3\t3\tACME CORP\tCOM\tAAA\t1\t100\tSH\t")
-    z.close()
-    agg, _ = ic.aggregate(io.open(p, "rb").read())
+    """The manager's CIK comes from SUBMISSION - COVERPAGE has none. Keying on the accession
+    instead counts FILINGS, inflating any manager that filed more than once."""
+    b = _mk13f(os.path.join(tmp, "q.zip"), [
+        ("A1", "555", "13F-HR", None, None, [("ACME CORP", "AAA", 100, "SH", "")]),
+        ("A2", "555", "13F-HR", None, None, [("ACME CORP", "AAA", 100, "SH", "")]),
+        ("A3", "777", "13F-HR", None, None, [("ACME CORP", "AAA", 100, "SH", "")]),
+    ])
+    agg, _ = ic.aggregate(b, "31-MAR-2026")
     assert agg["AAA"]["holders"] == 2, agg["AAA"]["holders"]
     assert agg["AAA"]["shares"] == 300
+
+
+def check_13f_keeps_only_the_requested_period(tmp):
+    """One file carries late and amended filings for many quarters - the Mar-May 2026 file holds
+    985 of them reaching back to 2024. Aggregating the whole file blends quarters."""
+    b = _mk13f(os.path.join(tmp, "q.zip"), [
+        ("A1", "111", "13F-HR", "31-MAR-2026", None, [("ACME CORP", "AAA", 100, "SH", "")]),
+        ("A2", "222", "13F-HR", "31-DEC-2025", None, [("ACME CORP", "AAA", 900, "SH", "")]),
+    ])
+    now, _ = ic.aggregate(b, "31-MAR-2026")
+    assert now["AAA"]["shares"] == 100 and now["AAA"]["holders"] == 1
+    before, _ = ic.aggregate(b, "31-DEC-2025")
+    assert before["AAA"]["shares"] == 900
+
+
+def check_13f_ignores_notices_and_resolves_amendments(tmp):
+    """13F-NT reports no holdings, so an NT filer is not a sponsor. And a RESTATEMENT supersedes
+    that manager's earlier filing for the period - counting both double-counts the position,
+    while NEW HOLDINGS adds to it."""
+    b = _mk13f(os.path.join(tmp, "q.zip"), [
+        ("N1", "999", "13F-NT", None, None, []),
+        ("R0", "111", "13F-HR", None, None, [("ACME CORP", "AAA", 100, "SH", "")]),
+        ("R1", "111", "13F-HR/A", None, "RESTATEMENT", [("ACME CORP", "AAA", 250, "SH", "")]),
+        ("B0", "222", "13F-HR", None, None, [("ACME CORP", "AAA", 40, "SH", "")]),
+        ("B1", "222", "13F-HR/A", None, "NEW HOLDINGS", [("ACME CORP", "AAA", 10, "SH", "")]),
+    ])
+    agg, note = ic.aggregate(b, "31-MAR-2026")
+    e = agg["AAA"]
+    # 250 (restated, replacing 100) + 40 + 10 (added) = 300
+    assert e["shares"] == 300, (e["shares"], note)
+    assert e["holders"] == 2, (e["holders"], note)
+    assert "superseded" in note
+    # The NT filer never reaches the holder count anyway (a notice files no INFOTABLE rows), so
+    # the filter is only visible in the REPORTED manager count - which is what makes that number
+    # honest rather than an inflated "managers who filed something".
+    assert "2 managers" in note, note
+
+
+def check_gzip_is_undone_before_parsing():
+    """The bug that made discovery report "the page has no links". urllib returns the RAW encoded
+    bytes for the gzip we asked for; curl decompresses transparently, so the same URL behaves
+    differently on the command line and is easy to mis-diagnose as an empty page."""
+    import gzip as _g
+    raw = b'<a href="/x/01mar2026-31may2026_form13f.zip">z</a>'
+    assert ic.maybe_gunzip(_g.compress(raw)) == raw
+    assert ic.maybe_gunzip(raw) == raw          # not compressed: passed through untouched
+
+
+def check_dataset_names_parse_under_both_sec_schemes():
+    """SEC renamed these files in 2024, from the holdings quarter to the window in which filings
+    were RECEIVED. The original guessed URL 404s for every quarter after 2023 - which is why the
+    list is discovered from SEC's index page rather than constructed."""
+    assert ic.parse_dataset_name("2023q4_form13f.zip") == ("2023-10-01", "2023-12-31")
+    assert ic.parse_dataset_name("01mar2026-31may2026_form13f.zip") == ("2026-03-01", "2026-05-31")
+    assert ic.parse_dataset_name("readme.txt") is None
+
+
+def check_the_right_dataset_is_picked_for_a_quarter():
+    """A quarter's 13Fs arrive in the window AFTER it ends, so 31-MAR-2026 holdings live in the
+    Mar-May 2026 file. Picking by name would take the wrong file under the post-2024 scheme."""
+    ds = [{"name": "01jun2026-31aug2026_form13f.zip", "start": "2026-06-01", "end": "2026-08-31"},
+          {"name": "01mar2026-31may2026_form13f.zip", "start": "2026-03-01", "end": "2026-05-31"},
+          {"name": "01dec2025-28feb2026_form13f.zip", "start": "2025-12-01", "end": "2026-02-28"}]
+    assert ic.period_end("2026Q1") == "31-MAR-2026"
+    assert ic.period_end("2026-03-31") == "31-MAR-2026"
+    assert ic.prior_quarter("2026Q1") == "2025Q4"
+    assert ic.dataset_for_period(ds, "31-MAR-2026")["name"] == "01mar2026-31may2026_form13f.zip"
+    assert ic.dataset_for_period(ds, "31-DEC-2025")["name"] == "01dec2025-28feb2026_form13f.zip"
+    assert ic.dataset_for_period(ds, "31-DEC-2030") is None      # nothing published yet
+
+
+def check_13f_fails_open_when_it_cannot_fetch(tmp):
+    """No network, a moved URL, an egress policy - none of these may stop a run."""
+    class A:
+        quarter, prior = "2099Q4", "2099Q3"
+        universe = cusip_map = None
+        cache_dir = os.path.join(tmp, "nope")
+        contact, timeout = "", 0.2
+    meta, known, detail, un = ic.build(A(), dict(ic.DEFAULTS))
+    assert meta["ok"] is False and known == {} and detail == {}
+    assert meta["notes"], "a failure must say what it could not do"
 
 
 def check_issuer_name_matching_and_its_refusal_to_guess():
@@ -6160,18 +6500,6 @@ def check_13f_grades_follow_the_rubric():
     over = ic.grade({"holders": 60, "shares": 99.0}, {"holders": 52, "shares": 80.0}, cfg,
                     float_shares=100.0)
     assert over[0] == "partial" and "float" in over[1], over
-
-
-def check_13f_fails_open_when_it_cannot_fetch(tmp):
-    """No network, a moved URL, an egress policy - none of these may stop a run."""
-    class A:
-        quarter, prior = "2099Q4", "2099Q3"
-        universe = cusip_map = None
-        cache_dir = os.path.join(tmp, "nope")
-        contact, timeout = "", 0.2
-    meta, known, detail, un = ic.build(A(), dict(ic.DEFAULTS))
-    assert meta["ok"] is False and known == {} and detail == {}
-    assert any("could not be fetched" in n for n in meta["notes"]), meta["notes"]
 
 
 def check_fallback_fills_gaps_and_never_overwrites(tmp):

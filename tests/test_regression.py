@@ -497,74 +497,148 @@ def check_too_little_tape_is_partial_never_fail():
 
 # ---------------------------------------------------------------- institutional_cache (I, 13F)
 
-def _mk13f(path, spec, quarter="06-30-2026"):
-    """spec: {cusip: (issuer, n_managers, shares_each)} -> a zip shaped like SEC's data set."""
+def _mk13f(path, rows, period="31-MAR-2026"):
+    """A zip shaped like SEC's real Form 13F data set: SUBMISSION + COVERPAGE + INFOTABLE.
+
+    Built to the real schema after the first version of these fixtures invented one. The manager's
+    CIK lives in SUBMISSION (COVERPAGE has no CIK column at all), one file carries several
+    PERIODOFREPORT values, 13F-NT reports no holdings, and amendments restate or add - every one
+    of which changes the holder count, and none of which a made-up fixture would have exercised.
+
+    rows: [(accession, cik, submissiontype, period, amendmenttype, [(issuer, cusip, shares,
+            sshprnamttype, putcall), ...]), ...]
+    """
     import zipfile
-    cover = ["ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER"]
-    info = ["ACCESSION_NUMBER\tINFOTABLE_SK\tNAMEOFISSUER\tTITLEOFCLASS\tCUSIP\tVALUE\t"
+    sub = ["ACCESSION_NUMBER\tFILING_DATE\tSUBMISSIONTYPE\tCIK\tPERIODOFREPORT"]
+    cov = ["ACCESSION_NUMBER\tREPORTCALENDARORQUARTER\tISAMENDMENT\tAMENDMENTNO\tAMENDMENTTYPE\t"
+           "FILINGMANAGER_NAME"]
+    info = ["ACCESSION_NUMBER\tINFOTABLE_SK\tNAMEOFISSUER\tTITLEOFCLASS\tCUSIP\tFIGI\tVALUE\t"
             "SSHPRNAMT\tSSHPRNAMTTYPE\tPUTCALL"]
-    seen, k = set(), 0
-    for cusip, (name, nf, sh) in spec.items():
-        for i in range(nf):
-            a = "0001-%s-%03d" % (cusip[:4], i)
-            if a not in seen:
-                seen.add(a)
-                cover.append("%s\t%d\tFUND %d\t%s" % (a, 9000 + i, i, quarter))
+    k = 0
+    for acc, cik, styp, per, amd, holds in rows:
+        sub.append("%s\t01-MAY-2026\t%s\t%s\t%s" % (acc, styp, cik, per or period))
+        cov.append("%s\t%s\t%s\t%s\t%s\tFUND %s" % (acc, per or period, "Y" if amd else "N",
+                                                    "1" if amd else "", amd or "", cik))
+        for issuer, cusip, sh, typ, pc in holds:
             k += 1
-            info.append("%s\t%d\t%s\tCOM\t%s\t%d\t%d\tSH\t" % (a, k, name, cusip, sh * 50, sh))
+            info.append("%s\t%d\t%s\tCOM\t%s\t\t%d\t%d\t%s\t%s"
+                        % (acc, k, issuer, cusip, sh * 10, sh, typ, pc))
     z = zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED)
-    z.writestr("COVERPAGE.tsv", "\n".join(cover))
+    z.writestr("SUBMISSION.tsv", "\n".join(sub))
+    z.writestr("COVERPAGE.tsv", "\n".join(cov))
     z.writestr("INFOTABLE.tsv", "\n".join(info))
     z.close()
-    return info
+    return io.open(path, "rb").read()
 
 
 def check_13f_excludes_options_and_principal_rows(tmp):
     """Two filters that are silent if wrong. A PUTCALL row is an option, so counting it credits a
-    fund that is SHORT the name via puts as a sponsor. A PRN row is a principal amount of debt,
+    manager who is SHORT the name via puts as a sponsor. A PRN row is a principal amount of debt,
     and summing it with share counts produces a number that means nothing."""
-    import zipfile
-    p = os.path.join(tmp, "q.zip")
-    _mk13f(p, {"67066G104": ("NVIDIA CORPORATION", 3, 1000)})
-    z = zipfile.ZipFile(p, "a")
-    rows = z.read("INFOTABLE.tsv").decode()
-    rows += ("\n0001-6706-000\t901\tNVIDIA CORPORATION\tCOM\t67066G104\t9\t500000\tSH\tCall"
-             "\n0001-6706-000\t902\tNVIDIA CORPORATION\tNOTE\t67066G104\t9\t400000\tPRN\t")
-    z.close()
-    z2 = zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED)
-    z2.writestr("COVERPAGE.tsv", zipfile.ZipFile(os.path.join(tmp, "q.zip.bak"), "r").read(
-        "COVERPAGE.tsv").decode() if False else
-        "ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER\n"
-        "0001-6706-000\t9000\tFUND 0\t06-30-2026\n0001-6706-001\t9001\tFUND 1\t06-30-2026\n"
-        "0001-6706-002\t9002\tFUND 2\t06-30-2026")
-    z2.writestr("INFOTABLE.tsv", rows)
-    z2.close()
-    agg, note = ic.aggregate(io.open(p, "rb").read())
+    b = _mk13f(os.path.join(tmp, "q.zip"), [
+        ("A1", "111", "13F-HR", None, None, [("NVIDIA CORPORATION", "67066G104", 1000, "SH", ""),
+                                             ("NVIDIA CORPORATION", "67066G104", 500, "SH", "Call"),
+                                             ("NVIDIA CORPORATION", "67066G104", 400, "PRN", "")]),
+        ("A2", "222", "13F-HR", None, None, [("NVIDIA CORPORATION", "67066G104", 2000, "SH", "")]),
+    ])
+    agg, note = ic.aggregate(b, "31-MAR-2026")
     e = agg["67066G104"]
     assert e["shares"] == 3000, "options/principal leaked into the share count: %s" % e["shares"]
-    assert e["holders"] == 3, e["holders"]
+    assert e["holders"] == 2, e["holders"]
 
 
 def check_13f_counts_distinct_managers_not_filings(tmp):
-    """A manager can appear on several accessions. Counting filings would inflate the holder
-    count, which is the number the whole grade turns on."""
-    import zipfile
-    p = os.path.join(tmp, "q.zip")
-    z = zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED)
-    z.writestr("COVERPAGE.tsv",
-               "ACCESSION_NUMBER\tCIK\tFILINGMANAGER_NAME\tREPORTCALENDARORQUARTER\n"
-               "A1\t555\tONE FUND\t06-30-2026\nA2\t555\tONE FUND\t06-30-2026\n"
-               "A3\t777\tOTHER FUND\t06-30-2026")
-    z.writestr("INFOTABLE.tsv",
-               "ACCESSION_NUMBER\tINFOTABLE_SK\tNAMEOFISSUER\tTITLEOFCLASS\tCUSIP\tVALUE\t"
-               "SSHPRNAMT\tSSHPRNAMTTYPE\tPUTCALL\n"
-               "A1\t1\tACME CORP\tCOM\tAAA\t1\t100\tSH\t\n"
-               "A2\t2\tACME CORP\tCOM\tAAA\t1\t100\tSH\t\n"
-               "A3\t3\tACME CORP\tCOM\tAAA\t1\t100\tSH\t")
-    z.close()
-    agg, _ = ic.aggregate(io.open(p, "rb").read())
+    """The manager's CIK comes from SUBMISSION - COVERPAGE has none. Keying on the accession
+    instead counts FILINGS, inflating any manager that filed more than once."""
+    b = _mk13f(os.path.join(tmp, "q.zip"), [
+        ("A1", "555", "13F-HR", None, None, [("ACME CORP", "AAA", 100, "SH", "")]),
+        ("A2", "555", "13F-HR", None, None, [("ACME CORP", "AAA", 100, "SH", "")]),
+        ("A3", "777", "13F-HR", None, None, [("ACME CORP", "AAA", 100, "SH", "")]),
+    ])
+    agg, _ = ic.aggregate(b, "31-MAR-2026")
     assert agg["AAA"]["holders"] == 2, agg["AAA"]["holders"]
     assert agg["AAA"]["shares"] == 300
+
+
+def check_13f_keeps_only_the_requested_period(tmp):
+    """One file carries late and amended filings for many quarters - the Mar-May 2026 file holds
+    985 of them reaching back to 2024. Aggregating the whole file blends quarters."""
+    b = _mk13f(os.path.join(tmp, "q.zip"), [
+        ("A1", "111", "13F-HR", "31-MAR-2026", None, [("ACME CORP", "AAA", 100, "SH", "")]),
+        ("A2", "222", "13F-HR", "31-DEC-2025", None, [("ACME CORP", "AAA", 900, "SH", "")]),
+    ])
+    now, _ = ic.aggregate(b, "31-MAR-2026")
+    assert now["AAA"]["shares"] == 100 and now["AAA"]["holders"] == 1
+    before, _ = ic.aggregate(b, "31-DEC-2025")
+    assert before["AAA"]["shares"] == 900
+
+
+def check_13f_ignores_notices_and_resolves_amendments(tmp):
+    """13F-NT reports no holdings, so an NT filer is not a sponsor. And a RESTATEMENT supersedes
+    that manager's earlier filing for the period - counting both double-counts the position,
+    while NEW HOLDINGS adds to it."""
+    b = _mk13f(os.path.join(tmp, "q.zip"), [
+        ("N1", "999", "13F-NT", None, None, []),
+        ("R0", "111", "13F-HR", None, None, [("ACME CORP", "AAA", 100, "SH", "")]),
+        ("R1", "111", "13F-HR/A", None, "RESTATEMENT", [("ACME CORP", "AAA", 250, "SH", "")]),
+        ("B0", "222", "13F-HR", None, None, [("ACME CORP", "AAA", 40, "SH", "")]),
+        ("B1", "222", "13F-HR/A", None, "NEW HOLDINGS", [("ACME CORP", "AAA", 10, "SH", "")]),
+    ])
+    agg, note = ic.aggregate(b, "31-MAR-2026")
+    e = agg["AAA"]
+    # 250 (restated, replacing 100) + 40 + 10 (added) = 300
+    assert e["shares"] == 300, (e["shares"], note)
+    assert e["holders"] == 2, (e["holders"], note)
+    assert "superseded" in note
+    # The NT filer never reaches the holder count anyway (a notice files no INFOTABLE rows), so
+    # the filter is only visible in the REPORTED manager count - which is what makes that number
+    # honest rather than an inflated "managers who filed something".
+    assert "2 managers" in note, note
+
+
+def check_gzip_is_undone_before_parsing():
+    """The bug that made discovery report "the page has no links". urllib returns the RAW encoded
+    bytes for the gzip we asked for; curl decompresses transparently, so the same URL behaves
+    differently on the command line and is easy to mis-diagnose as an empty page."""
+    import gzip as _g
+    raw = b'<a href="/x/01mar2026-31may2026_form13f.zip">z</a>'
+    assert ic.maybe_gunzip(_g.compress(raw)) == raw
+    assert ic.maybe_gunzip(raw) == raw          # not compressed: passed through untouched
+
+
+def check_dataset_names_parse_under_both_sec_schemes():
+    """SEC renamed these files in 2024, from the holdings quarter to the window in which filings
+    were RECEIVED. The original guessed URL 404s for every quarter after 2023 - which is why the
+    list is discovered from SEC's index page rather than constructed."""
+    assert ic.parse_dataset_name("2023q4_form13f.zip") == ("2023-10-01", "2023-12-31")
+    assert ic.parse_dataset_name("01mar2026-31may2026_form13f.zip") == ("2026-03-01", "2026-05-31")
+    assert ic.parse_dataset_name("readme.txt") is None
+
+
+def check_the_right_dataset_is_picked_for_a_quarter():
+    """A quarter's 13Fs arrive in the window AFTER it ends, so 31-MAR-2026 holdings live in the
+    Mar-May 2026 file. Picking by name would take the wrong file under the post-2024 scheme."""
+    ds = [{"name": "01jun2026-31aug2026_form13f.zip", "start": "2026-06-01", "end": "2026-08-31"},
+          {"name": "01mar2026-31may2026_form13f.zip", "start": "2026-03-01", "end": "2026-05-31"},
+          {"name": "01dec2025-28feb2026_form13f.zip", "start": "2025-12-01", "end": "2026-02-28"}]
+    assert ic.period_end("2026Q1") == "31-MAR-2026"
+    assert ic.period_end("2026-03-31") == "31-MAR-2026"
+    assert ic.prior_quarter("2026Q1") == "2025Q4"
+    assert ic.dataset_for_period(ds, "31-MAR-2026")["name"] == "01mar2026-31may2026_form13f.zip"
+    assert ic.dataset_for_period(ds, "31-DEC-2025")["name"] == "01dec2025-28feb2026_form13f.zip"
+    assert ic.dataset_for_period(ds, "31-DEC-2030") is None      # nothing published yet
+
+
+def check_13f_fails_open_when_it_cannot_fetch(tmp):
+    """No network, a moved URL, an egress policy - none of these may stop a run."""
+    class A:
+        quarter, prior = "2099Q4", "2099Q3"
+        universe = cusip_map = None
+        cache_dir = os.path.join(tmp, "nope")
+        contact, timeout = "", 0.2
+    meta, known, detail, un = ic.build(A(), dict(ic.DEFAULTS))
+    assert meta["ok"] is False and known == {} and detail == {}
+    assert meta["notes"], "a failure must say what it could not do"
 
 
 def check_issuer_name_matching_and_its_refusal_to_guess():
@@ -605,18 +679,6 @@ def check_13f_grades_follow_the_rubric():
     over = ic.grade({"holders": 60, "shares": 99.0}, {"holders": 52, "shares": 80.0}, cfg,
                     float_shares=100.0)
     assert over[0] == "partial" and "float" in over[1], over
-
-
-def check_13f_fails_open_when_it_cannot_fetch(tmp):
-    """No network, a moved URL, an egress policy - none of these may stop a run."""
-    class A:
-        quarter, prior = "2099Q4", "2099Q3"
-        universe = cusip_map = None
-        cache_dir = os.path.join(tmp, "nope")
-        contact, timeout = "", 0.2
-    meta, known, detail, un = ic.build(A(), dict(ic.DEFAULTS))
-    assert meta["ok"] is False and known == {} and detail == {}
-    assert any("could not be fetched" in n for n in meta["notes"]), meta["notes"]
 
 
 def check_fallback_fills_gaps_and_never_overwrites(tmp):

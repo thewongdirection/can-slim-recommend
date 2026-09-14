@@ -480,9 +480,20 @@ than doing a shallow web dig:
 - **`ibkr-review-ticker`** — the fullest single-stock dashboard (fundamentals vs. peers,
   valuation, options/volatility positioning, probability outlook). Invoke it for a candidate that
   needs an individual financial review before it earns a spot on either list.
-- **`securities-filings-lookup`** — the official filing **PDFs** (10-K / 10-Q / 20-F / annual
-  reports) from the right regulator. Use it for the ground-truth statements behind **C**/**A**,
-  and for 13F/Form 4 data for **I**.
+- **`securities-filings-lookup`** — **the primary source for C and A.** It resolves the ticker to
+  its CIK and returns that company's own 10-K / 10-Q / 20-F straight from the regulator, so a
+  contested EPS or sales figure is settled against the filing rather than a vendor's derived
+  field. Verified working: `python scripts/fetch_us_filings.py NVDA --forms 10-Q,10-K --limit 3`
+  returns real filing URLs with their periods. Reach for it whenever TradingView's financials look
+  thin, a restatement has broken TTM growth, or a number is worth arguing about. It needs
+  `www.sec.gov` and `data.sec.gov` reachable.
+  **It cannot grade I, and the reason is a trap worth knowing.** It is keyed on the ticker's OWN
+  CIK, and plenty of operating companies are themselves 13F filers — NVDA's CIK has eleven
+  13F-HRs. But those list what NVIDIA *owns* (Coherent, CoreWeave, Intel, Nebius, Nokia,
+  Synopsys), not who owns NVIDIA. Pointing this skill at I returns a company's portfolio dressed
+  as its shareholder base: a plausible-looking wrong answer, which is worse than an empty one.
+  Sponsorship runs the other way and is an aggregation across every filer — use
+  `scripts/institutional_cache.py`.
 
 **If a companion skill you need is not installed**, do not silently fall back — tell the user it's
 missing and prompt them to install it from its GitHub repo, then continue with the best available

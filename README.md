@@ -184,7 +184,8 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
 - `scripts/institutional_cache.py` — grades **I** from SEC Form 13F, aggregated once per quarter
-  and cached so a run spends no network on it. Fails open to the proxy below.
+  and cached so a run spends no network on it. Discovers the available data sets from SEC's own
+  index rather than constructing URLs, and fails open to the proxy below.
 - `scripts/accumulation.py` — the **I** fallback: institutional buying pressure read from the
   up/down volume footprint. A proxy, and every reason string says so.
 - `scripts/build_report.py` — produces the PDF (default), the HTML, or both, and enforces the
@@ -216,6 +217,13 @@ skipped, never failed), `@page` margin parsing, the dashboard's self-audit rules
 - **TradingView MCP connector** (primary). Falls back to IBKR / Massive Market Data / FMP / web.
 - **`can-slim-grader`** — the sister skill that grades each candidate:
   https://github.com/thewongdirection/can-slim-grader
+- **`securities-filings-lookup`** — the primary source for **C**/**A**: the company's own
+  10-K/10-Q from the regulator, so a contested EPS or sales figure is settled against the filing
+  rather than a vendor's derived field.
+  https://github.com/thewongdirection/securities-filings-lookup
+- **`www.sec.gov` and `data.sec.gov` reachable** — needed by both the filings lookup and the
+  quarterly **I** cache. Without them the skill still runs: I falls back to the volume proxy and
+  C/A to the connector ladder.
 - Web search available in the session.
 - A PDF engine for the default deliverable (Chrome/Chromium/Edge, Playwright, WeasyPrint or
   wkhtmltopdf) — without one you still get the HTML.
