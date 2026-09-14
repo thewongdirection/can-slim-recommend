@@ -384,6 +384,13 @@ python scripts/tv_throttle.py --ok       # worked — relax any penalty
 python scripts/tv_throttle.py --blocked  # 403/rate-limited — escalate the cooldown
 ```
 
+Blocks are tracked **per endpoint family** via `--scope`, because that is how they are imposed:
+measured on this connector, `scanner.tradingview.com` returned 403 while `get_ohlcv` kept
+answering normally. So a scanner block holds `run_screener` / `get_symbol_data` / `get_quote` and
+leaves bar work running — use `--scope ohlcv` for `get_ohlcv`. The call budget stays shared:
+both draw on one upstream quota, and pacing one endpoint while flooding the other is how the next
+block gets earned.
+
 Never run screener calls in parallel. If `--wait` **REFUSES** (exit 1), the connector is blocked
 rather than slow: stop, and tell the user what is blocked and what you completed. **Do not narrow
 the sweep, drop sectors, or switch ranking to get around a 403** — the call itself is fine, only
@@ -3063,6 +3070,13 @@ BLOCKS ESCALATE, SUCCESS DECAYS. Report a 403 with `--blocked` and the cooldown 
 minutes, capped at 30. Report success with `--ok` and the penalty halves. So a connector having a
 bad afternoon is backed off hard, and one that has recovered is not punished for it all session.
 
+BLOCKS ARE PER-ENDPOINT; THE RATE BUDGET IS SHARED. Measured: with scanner.tradingview.com
+returning 403, `get_ohlcv` kept answering normally - the block covers the SCANNER family
+(run_screener, get_symbol_data, get_quote) and not the bars endpoint. So a scanner block must not
+halt bar work that would succeed; `--scope` keeps the two cooldowns apart. The call budget stays
+global, because both endpoints draw on the same upstream quota and pacing one while flooding the
+other is how the next block gets earned.
+
 Usage, around every TradingView call:
   python scripts/tv_throttle.py --wait          # blocks until safe, then records the call
   <make the TradingView call>
@@ -3102,15 +3116,19 @@ DEFAULTS = {
 }
 
 
+SCOPES = ("scanner", "ohlcv", "other")
+
+
 def load():
     try:
         with open(STATE, encoding="utf-8") as f:
             s = json.load(f)
     except (OSError, ValueError):
         s = {}
-    s.setdefault("calls", [])
-    s.setdefault("blocks", 0)
-    s.setdefault("blocked_until", 0.0)
+    s.setdefault("calls", [])                 # shared: one upstream quota
+    s.setdefault("blocked", {})               # per-scope: {scope: {"n": int, "until": float}}
+    for k in SCOPES:
+        s["blocked"].setdefault(k, {"n": 0, "until": 0.0})
     return s
 
 
@@ -3127,10 +3145,11 @@ def prune(s, cfg, now):
     return s
 
 
-def next_free(s, cfg, now):
+def next_free(s, cfg, now, scope="scanner"):
     """Earliest time a call may be made. Returns (when, why)."""
-    if s["blocked_until"] > now:
-        return s["blocked_until"], "cooling down after %d block(s)" % s["blocks"]
+    b = s["blocked"].get(scope) or {"n": 0, "until": 0.0}
+    if b["until"] > now:
+        return b["until"], "%s cooling down after %d block(s)" % (scope, b["n"])
     if s["calls"]:
         gap_ready = max(s["calls"]) + cfg["min_gap"]
     else:
@@ -3148,10 +3167,10 @@ def next_free(s, cfg, now):
     return when, why
 
 
-def cmd_wait(cfg, max_wait, quiet):
+def cmd_wait(cfg, max_wait, quiet, scope):
     s = prune(load(), cfg, time.time())
     now = time.time()
-    when, why = next_free(s, cfg, now)
+    when, why = next_free(s, cfg, now, scope)
     delay = max(0.0, when - now)
     if delay > max_wait:
         print("REFUSED: would need to wait %.0fs (%s), over --max-wait %.0fs. The connector is "
@@ -3171,39 +3190,44 @@ def cmd_wait(cfg, max_wait, quiet):
     return 0
 
 
-def cmd_blocked(cfg):
+def cmd_blocked(cfg, scope):
     s = load()
-    s["blocks"] += 1
-    cool = min(cfg["block_base"] * (2 ** (s["blocks"] - 1)), cfg["block_cap"])
-    s["blocked_until"] = time.time() + cool
+    b = s["blocked"][scope]
+    b["n"] += 1
+    cool = min(cfg["block_base"] * (2 ** (b["n"] - 1)), cfg["block_cap"])
+    b["until"] = time.time() + cool
     save(s)
-    print("block #%d recorded - holding TradingView calls for %.0fs (until %s). Do other work, "
-          "or stop and tell the user; do NOT narrow the sweep to get around a 403, the call "
-          "itself is fine." % (s["blocks"], cool, time.strftime("%H:%M:%S",
-                                                                time.localtime(s["blocked_until"]))))
+    print("%s block #%d recorded - holding %s calls for %.0fs (until %s). Other endpoints are "
+          "unaffected, so keep working where you can; otherwise stop and tell the user. Do NOT "
+          "narrow the sweep to get around a 403 - the call itself is fine."
+          % (scope, b["n"], scope, cool, time.strftime("%H:%M:%S", time.localtime(b["until"]))))
     return 0
 
 
-def cmd_ok(cfg):
+def cmd_ok(cfg, scope):
     s = load()
-    if s["blocks"]:
-        s["blocks"] = max(0, s["blocks"] - 1)   # decay, so one bad patch is not a session-long tax
-        if not s["blocks"]:
-            s["blocked_until"] = 0.0
+    b = s["blocked"][scope]
+    if b["n"]:
+        b["n"] = max(0, b["n"] - 1)        # decay, so one bad patch is not a session-long tax
+        if not b["n"]:
+            b["until"] = 0.0
         save(s)
     return 0
 
 
-def cmd_status(cfg):
+def cmd_status(cfg, scope):
     s = prune(load(), cfg, time.time())
     now = time.time()
     recent = [t for t in s["calls"] if now - t < cfg["window"]]
-    when, why = next_free(s, cfg, now)
-    print("calls in the last %.0fs : %d / %d" % (cfg["window"], len(recent), cfg["max_in_window"]))
-    print("consecutive blocks     : %d" % s["blocks"])
-    if s["blocked_until"] > now:
-        print("BLOCKED for another    : %.0fs" % (s["blocked_until"] - now))
-    print("next call allowed in   : %.1fs (%s)" % (max(0.0, when - now), why))
+    print("calls in the last %.0fs : %d / %d  (shared across endpoints)"
+          % (cfg["window"], len(recent), cfg["max_in_window"]))
+    for k in SCOPES:
+        b = s["blocked"][k]
+        left = max(0.0, b["until"] - now)
+        print("  %-8s blocks: %d%s" % (k, b["n"],
+              ("  BLOCKED for another %.0fs" % left) if left else ""))
+    when, why = next_free(s, cfg, now, scope)
+    print("next %s call in    : %.1fs (%s)" % (scope, max(0.0, when - now), why))
     print("state file             : %s" % STATE)
     return 0
 
@@ -3224,6 +3248,11 @@ def main():
                     help="calls allowed per window (default %(default)s)")
     ap.add_argument("--max-wait", type=float, default=90.0,
                     help="refuse rather than sleep longer than this (default %(default)s)")
+    ap.add_argument("--scope", choices=SCOPES, default="scanner",
+                    help="which endpoint family: 'scanner' is run_screener/get_symbol_data/"
+                         "get_quote, 'ohlcv' is bars. Blocks are tracked per scope because they "
+                         "are imposed per endpoint - a scanner 403 leaves bars working (default "
+                         "%(default)s)")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
@@ -3236,12 +3265,12 @@ def main():
         print("throttle state cleared")
         return 0
     if a.wait:
-        return cmd_wait(cfg, a.max_wait, a.quiet)
+        return cmd_wait(cfg, a.max_wait, a.quiet, a.scope)
     if a.blocked:
-        return cmd_blocked(cfg)
+        return cmd_blocked(cfg, a.scope)
     if a.ok:
-        return cmd_ok(cfg)
-    return cmd_status(cfg)
+        return cmd_ok(cfg, a.scope)
+    return cmd_status(cfg, a.scope)
 
 
 if __name__ == "__main__":
@@ -7198,11 +7227,11 @@ def check_a_block_escalates_and_success_decays_it(tmp):
     _, _, o2 = _thr(tmp, "--blocked")
     assert "300s" in o1 and "600s" in o2, (o1, o2)
     _, _, st = _thr(tmp, "--status")
-    assert "consecutive blocks     : 2" in st, st
+    assert "scanner  blocks: 2" in st, st
     _thr(tmp, "--ok")
     _thr(tmp, "--ok")
     _, _, st = _thr(tmp, "--status")
-    assert "consecutive blocks     : 0" in st and "BLOCKED" not in st, st
+    assert "scanner  blocks: 0" in st and "BLOCKED" not in st, st
 
 
 def check_throttle_refuses_rather_than_stalling_forever(tmp):
@@ -7212,7 +7241,24 @@ def check_throttle_refuses_rather_than_stalling_forever(tmp):
     _thr(tmp, "--blocked")
     d, rc, out = _thr(tmp, "--wait", "--max-wait", "3")
     assert rc == 1 and d < 3.0, (rc, d)
-    assert "do NOT narrow the sweep" in _thr(tmp, "--blocked")[2]
+    # the block message must carry the rule, since this is the moment it is tempting to break
+    assert "not narrow the sweep" in _thr(tmp, "--blocked")[2].lower()
+
+
+def check_a_scanner_block_does_not_halt_bar_calls(tmp):
+    """Measured on the live connector: with scanner.tradingview.com returning 403, get_ohlcv kept
+    answering normally. Blocks are imposed per endpoint family, so halting every TradingView call
+    for a scanner 403 stops work that would have succeeded. The call BUDGET stays shared, because
+    both draw on one upstream quota."""
+    _thr(tmp, "--reset")
+    _thr(tmp, "--blocked", "--scope", "scanner")
+    _, rc_scan, _ = _thr(tmp, "--wait", "--scope", "scanner", "--max-wait", "3")
+    assert rc_scan == 1, "a scanner block must hold scanner calls"
+    d, rc_bars, _ = _thr(tmp, "--wait", "--scope", "ohlcv", "--max-wait", "3")
+    assert rc_bars == 0 and d < 3.0, "a scanner block must NOT hold bar calls (%s)" % rc_bars
+    # ... but the bar call still spends from the shared budget
+    _, _, st = _thr(tmp, "--status")
+    assert "1 / 12" in st.replace("  ", " "), st
 
 
 def check_skill_documents_the_throttle():

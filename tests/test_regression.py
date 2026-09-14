@@ -1094,11 +1094,11 @@ def check_a_block_escalates_and_success_decays_it(tmp):
     _, _, o2 = _thr(tmp, "--blocked")
     assert "300s" in o1 and "600s" in o2, (o1, o2)
     _, _, st = _thr(tmp, "--status")
-    assert "consecutive blocks     : 2" in st, st
+    assert "scanner  blocks: 2" in st, st
     _thr(tmp, "--ok")
     _thr(tmp, "--ok")
     _, _, st = _thr(tmp, "--status")
-    assert "consecutive blocks     : 0" in st and "BLOCKED" not in st, st
+    assert "scanner  blocks: 0" in st and "BLOCKED" not in st, st
 
 
 def check_throttle_refuses_rather_than_stalling_forever(tmp):
@@ -1108,7 +1108,24 @@ def check_throttle_refuses_rather_than_stalling_forever(tmp):
     _thr(tmp, "--blocked")
     d, rc, out = _thr(tmp, "--wait", "--max-wait", "3")
     assert rc == 1 and d < 3.0, (rc, d)
-    assert "do NOT narrow the sweep" in _thr(tmp, "--blocked")[2]
+    # the block message must carry the rule, since this is the moment it is tempting to break
+    assert "not narrow the sweep" in _thr(tmp, "--blocked")[2].lower()
+
+
+def check_a_scanner_block_does_not_halt_bar_calls(tmp):
+    """Measured on the live connector: with scanner.tradingview.com returning 403, get_ohlcv kept
+    answering normally. Blocks are imposed per endpoint family, so halting every TradingView call
+    for a scanner 403 stops work that would have succeeded. The call BUDGET stays shared, because
+    both draw on one upstream quota."""
+    _thr(tmp, "--reset")
+    _thr(tmp, "--blocked", "--scope", "scanner")
+    _, rc_scan, _ = _thr(tmp, "--wait", "--scope", "scanner", "--max-wait", "3")
+    assert rc_scan == 1, "a scanner block must hold scanner calls"
+    d, rc_bars, _ = _thr(tmp, "--wait", "--scope", "ohlcv", "--max-wait", "3")
+    assert rc_bars == 0 and d < 3.0, "a scanner block must NOT hold bar calls (%s)" % rc_bars
+    # ... but the bar call still spends from the shared budget
+    _, _, st = _thr(tmp, "--status")
+    assert "1 / 12" in st.replace("  ", " "), st
 
 
 def check_skill_documents_the_throttle():

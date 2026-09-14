@@ -226,6 +226,13 @@ python scripts/tv_throttle.py --ok       # worked — relax any penalty
 python scripts/tv_throttle.py --blocked  # 403/rate-limited — escalate the cooldown
 ```
 
+Blocks are tracked **per endpoint family** via `--scope`, because that is how they are imposed:
+measured on this connector, `scanner.tradingview.com` returned 403 while `get_ohlcv` kept
+answering normally. So a scanner block holds `run_screener` / `get_symbol_data` / `get_quote` and
+leaves bar work running — use `--scope ohlcv` for `get_ohlcv`. The call budget stays shared:
+both draw on one upstream quota, and pacing one endpoint while flooding the other is how the next
+block gets earned.
+
 Never run screener calls in parallel. If `--wait` **REFUSES** (exit 1), the connector is blocked
 rather than slow: stop, and tell the user what is blocked and what you completed. **Do not narrow
 the sweep, drop sectors, or switch ranking to get around a 403** — the call itself is fine, only
