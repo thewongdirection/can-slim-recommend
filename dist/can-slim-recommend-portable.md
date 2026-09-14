@@ -2368,6 +2368,7 @@ Pure standard library.
 """
 import argparse
 import json
+import re
 import statistics
 import sys
 
@@ -2428,6 +2429,33 @@ def pct_vs(close, level):
     return (close / level - 1.0) * 100.0
 
 
+# Share classes that are NOT the common stock a CAN SLIM grade is about. A live sweep of
+# Electronic Technology returned NYSE:HPE/PC - Hewlett Packard Enterprise's 7.625% Series C
+# Mandatory Convertible Preferred - ranked SEVENTH on 6-month performance, sitting in the results
+# beside HPE itself. Graded as a candidate it would put a preferred stock on a recommendation list
+# with a buy point and a stop, which the method never contemplates: no EPS of its own, no base,
+# and a price that tracks the conversion terms rather than the business.
+NON_COMMON = re.compile(
+    r"\b(preferred|pfd|depositary|depository|warrant|right|unit[s]?\b|notes?|debenture|"
+    r"trust\s+preferred|convertible\s+preferred)\b", re.I)
+
+
+def non_common_reason(row):
+    """Why this row is not common stock, or None. Two independent signals, because either alone
+    misses cases: the DESCRIPTION names the instrument, and TradingView spells a preferred class
+    with a slash in the ticker (HPE/PC). A dotted class like BRK.B is ordinary common stock and
+    must NOT be caught here."""
+    desc = str(row.get("description") or row.get("company") or "")
+    m = NON_COMMON.search(desc)
+    if m:
+        return "not common stock - %s (%s)" % (m.group(0).lower(), desc[:48])
+    sym = str(row.get("symbol") or "")
+    tick = sym.split(":")[-1]
+    if "/" in tick:
+        return "not common stock - '%s' is a preferred/when-issued class" % tick
+    return None
+
+
 def score_row(row, window, bench_perf, cfg):
     """Compute the derived metrics + triage verdict for one screener row."""
     sym = row.get("symbol") or row.get("name") or "?"
@@ -2476,6 +2504,9 @@ def score_row(row, window, bench_perf, cfg):
         elif fail:
             drops.append(reason)
 
+    nc = non_common_reason(row)
+    if nc:
+        drops.append(nc)
     check(close, "price", close is not None and close < cfg["min_price"],
           "price below the %.0f floor (cheap stock)" % cfg["min_price"])
     check(dollar_vol, "liquidity", dollar_vol is not None and dollar_vol < cfg["min_dollar_vol"],
@@ -3097,14 +3128,24 @@ halt bar work that would succeed; `--scope` keeps the two cooldowns apart. The c
 global, because both endpoints draw on the same upstream quota and pacing one while flooding the
 other is how the next block gets earned.
 
-Usage, around every TradingView call:
-  python scripts/tv_throttle.py --wait          # blocks until safe, then records the call
-  <make the TradingView call>
-  python scripts/tv_throttle.py --ok            # it worked; relax the penalty
-  python scripts/tv_throttle.py --blocked       # 403/rate-limited; escalate the cooldown
+THE RATE IS LEARNED, NOT CONFIGURED. scanner.tradingview.com is an undocumented internal
+endpoint and publishes no limit anywhere. (Figures that surface in a search - "2 req/sec Basic,
+5 req/sec Pro" - belong to tradingviewapi.com, an unrelated commercial reseller, and do not
+govern this connector.) So `--observe` reads each response and adapts: a named "Retry after Ns"
+is obeyed exactly, a rate signal halves the rate, a 403 escalates the block ladder, and an
+unbroken run of clean calls eases it up. The spacing between calls is DERIVED from that rate
+(60/rate), so raising the rate actually raises throughput - a fixed gap would silently cap it.
 
-  python scripts/tv_throttle.py --status        # budget, penalty, next safe time
+Usage, around every TradingView call:
+  python scripts/tv_throttle.py --wait --scope scanner      # blocks until safe, records the call
+  {make the TradingView call}
+  python scripts/tv_throttle.py --observe '{the response}'  # ALWAYS: adapt to what it just said
+
+  python scripts/tv_throttle.py --status        # learned rate, budget, blocks, next safe time
   python scripts/tv_throttle.py --reset         # clear state (new session, or after a long idle)
+
+`--ok` and `--blocked` are the manual equivalents of what `--observe` decides for you; prefer
+`--observe`, which is the only path that also adapts the RATE.
 
 Exit status is 0 for --wait even when it had to sleep - waiting is success. It is 1 only when
 --wait would have to sleep past --max-wait, so a caller can decide to stop rather than stall.
@@ -3124,9 +3165,10 @@ ROOT = os.path.dirname(HERE)
 STATE = os.environ.get("CANSLIM_THROTTLE_STATE") or os.path.join(ROOT, "data", ".tv-throttle.json")
 
 DEFAULTS = {
-    # One call every few seconds, never in parallel. The connector tolerates far more in short
-    # bursts, which is exactly the trap: the burst succeeds and the block arrives later.
-    "min_gap": 4.0,
+    # A FLOOR on the spacing, not the spacing itself. The actual gap is derived from the learned
+    # rate (60/rate), because a fixed 4s gap silently caps throughput at 15/min however high the
+    # learned rate climbs - which made the 90/min ceiling decorative. Never in parallel either way.
+    "min_gap": 0.75,
     # A rolling budget on top of the gap, so a long sweep cannot creep up on the limit by
     # staying just inside the per-call spacing for a hundred calls.
     "window": 60.0,
@@ -3180,8 +3222,9 @@ def next_free(s, cfg, now, scope="scanner"):
     b = s["blocked"].get(scope) or {"n": 0, "until": 0.0}
     if b["until"] > now:
         return b["until"], "%s cooling down after %d block(s)" % (scope, b["n"])
+    gap = effective_gap(s, cfg)
     if s["calls"]:
-        gap_ready = max(s["calls"]) + cfg["min_gap"]
+        gap_ready = max(s["calls"]) + gap
     else:
         gap_ready = now
     recent = [t for t in s["calls"] if now - t < cfg["window"]]
@@ -3193,16 +3236,31 @@ def next_free(s, cfg, now, scope="scanner"):
     when = max(gap_ready, win_ready, now)
     if when <= now:
         return now, "clear"
-    why = "min gap %.1fs" % cfg["min_gap"] if gap_ready >= win_ready else \
+    why = "min gap %.1fs" % gap if gap_ready >= win_ready else \
           "budget %d/%.0fs is full" % (effective_budget(s, cfg), cfg["window"])
     return when, why
 
 
+def effective_rate(s, cfg):
+    """The learned rate, floored and capped. One place, so gap and budget cannot disagree."""
+    r = int(s.get("rate", cfg["start_rate"]))
+    return max(cfg["min_rate"], min(r, cfg["max_rate"]))
+
+
+def effective_gap(s, cfg):
+    """Seconds between calls, DERIVED from the learned rate rather than fixed.
+
+    A constant gap and a learned rate are two throttles fighting each other: at 4s apart nothing
+    above 15/min is reachable, so every rate the controller learned above that was decorative.
+    `--min-gap` is now a floor, for the case where the rate climbs high enough that spacing stops
+    being meaningful on its own.
+    """
+    return max(cfg["min_gap"], 60.0 / effective_rate(s, cfg))
+
+
 def effective_budget(s, cfg):
     """Calls allowed this window: the LEARNED rate, floored, capped, and never over --max-rate."""
-    r = int(s.get("rate", cfg["start_rate"]))
-    r = max(cfg["min_rate"], min(r, cfg["max_rate"]))
-    return max(1, int(r * cfg["window"] / 60.0))
+    return max(1, int(effective_rate(s, cfg) * cfg["window"] / 60.0))
 
 
 def cmd_wait(cfg, max_wait, quiet, scope):
@@ -3304,22 +3362,36 @@ def observe(text, cfg, scope="scanner"):
     if m:
         secs = float(m.group(1))
         s["blocked"][scope] = {"n": s["blocked"][scope]["n"] + 1, "until": time.time() + secs}
+        s["streak"] = 0      # a negative signal restarts the run of clean calls
         s["rate"] = max(cfg["min_rate"], int(s.get("rate", cfg["start_rate"]) / 2))
         save(s)
         return "retry-after", ("TradingView asked for %.0fs - obeying it exactly, and halving the "
                                "rate to %d/min" % (secs, s["rate"]))
     if BLOCK_WORDS.search(t) and not RATE_WORDS.search(t):
         s["rate"] = max(cfg["min_rate"], int(s.get("rate", cfg["start_rate"]) / 2))
+        s["streak"] = 0      # a negative signal restarts the run of clean calls
         save(s)
         cmd_blocked(cfg, scope)
         return "blocked", "rate halved to %d/min" % s["rate"]
     if RATE_WORDS.search(t):
         s["rate"] = max(cfg["min_rate"], int(s.get("rate", cfg["start_rate"]) / 2))
+        s["streak"] = 0      # a negative signal restarts the run of clean calls
         s["blocked"][scope]["until"] = max(s["blocked"][scope]["until"], time.time() + 60)
         save(s)
         return "rate-limited", "rate halved to %d/min, holding 60s" % s["rate"]
 
-    # clean response: additive increase, but only after a run of them, and never past the cap
+    # Clean response. Two things happen, and BOTH matter:
+    #   1. the block count decays, or escalation ratchets up for the rest of the session - the
+    #      docstring promises "success decays" and only `--ok` was honouring it, while SKILL.md
+    #      routes every call through `--observe`;
+    #   2. the rate rises additively, but only after an unbroken RUN of clean calls. The streak is
+    #      cleared by any negative signal above, so a single clean call cannot immediately re-raise
+    #      the rate that a block just halved - which would defeat the multiplicative decrease.
+    b = s["blocked"][scope]
+    if b["n"]:
+        b["n"] = max(0, b["n"] - 1)
+        if not b["n"]:
+            b["until"] = 0.0
     s["streak"] = s.get("streak", 0) + 1
     old = s.get("rate", cfg["start_rate"])
     if s["streak"] >= cfg["raise_after"] and old < cfg["max_rate"]:
@@ -6295,6 +6367,7 @@ import relative_strength as rs                              # noqa: E402
 import html_to_pdf as h2p                                   # noqa: E402
 import build_report as br                                   # noqa: E402
 import check_for_updates as cfu                             # noqa: E402
+import tv_throttle as thr                                   # noqa: E402
 import accumulation as acc                                  # noqa: E402
 import institutional_cache as ic                            # noqa: E402
 
@@ -7441,6 +7514,69 @@ def check_status_survives_a_closed_pipe(tmp):
                        % (sys.executable, os.path.join(ROOT, "scripts", "tv_throttle.py")),
                        shell=True, capture_output=True, text=True, timeout=60)
     assert "BrokenPipeError" not in r.stdout, r.stdout
+
+
+def check_the_gap_follows_the_learned_rate(tmp):
+    """A fixed gap and a learned rate are two throttles fighting each other: at 4s apart nothing
+    above 15/min is reachable, so every rate above that was decorative and the 90/min cap meant
+    nothing. Gap and budget now both read effective_rate(), so they cannot disagree."""
+    cfg = dict(thr.DEFAULTS)
+    for rate in (4, 12, 24, 48):
+        gap = thr.effective_gap({"rate": rate}, cfg)
+        assert abs(60.0 / gap - rate) < 0.01, (rate, gap)
+        assert thr.effective_budget({"rate": rate}, cfg) == rate
+    # the floor still applies at the top end, and the cap still binds
+    assert thr.effective_gap({"rate": 10000}, cfg) == cfg["min_gap"]
+    assert thr.effective_budget({"rate": 10000}, cfg) == cfg["max_rate"]
+
+
+def check_a_clean_observation_decays_the_block_count(tmp):
+    """The docstring promises "success decays", and only --ok was honouring it while SKILL.md
+    routes every call through --observe. Left unfixed, escalation ratchets up permanently: the
+    second block of a session starts at 10 minutes even after everything recovered."""
+    _thr(tmp, "--reset")
+    _thr(tmp, "--observe", "HTTPStatusError: 403 Forbidden")
+    _, _, st = _thr(tmp, "--status")
+    assert "scanner  blocks: 1" in st, st
+    for _ in range(3):
+        _thr(tmp, "--observe", '{"success":true}')
+    _, _, st = _thr(tmp, "--status")
+    assert "scanner  blocks: 0" in st and "BLOCKED" not in st, st
+
+
+def check_a_block_resets_the_clean_call_streak(tmp):
+    """Multiplicative decrease only works if the backoff STICKS. With the streak carried across a
+    block, nine clean calls then a rate-limit then one more clean call re-raised the rate that was
+    just halved - undoing the decrease with a single success."""
+    _thr(tmp, "--reset")
+    for _ in range(9):
+        _thr(tmp, "--observe", '{"success":true}')
+    _, _, out = _thr(tmp, "--observe", '{"error":"Too Many Requests"}')
+    assert "halved to 6/min" in out, out
+    _thr(tmp, "--observe", '{"success":true}')
+    _, _, st = _thr(tmp, "--status")
+    assert "learned rate           : 6/min" in st, "one clean call re-raised a halved rate: %s" % st
+
+
+def check_preferred_and_warrant_rows_are_not_graded():
+    """A live sweep returned NYSE:HPE/PC - HPE's 7.625% Series C Mandatory Convertible Preferred -
+    ranked SEVENTH on 6-month performance, next to HPE itself. Graded as a candidate it would put
+    a preferred stock on a recommendation list with a buy point and a stop: no EPS of its own, no
+    base, and a price that tracks conversion terms rather than the business."""
+    pfd = ss.score_row(row(symbol="NYSE:HPE/PC", description="Hewlett Packard Enterprise Company "
+                           "7.625% Series C Mandatory Convertible Preferred Stock"),
+                       "Perf.6M", 10.0, CFG)
+    assert pfd["triage"] == "drop" and any("not common stock" in d for d in pfd["drop_reasons"])
+    for sym, desc in [("NASDAQ:ABCDW", "Acme Corp Warrant"), ("NASDAQ:XYZU", "Something Units"),
+                      ("NYSE:FOO/PB", "Foo Inc Series B Preferred")]:
+        out = ss.score_row(row(symbol=sym, description=desc), "Perf.6M", 10.0, CFG)
+        assert out["triage"] == "drop", (sym, out["drop_reasons"])
+    # ...and ordinary common stock still passes, including a DOTTED class like BRK.B
+    for sym, desc in [("NYSE:HPE", "Hewlett Packard Enterprise Company"),
+                      ("NYSE:BRK.B", "Berkshire Hathaway Inc. Class B"),
+                      ("NASDAQ:NVDA", "NVIDIA Corp")]:
+        out = ss.score_row(row(symbol=sym, description=desc), "Perf.6M", 10.0, CFG)
+        assert out["triage"] == "grade", (sym, out["drop_reasons"])
 
 
 def check_skill_documents_the_throttle():

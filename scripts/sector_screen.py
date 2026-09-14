@@ -46,6 +46,7 @@ Pure standard library.
 """
 import argparse
 import json
+import re
 import statistics
 import sys
 
@@ -106,6 +107,33 @@ def pct_vs(close, level):
     return (close / level - 1.0) * 100.0
 
 
+# Share classes that are NOT the common stock a CAN SLIM grade is about. A live sweep of
+# Electronic Technology returned NYSE:HPE/PC - Hewlett Packard Enterprise's 7.625% Series C
+# Mandatory Convertible Preferred - ranked SEVENTH on 6-month performance, sitting in the results
+# beside HPE itself. Graded as a candidate it would put a preferred stock on a recommendation list
+# with a buy point and a stop, which the method never contemplates: no EPS of its own, no base,
+# and a price that tracks the conversion terms rather than the business.
+NON_COMMON = re.compile(
+    r"\b(preferred|pfd|depositary|depository|warrant|right|unit[s]?\b|notes?|debenture|"
+    r"trust\s+preferred|convertible\s+preferred)\b", re.I)
+
+
+def non_common_reason(row):
+    """Why this row is not common stock, or None. Two independent signals, because either alone
+    misses cases: the DESCRIPTION names the instrument, and TradingView spells a preferred class
+    with a slash in the ticker (HPE/PC). A dotted class like BRK.B is ordinary common stock and
+    must NOT be caught here."""
+    desc = str(row.get("description") or row.get("company") or "")
+    m = NON_COMMON.search(desc)
+    if m:
+        return "not common stock - %s (%s)" % (m.group(0).lower(), desc[:48])
+    sym = str(row.get("symbol") or "")
+    tick = sym.split(":")[-1]
+    if "/" in tick:
+        return "not common stock - '%s' is a preferred/when-issued class" % tick
+    return None
+
+
 def score_row(row, window, bench_perf, cfg):
     """Compute the derived metrics + triage verdict for one screener row."""
     sym = row.get("symbol") or row.get("name") or "?"
@@ -154,6 +182,9 @@ def score_row(row, window, bench_perf, cfg):
         elif fail:
             drops.append(reason)
 
+    nc = non_common_reason(row)
+    if nc:
+        drops.append(nc)
     check(close, "price", close is not None and close < cfg["min_price"],
           "price below the %.0f floor (cheap stock)" % cfg["min_price"])
     check(dollar_vol, "liquidity", dollar_vol is not None and dollar_vol < cfg["min_dollar_vol"],

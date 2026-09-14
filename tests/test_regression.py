@@ -37,6 +37,7 @@ import relative_strength as rs                              # noqa: E402
 import html_to_pdf as h2p                                   # noqa: E402
 import build_report as br                                   # noqa: E402
 import check_for_updates as cfu                             # noqa: E402
+import tv_throttle as thr                                   # noqa: E402
 import accumulation as acc                                  # noqa: E402
 import institutional_cache as ic                            # noqa: E402
 
@@ -1183,6 +1184,69 @@ def check_status_survives_a_closed_pipe(tmp):
                        % (sys.executable, os.path.join(ROOT, "scripts", "tv_throttle.py")),
                        shell=True, capture_output=True, text=True, timeout=60)
     assert "BrokenPipeError" not in r.stdout, r.stdout
+
+
+def check_the_gap_follows_the_learned_rate(tmp):
+    """A fixed gap and a learned rate are two throttles fighting each other: at 4s apart nothing
+    above 15/min is reachable, so every rate above that was decorative and the 90/min cap meant
+    nothing. Gap and budget now both read effective_rate(), so they cannot disagree."""
+    cfg = dict(thr.DEFAULTS)
+    for rate in (4, 12, 24, 48):
+        gap = thr.effective_gap({"rate": rate}, cfg)
+        assert abs(60.0 / gap - rate) < 0.01, (rate, gap)
+        assert thr.effective_budget({"rate": rate}, cfg) == rate
+    # the floor still applies at the top end, and the cap still binds
+    assert thr.effective_gap({"rate": 10000}, cfg) == cfg["min_gap"]
+    assert thr.effective_budget({"rate": 10000}, cfg) == cfg["max_rate"]
+
+
+def check_a_clean_observation_decays_the_block_count(tmp):
+    """The docstring promises "success decays", and only --ok was honouring it while SKILL.md
+    routes every call through --observe. Left unfixed, escalation ratchets up permanently: the
+    second block of a session starts at 10 minutes even after everything recovered."""
+    _thr(tmp, "--reset")
+    _thr(tmp, "--observe", "HTTPStatusError: 403 Forbidden")
+    _, _, st = _thr(tmp, "--status")
+    assert "scanner  blocks: 1" in st, st
+    for _ in range(3):
+        _thr(tmp, "--observe", '{"success":true}')
+    _, _, st = _thr(tmp, "--status")
+    assert "scanner  blocks: 0" in st and "BLOCKED" not in st, st
+
+
+def check_a_block_resets_the_clean_call_streak(tmp):
+    """Multiplicative decrease only works if the backoff STICKS. With the streak carried across a
+    block, nine clean calls then a rate-limit then one more clean call re-raised the rate that was
+    just halved - undoing the decrease with a single success."""
+    _thr(tmp, "--reset")
+    for _ in range(9):
+        _thr(tmp, "--observe", '{"success":true}')
+    _, _, out = _thr(tmp, "--observe", '{"error":"Too Many Requests"}')
+    assert "halved to 6/min" in out, out
+    _thr(tmp, "--observe", '{"success":true}')
+    _, _, st = _thr(tmp, "--status")
+    assert "learned rate           : 6/min" in st, "one clean call re-raised a halved rate: %s" % st
+
+
+def check_preferred_and_warrant_rows_are_not_graded():
+    """A live sweep returned NYSE:HPE/PC - HPE's 7.625% Series C Mandatory Convertible Preferred -
+    ranked SEVENTH on 6-month performance, next to HPE itself. Graded as a candidate it would put
+    a preferred stock on a recommendation list with a buy point and a stop: no EPS of its own, no
+    base, and a price that tracks conversion terms rather than the business."""
+    pfd = ss.score_row(row(symbol="NYSE:HPE/PC", description="Hewlett Packard Enterprise Company "
+                           "7.625% Series C Mandatory Convertible Preferred Stock"),
+                       "Perf.6M", 10.0, CFG)
+    assert pfd["triage"] == "drop" and any("not common stock" in d for d in pfd["drop_reasons"])
+    for sym, desc in [("NASDAQ:ABCDW", "Acme Corp Warrant"), ("NASDAQ:XYZU", "Something Units"),
+                      ("NYSE:FOO/PB", "Foo Inc Series B Preferred")]:
+        out = ss.score_row(row(symbol=sym, description=desc), "Perf.6M", 10.0, CFG)
+        assert out["triage"] == "drop", (sym, out["drop_reasons"])
+    # ...and ordinary common stock still passes, including a DOTTED class like BRK.B
+    for sym, desc in [("NYSE:HPE", "Hewlett Packard Enterprise Company"),
+                      ("NYSE:BRK.B", "Berkshire Hathaway Inc. Class B"),
+                      ("NASDAQ:NVDA", "NVIDIA Corp")]:
+        out = ss.score_row(row(symbol=sym, description=desc), "Perf.6M", 10.0, CFG)
+        assert out["triage"] == "grade", (sym, out["drop_reasons"])
 
 
 def check_skill_documents_the_throttle():
