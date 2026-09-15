@@ -791,6 +791,67 @@ It activates when you ask for stock ideas — *"recommend some stocks"*, *"what 
 *"give me a list of growth stocks"*, *"best names in each sector"*, *"top sector performers"*,
 *"screen for CAN SLIM names"*, *"recommend AI stocks"*.
 
+## Install
+
+**Clone it. Do not unzip it** — that one choice decides whether the skill can ever update itself.
+
+```bash
+git clone https://github.com/thewongdirection/can-slim-recommend.git \
+  ~/.claude/skills/can-slim-recommend
+```
+
+That is the whole install. It works because `SKILL.md` sits at the repo root, so cloning the repo
+*as* the skill directory gives you `~/.claude/skills/can-slim-recommend/SKILL.md` **and** a git
+checkout in one step. A fresh clone lands on `main` tracking `origin/main`, which is exactly the
+upstream the version check needs. For a project-scoped install, clone to
+`{your-project}/.claude/skills/can-slim-recommend` instead.
+
+**Why not the zip.** Step 0 of every run compares this checkout against its git remote. A zip
+export has no `.git`, so there is nothing to compare and the check reports:
+
+```
+Version not verified - not a git checkout
+```
+
+It fails open and the run continues, but the copy is frozen forever. The zip from
+`scripts/export_portable.py` is for handing the skill to a **non-Claude assistant** (see below),
+not for installing it here.
+
+### Keeping auto-update working
+
+Four things, none of which are obvious:
+
+- **Do not edit files in place.** `--update` refuses to fast-forward a dirty tree — it will not
+  pull over your work. Commit any customisation and expect to merge rather than fast-forward.
+- **`data/` will not dirty the tree.** The throttle state and the I-cache both write there, and it
+  is gitignored, so `git status` stays clean and updates keep succeeding after real use.
+- **git and network access to github.com are required.** Without either, step 0 says so plainly
+  and the run continues on whatever copy you have. It never blocks.
+- **Code updates land this run; instruction updates land the next.** `scripts/` and `assets/` are
+  read from disk when they execute. `SKILL.md` and `references/` were already loaded into context
+  before step 0 ran, so a change to those takes effect on the following invocation — the check
+  reports the two groups separately rather than implying otherwise.
+
+Check or update by hand at any time:
+
+```bash
+python scripts/check_for_updates.py            # report only
+python scripts/check_for_updates.py --update   # fast-forward when it is safe to
+```
+
+### One thing auto-update does not refresh
+
+The **I-cache** (institutional sponsorship) is built from SEC bulk data, not from this repo.
+Rebuild it once a quarter, after each 13F deadline — mid-Feb, mid-May, mid-Aug, mid-Nov:
+
+```bash
+python scripts/institutional_cache.py --quarter 2026Q1 \
+  --sec-tickers auto --contact you@example.com -o data/i-cache.json
+```
+
+Takes about 40 seconds and needs `www.sec.gov` reachable. Without it the skill still runs — **I**
+falls back to the volume proxy in `scripts/accumulation.py`, and every reason string says so.
+
 ## What it produces
 
 Two lists, both built from the same graded pool:
