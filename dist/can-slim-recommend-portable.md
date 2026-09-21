@@ -262,6 +262,42 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
   drop to the next rung rather than retrying. Fall through and say so in `dataWarning`; never
   block the run.
 
+### When a source is unavailable: fall back to PUBLIC data, and say so in the report
+
+**Never abandon a letter, and never guess one, because a connector is down.** Every connector in
+this skill can be blocked, gated or rate-limited, and all of them have been at least once. When
+that happens, take the figure from a **public source** — a regulator filing, an exchange page, a
+public market-data site, or a web search — and carry on.
+
+The rung order for each datum is in `tradingview-sector-sweep.md`; the public rung sits above FMP
+and below the connectors. Prefer public sources in this order, because they are not equally good
+evidence:
+
+1. **The primary document** — SEC EDGAR (10-Q/10-K for C and A, 13F for I). Authoritative, free,
+   and what the connector was reporting second-hand anyway.
+2. **An exchange or issuer page** — the company's own investor-relations release.
+3. **A public market-data site** (Finviz, Yahoo Finance, stockanalysis.com) for prices, ranked
+   screens and ownership levels.
+4. **A dated web search result**, last, and only for things the above cannot answer.
+
+**Disclosure is not optional, and the report enforces it.** A substituted figure is marked
+`status:"public"` in `CONFIG.sourceMap`, with `source` naming the actual public source, plus a
+matching entry in `CONFIG.freshness.failures` saying which connector failed and why. The dashboard
+then prints its own amber banner listing every substituted figure, the sources table chips each
+row **PUBLIC SOURCE**, and `build_report.py` **refuses to emit a report** where a public row is not
+declared. Set `dataWarning` too.
+
+Three rules that keep a fallback honest:
+
+- **Public is not stale.** `public` means current data from a substitute source; `reused` means
+  old data. Never use one for the other — they are different admissions and the reader is
+  weighing different risks.
+- **A fallback is only legitimate after the specified source was actually tried and failed.** The
+  failure entry is what justifies the substitution; do not reach for a public source because it is
+  easier.
+- **Say what the substitution costs.** A screener rebuilt from public pages may not rank an
+  identical universe; say so in `note` rather than implying the sweep was equivalent.
+
 ## Workflow
 
 Work in order. Scale research depth to the request; keep the user informed as you go.
@@ -1777,11 +1813,18 @@ as a test, and if it is gated or empty, drop to the next rung rather than retryi
 
 | Need | Fallback order |
 |---|---|
-| Sector top performers | IBKR `search_investment_topics` + `get_theme_details` → web new-high/leaders lists → FMP `search-company-screener` (last: ranks by market cap, not performance, so it needs re-ranking before it answers the question at all) |
-| Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period:"TWO_YEARS"`, `step:"ONE_DAY"`) |
-| Live last price | IBKR `get_price_snapshot` → FMP `batch-quote` (last) |
-| C / A fundamentals | **`securities-filings-lookup` (primary — the 10-K/10-Q itself, verified working Sept 2026)** → Daloopa → bigdata.com → LSEG → web → FMP (last) |
-| I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → web → FMP `form13F` (last, and **verified dead on this account**: ACCESS DENIED, needs Ultimate/Enterprise) |
+| Sector top performers | IBKR `search_investment_topics` + `get_theme_details` → **public: Finviz screener / stockanalysis.com / IBD-style new-high lists** → FMP `search-company-screener` (last: ranks by market cap, not performance, so it needs re-ranking before it answers the question at all) |
+| Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period:"TWO_YEARS"`, `step:"ONE_DAY"`) → **public: Yahoo Finance / stockanalysis.com history** |
+| Live last price | IBKR `get_price_snapshot` → **public: exchange or Yahoo Finance quote page** → FMP `batch-quote` (last) |
+| C / A fundamentals | **`securities-filings-lookup` (primary — the 10-K/10-Q itself, verified working Sept 2026)** → Daloopa → bigdata.com → LSEG → **public: SEC EDGAR directly (`data.sec.gov` submissions + the filing), then the issuer's IR release** → FMP (last) |
+| I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → **public: Finviz `Inst Own`/`Inst Trans`, stockanalysis.com holders page** → FMP `form13F` (last, and **verified dead on this account**: ACCESS DENIED, needs Ultimate/Enterprise) |
+
+**Every ladder above ends in a PUBLIC rung, and that is deliberate.** A blocked connector must
+never cost a letter: take the figure from the public source, mark the row `status:"public"` in
+`CONFIG.sourceMap` with a matching `freshness.failures` entry, and the dashboard prints its own
+banner naming every substituted figure. `build_report.py` refuses a report where a public row is
+undeclared, so the substitution cannot ship silently. `public` is NOT `reused` - the data is
+current, it just came from somewhere else.
 
 **FMP is the LAST rung on every ladder above — below web search.** That ordering is deliberate
 and evidence-based, not a preference. Checked on this account in September 2026, `form13F`
@@ -5092,6 +5135,10 @@ The report template. Fill its CONFIG object and it renders itself, audits itself
   .fchip.fresh{background:var(--pass-bg);color:var(--pass)}
   .fchip.reused{background:var(--partial-bg);color:var(--partial)}
   .fchip.unavailable{background:var(--fail-bg);color:var(--fail)}
+  /* PUBLIC is deliberately its own colour, not a shade of FRESH or REUSED. The figure IS
+     current - it simply did not come from the source this skill specifies - and conflating it
+     with either staleness or success is exactly the confusion this status exists to prevent. */
+  .fchip.public{background:var(--accent-bg,#eef2ff);color:var(--accent,#3538cd)}
   .datestamp{display:inline-flex;align-items:center;gap:7px;margin:14px 0 0;padding:7px 13px;
     border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;
     background:var(--panel);font-family:var(--mono);font-size:13px;color:var(--ink)}
@@ -5208,6 +5255,7 @@ The report template. Fill its CONFIG object and it renders itself, audits itself
   <div class="market" id="market"></div>
   <div id="checks"></div>
   <div id="freshness"></div>
+  <div id="substituted"></div>
   <div id="dataWarning"></div>
   <div id="dataProvenance"></div>
   <div class="funnel" id="funnel"></div>
@@ -5400,12 +5448,18 @@ const CONFIG = {
        asOf    - WHAT DATE THE DATA ITSELF IS FROM (newest bar, filed quarter, ...). Required
                  for a reused row; strongly preferred everywhere, since "pulled today" says
                  nothing about whether the figure underneath is a week old.
-       status  - "fresh"       pulled successfully in THIS run (the default when omitted)
+       status  - "fresh"       pulled successfully in THIS run from the SPECIFIED source
+                 "public"      the specified source was unavailable, so a PUBLIC substitute was
+                               used (a regulator filing, an exchange page, a public data site, a
+                               web search). The figure is CURRENT - this is not staleness - but it
+                               did not come through the feed the skill specifies, so the report
+                               names it in its own banner. `source` must say which public source.
                  "reused"      a fresh pull was attempted and failed, so older data was used
                  "unavailable" no data at all - the report works around the gap and says how
        note    - anything a reader needs to judge the figure
-     A "reused" or "unavailable" row MUST have a matching entry in freshness.failures, or the
-     self-audit refuses the report. */
+     A "public", "reused" or "unavailable" row MUST have a matching entry in freshness.failures,
+     or the self-audit refuses the report. A public substitute is only ever legitimate AFTER the
+     specified source was tried and failed, so the failure is the thing that justifies it. */
   sourceMap: [
     // { item:"Sector sweep (top 10 per sector)", source:"TradingView run_screener, Perf.6M",
     //   pulled:"2026-08-23 14:05 UTC", asOf:"2026-08-21 close", status:"fresh",
@@ -5413,7 +5467,12 @@ const CONFIG = {
     // { item:"C - quarterly EPS & sales", source:"TradingView get_financial_history (fq)",
     //   pulled:"2026-08-23 14:12 UTC", asOf:"Q2/2026 as filed", status:"fresh", note:"" },
     // { item:"I - institutional sponsorship", source:"SEC 13F via securities-filings-lookup",
-    //   pulled:"-", asOf:"", status:"unavailable", note:"gated this run; I capped at partial" }
+    //   pulled:"-", asOf:"", status:"unavailable", note:"gated this run; I capped at partial" },
+    // { item:"Sector sweep (top 10 per sector)",
+    //   source:"public: Finviz sector screener + Yahoo Finance quote pages (web)",
+    //   pulled:"2026-09-21 14:05 UTC", asOf:"2026-09-18 close", status:"public",
+    //   note:"TradingView run_screener was 403-blocked server-side; ranking rebuilt from public "+
+    //        "pages, so the universe may differ slightly from a TradingView sweep" }
   ],
 
   // The screening funnel - the numbers that make the sweep auditable. Rendered as stat tiles.
@@ -5575,6 +5634,26 @@ $("market").innerHTML =
   (m.distributionDays?'<div class="dd">Distribution days: '+esc(m.distributionDays)+'</div>':'');
 
 // data provenance (which sources actually contributed) + a warning when any is stale/gated.
+/* ---- substituted sources: which figures came from a PUBLIC fallback ----
+   Separate from the freshness banner on purpose. Staleness and substitution are different
+   admissions: a reused figure is old, a public one is current but came from somewhere this skill
+   did not specify. A reader deciding how much weight to give a grade needs to know which. */
+(function(){
+  const pub = (CONFIG.sourceMap||[]).filter(r =>
+    String(r.status||"fresh").trim().toLowerCase() === "public");
+  if (!pub.length) return;
+  const rows = pub.map(r =>
+    '<li><b>'+esc(r.item)+'</b> - from '+esc(r.source||'an unnamed public source')+
+    (r.asOf ? ' (data as of '+esc(r.asOf)+')' : '') +
+    (r.note ? '. '+esc(r.note) : '') + '</li>').join('');
+  $("substituted").innerHTML =
+    '<div class="callout warn"><b>&#9888; '+pub.length+' figure'+(pub.length>1?'s':'')+
+    ' came from a public source, not the one this skill specifies.</b> The connector that would '+
+    'normally supply '+(pub.length>1?'these':'this')+' was unavailable for this run, so a public '+
+    'substitute was used instead. The data is current, but it has not been through the same feed '+
+    'as the rest of the report - weigh it accordingly.<ul>'+rows+'</ul></div>';
+})();
+
 const prov = CONFIG.dataProvenance || CONFIG.dataSource;
 if (prov){
   $("dataProvenance").innerHTML = '<div class="provenance"><b>Data sources used:</b> '+esc(prov)+'</div>';
@@ -6190,7 +6269,7 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
      figure underneath is. A source pulled today can still hand back last week's number. */
   $("srcHead").innerHTML = ["What","Source (tool / feed)","Pulled","Data as of","Status","Note"]
     .map(c=>'<th>'+c+'</th>').join('');
-  const STATUS = {fresh:"FRESH", reused:"REUSED", unavailable:"UNAVAILABLE"};
+  const STATUS = {fresh:"FRESH", reused:"REUSED", public:"PUBLIC SOURCE", unavailable:"UNAVAILABLE"};
   $("srcRows").innerHTML = rows.length
     ? rows.map(r=>{
         const st = String(r.status||"fresh").trim().toLowerCase();
@@ -6203,11 +6282,19 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
           '<td class="grp">'+esc(r.note||'')+'</td></tr>';
       }).join('')
     : '<tr><td colspan="6" style="padding:16px;color:var(--fail)">CONFIG.sourceMap is empty - fill it before shipping this report.</td></tr>';
-  /* The subtitle is derived, never asserted: a run that fell back cannot print "pulled fresh". */
-  const nf = rows.filter(r=> String(r.status||"fresh").trim().toLowerCase() !== "fresh").length;
-  $("srcSub").textContent = nf
-    ? '- every figure traces to one of these; ' + nf + ' of ' + rows.length +
-      ' did not come back fresh this run (see the banner above)'
+  /* The subtitle is derived, never asserted: a run that fell back cannot print "pulled fresh".
+     PUBLIC is counted separately from stale, because it is a different admission - the figure is
+     current, it just came from a substitute source - and lumping them together would either
+     overstate the staleness or hide the substitution. */
+  const st_ = r => String(r.status||"fresh").trim().toLowerCase();
+  const pub = rows.filter(r=> st_(r) === "public").length;
+  const nf  = rows.filter(r=> ["fresh","public"].indexOf(st_(r)) < 0).length;
+  const bits = [];
+  if (nf)  bits.push(nf + ' did not come back fresh');
+  if (pub) bits.push(pub + ' came from a public substitute rather than the specified source');
+  $("srcSub").textContent = bits.length
+    ? '- every figure traces to one of these; of ' + rows.length + ', ' + bits.join('; ') +
+      ' (see the banner above)'
     : '- every figure in this report traces to one of these, all pulled fresh for this run';
 })();
 
@@ -6283,17 +6370,23 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
     (CONFIG.sourceMap||[]).forEach((r,i)=>{
       const where = r.item || ("sourceMap["+i+"]");
       const st = String(r.status||"fresh").trim().toLowerCase();
-      if (["fresh","reused","unavailable"].indexOf(st) < 0)
-        errs.push(where+': status "'+r.status+'" is not fresh/reused/unavailable - it renders as UNAVAILABLE.');
+      if (["fresh","reused","public","unavailable"].indexOf(st) < 0)
+        errs.push(where+': status "'+r.status+'" is not fresh/reused/public/unavailable - it renders as UNAVAILABLE.');
+      /* A public substitute is only legitimate AFTER the specified source failed, so it must name
+         both what it used and where that came from. Without the source text a reader cannot tell
+         a regulator filing from a message board, and those are not the same evidence. */
+      if (st === "public" && !String(r.source||"").trim())
+        errs.push(where+": marked PUBLIC SOURCE with no `source` - a substituted figure must name "+
+          "the public source it came from (site, filing or search), or the reader cannot judge it.");
       if (!r.pulled)
         errs.push(where+": no `pulled` date - every source row must say when this run called it "+
           '(use "-" only for a source that returned nothing, and mark it unavailable).');
       if (st === "reused" && !r.asOf)
         errs.push(where+": reused data with no `asOf` date - reused figures must say what date they are from.");
-      if ((st === "reused" || st === "unavailable") && !declared.has(String(r.item||"").trim().toLowerCase()))
+      if (["reused","public","unavailable"].indexOf(st) >= 0 && !declared.has(String(r.item||"").trim().toLowerCase()))
         errs.push(where+' is marked '+st.toUpperCase()+' in the sources table but has no matching entry in '+
-          "CONFIG.freshness.failures - a source that was not pulled fresh must be reported at the top of "+
-          "the report, not only in the table.");
+          "CONFIG.freshness.failures - a source that did not resolve from the specified feed must be "+
+          "reported at the top of the report, not only in the table.");
     });
   }
   if (!allPicks.length) errs.push("CONFIG.picks is empty - nothing was graded, so neither recommendation list can be built.");
@@ -7249,6 +7342,63 @@ def check_template_has_no_dead_scale():
     for bad in ("/70", "out of 70", "/ 70", "/10", "out of 10"):
         assert bad not in src, "template still mentions %r outside a comment" % bad
     assert "out of 7" in src
+
+
+def check_public_source_status_is_wired_end_to_end():
+    """A blocked connector must never cost a letter, and a substituted figure must never ship
+    silently. `public` is a FOURTH status, distinct from `reused`: the data is current, it just
+    came from somewhere the skill did not specify. Conflating the two would either overstate the
+    staleness or hide the substitution, and a reader is weighing different risks in each case."""
+    src = io.open(TPL, encoding="utf-8").read()
+    assert 'public:"PUBLIC SOURCE"' in src, "the status has no rendered label"
+    assert ".fchip.public{" in src, "the status has no chip style, so it renders as UNAVAILABLE"
+    assert '["fresh","reused","public","unavailable"]' in src, "the audit rejects the new status"
+    # the substituted-sources banner, and the fact that it is separate from the staleness one
+    assert 'id="substituted"' in src and "came from a public source" in src
+
+
+def check_a_public_row_must_declare_which_connector_failed():
+    """A public substitute is only legitimate AFTER the specified source was tried and failed, so
+    the failure entry is what justifies it. Without that rule a run could quietly prefer whatever
+    was easiest to fetch and still print a clean-looking sources table."""
+    src = io.open(TPL, encoding="utf-8").read()
+    rule = src[src.index('["reused","public","unavailable"].indexOf(st) >= 0'):]
+    rule = rule[:rule.index("});")]
+    assert "freshness.failures" in rule, rule[:200]
+    # and it must name the public source, or a filing and a message board look identical
+    assert 'st === "public" && !String(r.source||"").trim()' in src
+
+
+def check_public_rows_are_not_counted_as_stale():
+    """The sources-table subtitle is derived, and it used to call every non-fresh row "did not
+    come back fresh". A public row IS fresh, so that wording would be wrong about the one thing
+    the reader is trying to judge."""
+    src = io.open(TPL, encoding="utf-8").read()
+    blk = src[src.index("The subtitle is derived"):]
+    blk = blk[:blk.index("})();")]
+    assert 'came from a public substitute rather than the specified source' in blk
+    assert '["fresh","public"].indexOf(st_(r)) < 0' in blk, "public is still counted as stale"
+
+
+def check_every_source_ladder_ends_in_a_public_rung():
+    """A ladder with no public rung is a letter that gets abandoned when its connector is down."""
+    g = io.open(os.path.join(ROOT, "references", "tradingview-sector-sweep.md"),
+                encoding="utf-8").read()
+    table = g[g.index("| Need | Fallback order |"):]
+    table = table[:table.index("\n\n")]
+    rows = [l for l in table.splitlines() if l.startswith("|") and "Fallback order" not in l
+            and not set(l) <= set("|- ")]
+    assert len(rows) >= 5, rows
+    for r in rows:
+        assert "public" in r.lower(), "ladder has no public rung: %s" % r[:80]
+
+
+def check_skill_documents_the_public_fallback_policy():
+    s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    assert "fall back to PUBLIC data" in s, "SKILL.md never tells the run to substitute"
+    assert 'status:"public"' in s, "SKILL.md never says how to declare a substitution"
+    for must in ["SEC EDGAR", "refuses to emit", "Public is not stale"]:
+        assert must in s, "SKILL.md's fallback policy omits %r" % must
 
 
 def check_template_audit_rules_are_wired():

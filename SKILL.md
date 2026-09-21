@@ -104,6 +104,42 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
   drop to the next rung rather than retrying. Fall through and say so in `dataWarning`; never
   block the run.
 
+### When a source is unavailable: fall back to PUBLIC data, and say so in the report
+
+**Never abandon a letter, and never guess one, because a connector is down.** Every connector in
+this skill can be blocked, gated or rate-limited, and all of them have been at least once. When
+that happens, take the figure from a **public source** — a regulator filing, an exchange page, a
+public market-data site, or a web search — and carry on.
+
+The rung order for each datum is in `tradingview-sector-sweep.md`; the public rung sits above FMP
+and below the connectors. Prefer public sources in this order, because they are not equally good
+evidence:
+
+1. **The primary document** — SEC EDGAR (10-Q/10-K for C and A, 13F for I). Authoritative, free,
+   and what the connector was reporting second-hand anyway.
+2. **An exchange or issuer page** — the company's own investor-relations release.
+3. **A public market-data site** (Finviz, Yahoo Finance, stockanalysis.com) for prices, ranked
+   screens and ownership levels.
+4. **A dated web search result**, last, and only for things the above cannot answer.
+
+**Disclosure is not optional, and the report enforces it.** A substituted figure is marked
+`status:"public"` in `CONFIG.sourceMap`, with `source` naming the actual public source, plus a
+matching entry in `CONFIG.freshness.failures` saying which connector failed and why. The dashboard
+then prints its own amber banner listing every substituted figure, the sources table chips each
+row **PUBLIC SOURCE**, and `build_report.py` **refuses to emit a report** where a public row is not
+declared. Set `dataWarning` too.
+
+Three rules that keep a fallback honest:
+
+- **Public is not stale.** `public` means current data from a substitute source; `reused` means
+  old data. Never use one for the other — they are different admissions and the reader is
+  weighing different risks.
+- **A fallback is only legitimate after the specified source was actually tried and failed.** The
+  failure entry is what justifies the substitution; do not reach for a public source because it is
+  easier.
+- **Say what the substitution costs.** A screener rebuilt from public pages may not rank an
+  identical universe; say so in `note` rather than implying the sweep was equivalent.
+
 ## Workflow
 
 Work in order. Scale research depth to the request; keep the user informed as you go.

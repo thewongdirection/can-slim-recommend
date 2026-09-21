@@ -856,6 +856,63 @@ def check_template_has_no_dead_scale():
     assert "out of 7" in src
 
 
+def check_public_source_status_is_wired_end_to_end():
+    """A blocked connector must never cost a letter, and a substituted figure must never ship
+    silently. `public` is a FOURTH status, distinct from `reused`: the data is current, it just
+    came from somewhere the skill did not specify. Conflating the two would either overstate the
+    staleness or hide the substitution, and a reader is weighing different risks in each case."""
+    src = io.open(TPL, encoding="utf-8").read()
+    assert 'public:"PUBLIC SOURCE"' in src, "the status has no rendered label"
+    assert ".fchip.public{" in src, "the status has no chip style, so it renders as UNAVAILABLE"
+    assert '["fresh","reused","public","unavailable"]' in src, "the audit rejects the new status"
+    # the substituted-sources banner, and the fact that it is separate from the staleness one
+    assert 'id="substituted"' in src and "came from a public source" in src
+
+
+def check_a_public_row_must_declare_which_connector_failed():
+    """A public substitute is only legitimate AFTER the specified source was tried and failed, so
+    the failure entry is what justifies it. Without that rule a run could quietly prefer whatever
+    was easiest to fetch and still print a clean-looking sources table."""
+    src = io.open(TPL, encoding="utf-8").read()
+    rule = src[src.index('["reused","public","unavailable"].indexOf(st) >= 0'):]
+    rule = rule[:rule.index("});")]
+    assert "freshness.failures" in rule, rule[:200]
+    # and it must name the public source, or a filing and a message board look identical
+    assert 'st === "public" && !String(r.source||"").trim()' in src
+
+
+def check_public_rows_are_not_counted_as_stale():
+    """The sources-table subtitle is derived, and it used to call every non-fresh row "did not
+    come back fresh". A public row IS fresh, so that wording would be wrong about the one thing
+    the reader is trying to judge."""
+    src = io.open(TPL, encoding="utf-8").read()
+    blk = src[src.index("The subtitle is derived"):]
+    blk = blk[:blk.index("})();")]
+    assert 'came from a public substitute rather than the specified source' in blk
+    assert '["fresh","public"].indexOf(st_(r)) < 0' in blk, "public is still counted as stale"
+
+
+def check_every_source_ladder_ends_in_a_public_rung():
+    """A ladder with no public rung is a letter that gets abandoned when its connector is down."""
+    g = io.open(os.path.join(ROOT, "references", "tradingview-sector-sweep.md"),
+                encoding="utf-8").read()
+    table = g[g.index("| Need | Fallback order |"):]
+    table = table[:table.index("\n\n")]
+    rows = [l for l in table.splitlines() if l.startswith("|") and "Fallback order" not in l
+            and not set(l) <= set("|- ")]
+    assert len(rows) >= 5, rows
+    for r in rows:
+        assert "public" in r.lower(), "ladder has no public rung: %s" % r[:80]
+
+
+def check_skill_documents_the_public_fallback_policy():
+    s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    assert "fall back to PUBLIC data" in s, "SKILL.md never tells the run to substitute"
+    assert 'status:"public"' in s, "SKILL.md never says how to declare a substitution"
+    for must in ["SEC EDGAR", "refuses to emit", "Public is not stale"]:
+        assert must in s, "SKILL.md's fallback policy omits %r" % must
+
+
 def check_template_audit_rules_are_wired():
     """The self-audit is the skill's last line of defence; these are the contradictions it
     promises to catch, each identified by the text it raises."""

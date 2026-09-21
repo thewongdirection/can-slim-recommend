@@ -323,11 +323,18 @@ as a test, and if it is gated or empty, drop to the next rung rather than retryi
 
 | Need | Fallback order |
 |---|---|
-| Sector top performers | IBKR `search_investment_topics` + `get_theme_details` → web new-high/leaders lists → FMP `search-company-screener` (last: ranks by market cap, not performance, so it needs re-ranking before it answers the question at all) |
-| Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period:"TWO_YEARS"`, `step:"ONE_DAY"`) |
-| Live last price | IBKR `get_price_snapshot` → FMP `batch-quote` (last) |
-| C / A fundamentals | **`securities-filings-lookup` (primary — the 10-K/10-Q itself, verified working Sept 2026)** → Daloopa → bigdata.com → LSEG → web → FMP (last) |
-| I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → web → FMP `form13F` (last, and **verified dead on this account**: ACCESS DENIED, needs Ultimate/Enterprise) |
+| Sector top performers | IBKR `search_investment_topics` + `get_theme_details` → **public: Finviz screener / stockanalysis.com / IBD-style new-high lists** → FMP `search-company-screener` (last: ranks by market cap, not performance, so it needs re-ranking before it answers the question at all) |
+| Bars / RS / base | Massive Market Data `/v2/aggs` (**throttle to 5 calls/min**) → IBKR `get_price_history` (`period:"TWO_YEARS"`, `step:"ONE_DAY"`) → **public: Yahoo Finance / stockanalysis.com history** |
+| Live last price | IBKR `get_price_snapshot` → **public: exchange or Yahoo Finance quote page** → FMP `batch-quote` (last) |
+| C / A fundamentals | **`securities-filings-lookup` (primary — the 10-K/10-Q itself, verified working Sept 2026)** → Daloopa → bigdata.com → LSEG → **public: SEC EDGAR directly (`data.sec.gov` submissions + the filing), then the issuer's IR release** → FMP (last) |
+| I sponsorship trend | `institutional_cache.py` (SEC 13F bulk, free, no key) → `accumulation.py` (volume proxy) → **public: Finviz `Inst Own`/`Inst Trans`, stockanalysis.com holders page** → FMP `form13F` (last, and **verified dead on this account**: ACCESS DENIED, needs Ultimate/Enterprise) |
+
+**Every ladder above ends in a PUBLIC rung, and that is deliberate.** A blocked connector must
+never cost a letter: take the figure from the public source, mark the row `status:"public"` in
+`CONFIG.sourceMap` with a matching `freshness.failures` entry, and the dashboard prints its own
+banner naming every substituted figure. `build_report.py` refuses a report where a public row is
+undeclared, so the substitution cannot ship silently. `public` is NOT `reused` - the data is
+current, it just came from somewhere else.
 
 **FMP is the LAST rung on every ladder above — below web search.** That ordering is deliberate
 and evidence-based, not a preference. Checked on this account in September 2026, `form13F`

@@ -240,6 +240,10 @@
   .fchip.fresh{background:var(--pass-bg);color:var(--pass)}
   .fchip.reused{background:var(--partial-bg);color:var(--partial)}
   .fchip.unavailable{background:var(--fail-bg);color:var(--fail)}
+  /* PUBLIC is deliberately its own colour, not a shade of FRESH or REUSED. The figure IS
+     current - it simply did not come from the source this skill specifies - and conflating it
+     with either staleness or success is exactly the confusion this status exists to prevent. */
+  .fchip.public{background:var(--accent-bg,#eef2ff);color:var(--accent,#3538cd)}
   .datestamp{display:inline-flex;align-items:center;gap:7px;margin:14px 0 0;padding:7px 13px;
     border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;
     background:var(--panel);font-family:var(--mono);font-size:13px;color:var(--ink)}
@@ -356,6 +360,7 @@
   <div class="market" id="market"></div>
   <div id="checks"></div>
   <div id="freshness"></div>
+  <div id="substituted"></div>
   <div id="dataWarning"></div>
   <div id="dataProvenance"></div>
   <div class="funnel" id="funnel"></div>
@@ -548,12 +553,18 @@ const CONFIG = {
        asOf    - WHAT DATE THE DATA ITSELF IS FROM (newest bar, filed quarter, ...). Required
                  for a reused row; strongly preferred everywhere, since "pulled today" says
                  nothing about whether the figure underneath is a week old.
-       status  - "fresh"       pulled successfully in THIS run (the default when omitted)
+       status  - "fresh"       pulled successfully in THIS run from the SPECIFIED source
+                 "public"      the specified source was unavailable, so a PUBLIC substitute was
+                               used (a regulator filing, an exchange page, a public data site, a
+                               web search). The figure is CURRENT - this is not staleness - but it
+                               did not come through the feed the skill specifies, so the report
+                               names it in its own banner. `source` must say which public source.
                  "reused"      a fresh pull was attempted and failed, so older data was used
                  "unavailable" no data at all - the report works around the gap and says how
        note    - anything a reader needs to judge the figure
-     A "reused" or "unavailable" row MUST have a matching entry in freshness.failures, or the
-     self-audit refuses the report. */
+     A "public", "reused" or "unavailable" row MUST have a matching entry in freshness.failures,
+     or the self-audit refuses the report. A public substitute is only ever legitimate AFTER the
+     specified source was tried and failed, so the failure is the thing that justifies it. */
   sourceMap: [
     // { item:"Sector sweep (top 10 per sector)", source:"TradingView run_screener, Perf.6M",
     //   pulled:"2026-08-23 14:05 UTC", asOf:"2026-08-21 close", status:"fresh",
@@ -561,7 +572,12 @@ const CONFIG = {
     // { item:"C - quarterly EPS & sales", source:"TradingView get_financial_history (fq)",
     //   pulled:"2026-08-23 14:12 UTC", asOf:"Q2/2026 as filed", status:"fresh", note:"" },
     // { item:"I - institutional sponsorship", source:"SEC 13F via securities-filings-lookup",
-    //   pulled:"-", asOf:"", status:"unavailable", note:"gated this run; I capped at partial" }
+    //   pulled:"-", asOf:"", status:"unavailable", note:"gated this run; I capped at partial" },
+    // { item:"Sector sweep (top 10 per sector)",
+    //   source:"public: Finviz sector screener + Yahoo Finance quote pages (web)",
+    //   pulled:"2026-09-21 14:05 UTC", asOf:"2026-09-18 close", status:"public",
+    //   note:"TradingView run_screener was 403-blocked server-side; ranking rebuilt from public "+
+    //        "pages, so the universe may differ slightly from a TradingView sweep" }
   ],
 
   // The screening funnel - the numbers that make the sweep auditable. Rendered as stat tiles.
@@ -723,6 +739,26 @@ $("market").innerHTML =
   (m.distributionDays?'<div class="dd">Distribution days: '+esc(m.distributionDays)+'</div>':'');
 
 // data provenance (which sources actually contributed) + a warning when any is stale/gated.
+/* ---- substituted sources: which figures came from a PUBLIC fallback ----
+   Separate from the freshness banner on purpose. Staleness and substitution are different
+   admissions: a reused figure is old, a public one is current but came from somewhere this skill
+   did not specify. A reader deciding how much weight to give a grade needs to know which. */
+(function(){
+  const pub = (CONFIG.sourceMap||[]).filter(r =>
+    String(r.status||"fresh").trim().toLowerCase() === "public");
+  if (!pub.length) return;
+  const rows = pub.map(r =>
+    '<li><b>'+esc(r.item)+'</b> - from '+esc(r.source||'an unnamed public source')+
+    (r.asOf ? ' (data as of '+esc(r.asOf)+')' : '') +
+    (r.note ? '. '+esc(r.note) : '') + '</li>').join('');
+  $("substituted").innerHTML =
+    '<div class="callout warn"><b>&#9888; '+pub.length+' figure'+(pub.length>1?'s':'')+
+    ' came from a public source, not the one this skill specifies.</b> The connector that would '+
+    'normally supply '+(pub.length>1?'these':'this')+' was unavailable for this run, so a public '+
+    'substitute was used instead. The data is current, but it has not been through the same feed '+
+    'as the rest of the report - weigh it accordingly.<ul>'+rows+'</ul></div>';
+})();
+
 const prov = CONFIG.dataProvenance || CONFIG.dataSource;
 if (prov){
   $("dataProvenance").innerHTML = '<div class="provenance"><b>Data sources used:</b> '+esc(prov)+'</div>';
@@ -1338,7 +1374,7 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
      figure underneath is. A source pulled today can still hand back last week's number. */
   $("srcHead").innerHTML = ["What","Source (tool / feed)","Pulled","Data as of","Status","Note"]
     .map(c=>'<th>'+c+'</th>').join('');
-  const STATUS = {fresh:"FRESH", reused:"REUSED", unavailable:"UNAVAILABLE"};
+  const STATUS = {fresh:"FRESH", reused:"REUSED", public:"PUBLIC SOURCE", unavailable:"UNAVAILABLE"};
   $("srcRows").innerHTML = rows.length
     ? rows.map(r=>{
         const st = String(r.status||"fresh").trim().toLowerCase();
@@ -1351,11 +1387,19 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
           '<td class="grp">'+esc(r.note||'')+'</td></tr>';
       }).join('')
     : '<tr><td colspan="6" style="padding:16px;color:var(--fail)">CONFIG.sourceMap is empty - fill it before shipping this report.</td></tr>';
-  /* The subtitle is derived, never asserted: a run that fell back cannot print "pulled fresh". */
-  const nf = rows.filter(r=> String(r.status||"fresh").trim().toLowerCase() !== "fresh").length;
-  $("srcSub").textContent = nf
-    ? '- every figure traces to one of these; ' + nf + ' of ' + rows.length +
-      ' did not come back fresh this run (see the banner above)'
+  /* The subtitle is derived, never asserted: a run that fell back cannot print "pulled fresh".
+     PUBLIC is counted separately from stale, because it is a different admission - the figure is
+     current, it just came from a substitute source - and lumping them together would either
+     overstate the staleness or hide the substitution. */
+  const st_ = r => String(r.status||"fresh").trim().toLowerCase();
+  const pub = rows.filter(r=> st_(r) === "public").length;
+  const nf  = rows.filter(r=> ["fresh","public"].indexOf(st_(r)) < 0).length;
+  const bits = [];
+  if (nf)  bits.push(nf + ' did not come back fresh');
+  if (pub) bits.push(pub + ' came from a public substitute rather than the specified source');
+  $("srcSub").textContent = bits.length
+    ? '- every figure traces to one of these; of ' + rows.length + ', ' + bits.join('; ') +
+      ' (see the banner above)'
     : '- every figure in this report traces to one of these, all pulled fresh for this run';
 })();
 
@@ -1431,17 +1475,23 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
     (CONFIG.sourceMap||[]).forEach((r,i)=>{
       const where = r.item || ("sourceMap["+i+"]");
       const st = String(r.status||"fresh").trim().toLowerCase();
-      if (["fresh","reused","unavailable"].indexOf(st) < 0)
-        errs.push(where+': status "'+r.status+'" is not fresh/reused/unavailable - it renders as UNAVAILABLE.');
+      if (["fresh","reused","public","unavailable"].indexOf(st) < 0)
+        errs.push(where+': status "'+r.status+'" is not fresh/reused/public/unavailable - it renders as UNAVAILABLE.');
+      /* A public substitute is only legitimate AFTER the specified source failed, so it must name
+         both what it used and where that came from. Without the source text a reader cannot tell
+         a regulator filing from a message board, and those are not the same evidence. */
+      if (st === "public" && !String(r.source||"").trim())
+        errs.push(where+": marked PUBLIC SOURCE with no `source` - a substituted figure must name "+
+          "the public source it came from (site, filing or search), or the reader cannot judge it.");
       if (!r.pulled)
         errs.push(where+": no `pulled` date - every source row must say when this run called it "+
           '(use "-" only for a source that returned nothing, and mark it unavailable).');
       if (st === "reused" && !r.asOf)
         errs.push(where+": reused data with no `asOf` date - reused figures must say what date they are from.");
-      if ((st === "reused" || st === "unavailable") && !declared.has(String(r.item||"").trim().toLowerCase()))
+      if (["reused","public","unavailable"].indexOf(st) >= 0 && !declared.has(String(r.item||"").trim().toLowerCase()))
         errs.push(where+' is marked '+st.toUpperCase()+' in the sources table but has no matching entry in '+
-          "CONFIG.freshness.failures - a source that was not pulled fresh must be reported at the top of "+
-          "the report, not only in the table.");
+          "CONFIG.freshness.failures - a source that did not resolve from the specified feed must be "+
+          "reported at the top of the report, not only in the table.");
     });
   }
   if (!allPicks.length) errs.push("CONFIG.picks is empty - nothing was graded, so neither recommendation list can be built.");
