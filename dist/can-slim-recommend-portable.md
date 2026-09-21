@@ -5138,7 +5138,7 @@ The report template. Fill its CONFIG object and it renders itself, audits itself
   /* PUBLIC is deliberately its own colour, not a shade of FRESH or REUSED. The figure IS
      current - it simply did not come from the source this skill specifies - and conflating it
      with either staleness or success is exactly the confusion this status exists to prevent. */
-  .fchip.public{background:var(--accent-bg,#eef2ff);color:var(--accent,#3538cd)}
+  .fchip.public{background:var(--accent-soft);color:var(--accent)}
   .datestamp{display:inline-flex;align-items:center;gap:7px;margin:14px 0 0;padding:7px 13px;
     border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;
     background:var(--panel);font-family:var(--mono);font-size:13px;color:var(--ink)}
@@ -5598,12 +5598,30 @@ $("meta").innerHTML = "Generated " + esc(CONFIG.generatedAt||"") + "<br>" + esc(
    declare. ---- */
 (function(){
   const f = CONFIG.freshness || {};
-  const fails = Array.isArray(f.failures) ? f.failures : [];
+  const all = Array.isArray(f.failures) ? f.failures : [];
   const when = f.attemptedAt ? ' on ' + esc(f.attemptedAt) : '';
-  if (!fails.length && f.allFresh !== false){
-    $("freshness").innerHTML = '<div class="callout"><b>&#10003; Fresh data:</b> every source in the '+
-      'table below was pulled fresh for this run' + when + '. Nothing was carried over from an '+
-      'earlier run or an earlier point in this conversation.</div>';
+
+  /* A failure that was answered by a PUBLIC substitute is reported by the substituted-sources
+     banner below, not here. Without this split the two banners contradict each other: this one
+     said "Used instead: nothing - the report works around the gap" (because no STALE data was
+     reused) directly above the other one naming the two public sources it had just used. It also
+     called a substituted run "Not all data is fresh", which is wrong about the one thing the
+     reader is judging - substituted data is current. Each banner gets one job. */
+  const pubItems = new Set((CONFIG.sourceMap||[])
+    .filter(r => String(r.status||"fresh").trim().toLowerCase() === "public")
+    .map(r => String(r.item||"").trim().toLowerCase()));
+  const substituted = all.filter(x => pubItems.has(String(x.item||"").trim().toLowerCase()));
+  const fails = all.filter(x => !pubItems.has(String(x.item||"").trim().toLowerCase()));
+
+  if (!fails.length){
+    // Nothing STALE. Say so plainly, and point at the substitution banner when there is one
+    // rather than implying the run was entirely routine.
+    $("freshness").innerHTML = '<div class="callout"><b>&#10003; Fresh data:</b> every figure in '+
+      'this report is current as of this run' + when + '. Nothing was carried over from an '+
+      'earlier run or an earlier point in this conversation.' +
+      (substituted.length ? ' ' + substituted.length + ' figure' + (substituted.length>1?'s':'') +
+        ' had to be taken from a public source instead of the usual feed - see the note below.' : '') +
+      '</div>';
     return;
   }
   const li = fails.map(x=>{
@@ -5615,7 +5633,8 @@ $("meta").innerHTML = "Generated " + esc(CONFIG.generatedAt||"") + "<br>" + esc(
            ' &mdash; ' + esc(x.error||'fresh pull failed') + '.' + used + '</li>';
   }).join('');
   $("freshness").innerHTML = '<div class="callout warn"><b>&#9888; Not all data is fresh.</b> A fresh '+
-    'pull was attempted for every source' + when + '. ' + fails.length + ' did not come back fresh:'+
+    'pull was attempted for every source' + when + '. ' + fails.length + ' did not come back fresh'+
+    (substituted.length ? ' (a further ' + substituted.length + ' came from a public source - see below)' : '')+':'+
     '<ul style="margin:6px 0 0 18px;padding:0">' + (li ||
       '<li>freshness.allFresh is false but no failures are listed - the run must say what was not fresh.</li>') +
     '</ul></div>';
@@ -7399,6 +7418,38 @@ def check_skill_documents_the_public_fallback_policy():
     assert 'status:"public"' in s, "SKILL.md never says how to declare a substitution"
     for must in ["SEC EDGAR", "refuses to emit", "Public is not stale"]:
         assert must in s, "SKILL.md's fallback policy omits %r" % must
+
+
+def check_the_two_data_banners_do_not_contradict_each_other():
+    """A failure answered by a PUBLIC substitute belongs to the substitution banner, not the
+    staleness one. Without the split the rendered report said "Used instead: nothing - the report
+    works around the gap" (true: no STALE data was reused) directly above a banner naming the two
+    public sources it had just used, and headlined a fully-current run "Not all data is fresh".
+    """
+    src = io.open(TPL, encoding="utf-8").read()
+    blk = src[src.index("---- freshness: did this run"):]
+    blk = blk[:blk.index("})();")]
+    assert "pubItems" in blk and 'status||"fresh"' in blk, "the freshness banner never looks at sourceMap"
+    assert "const fails = all.filter(x => !pubItems.has" in blk, \
+        "substituted failures are still counted as staleness"
+    # ...and the all-substituted case must not claim staleness at all. Matched on a CONTIGUOUS
+    # fragment: the sentence is built by concatenation, so the rendered wording does not appear
+    # in the source as one string - asserting the rendered phrasing fails against working code.
+    assert "is current as of this run" in blk, "the all-substituted case still reports staleness"
+
+
+def check_every_css_variable_the_template_uses_is_defined():
+    """The PUBLIC chip shipped with `var(--accent-bg, #eef2ff)`, and --accent-bg does not exist -
+    the template defines --accent-soft. So it silently used a hard-coded LIGHT colour in a
+    theme-aware document, which in dark mode is a near-white block. A var() fallback hides this
+    perfectly, which is why it needs a rule rather than an eye.
+    """
+    src = io.open(TPL, encoding="utf-8").read()
+    used = set(re.findall(r"var\(\s*(--[a-z0-9-]+)", src))
+    declared = set(re.findall(r"^\s*(--[a-z0-9-]+)\s*:", src, re.M))
+    declared |= set(re.findall(r"[;{]\s*(--[a-z0-9-]+)\s*:", src))
+    missing = sorted(used - declared)
+    assert not missing, "template uses CSS variables that are never declared: %s" % missing
 
 
 def check_template_audit_rules_are_wired():

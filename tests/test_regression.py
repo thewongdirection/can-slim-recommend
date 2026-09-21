@@ -913,6 +913,38 @@ def check_skill_documents_the_public_fallback_policy():
         assert must in s, "SKILL.md's fallback policy omits %r" % must
 
 
+def check_the_two_data_banners_do_not_contradict_each_other():
+    """A failure answered by a PUBLIC substitute belongs to the substitution banner, not the
+    staleness one. Without the split the rendered report said "Used instead: nothing - the report
+    works around the gap" (true: no STALE data was reused) directly above a banner naming the two
+    public sources it had just used, and headlined a fully-current run "Not all data is fresh".
+    """
+    src = io.open(TPL, encoding="utf-8").read()
+    blk = src[src.index("---- freshness: did this run"):]
+    blk = blk[:blk.index("})();")]
+    assert "pubItems" in blk and 'status||"fresh"' in blk, "the freshness banner never looks at sourceMap"
+    assert "const fails = all.filter(x => !pubItems.has" in blk, \
+        "substituted failures are still counted as staleness"
+    # ...and the all-substituted case must not claim staleness at all. Matched on a CONTIGUOUS
+    # fragment: the sentence is built by concatenation, so the rendered wording does not appear
+    # in the source as one string - asserting the rendered phrasing fails against working code.
+    assert "is current as of this run" in blk, "the all-substituted case still reports staleness"
+
+
+def check_every_css_variable_the_template_uses_is_defined():
+    """The PUBLIC chip shipped with `var(--accent-bg, #eef2ff)`, and --accent-bg does not exist -
+    the template defines --accent-soft. So it silently used a hard-coded LIGHT colour in a
+    theme-aware document, which in dark mode is a near-white block. A var() fallback hides this
+    perfectly, which is why it needs a rule rather than an eye.
+    """
+    src = io.open(TPL, encoding="utf-8").read()
+    used = set(re.findall(r"var\(\s*(--[a-z0-9-]+)", src))
+    declared = set(re.findall(r"^\s*(--[a-z0-9-]+)\s*:", src, re.M))
+    declared |= set(re.findall(r"[;{]\s*(--[a-z0-9-]+)\s*:", src))
+    missing = sorted(used - declared)
+    assert not missing, "template uses CSS variables that are never declared: %s" % missing
+
+
 def check_template_audit_rules_are_wired():
     """The self-audit is the skill's last line of defence; these are the contradictions it
     promises to catch, each identified by the text it raises."""
