@@ -1686,6 +1686,17 @@ payload **as it came back**.
 2. The **TTM** growth fields break across a spin-off or a restatement. Take growth from the
    per-period `yoy_pct`, never from TTM.
 
+**`relative_volume_10d_calc` is a PARTIAL SUM during market hours, not a measurement.** It
+compares today's volume *so far* against the 10-day average, so an hour into the session every
+name in the market reads about 0.1x. Observed live on 2026-09-23: every row of an Electronic
+Technology sweep came back between 0.06x and 0.44x while SPY's own bar showed 2.4M shares against
+a ~40M norm. This matters because `ceiling()` uses the field as a **hard cap on S** — taken
+intraday it caps S=fail across the whole market, drops every ceiling a full point, and prunes
+names that would have qualified. On those real rows it removed **3 of 6 survivors, MU and SNDK
+among them**. `sector_screen.py` now detects it from the sweep itself (a whole market does not
+trade at a fifth of its normal volume) and discards relative volume rather than reading it as
+thin, reporting `partial_session` in its output. **For a real S reading, sweep after the close.**
+
 **I (institutional sponsorship) is the one letter TradingView cannot answer.** Take it from
 `scripts/institutional_cache.py` (SEC 13F, built once a quarter), falling open to
 `scripts/accumulation.py` (volume proxy). Record which in `CONFIG.sourceMap` — the cache carries
@@ -2494,7 +2505,11 @@ DEFAULTS = {
     "m_grade": "partial",   # M is graded ONCE market-wide, before any name; it bounds every row
     "i_grade": "partial",   # I is routinely unavailable, which caps every row - say so, never guess
     "pivot_band": 10.0,     # % below the 52-week high beyond which there is no pivot, so N <= partial
-    "thin_vol": 0.8,        # relative volume under this is drying up, not accumulating, so S = fail
+    "thin_vol": 0.8,
+    # Fraction of a sweep that must read below `partial_session_rv` before the run is treated as
+    # INTRADAY and relative volume is discarded - see detect_partial_session().
+    "partial_session_frac": 0.6,
+    "partial_session_rv": 0.5,        # relative volume under this is drying up, not accumulating, so S = fail
 }
 
 WEIGHT = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
@@ -2649,6 +2664,38 @@ def score_row(row, window, bench_perf, cfg):
     out["flags"] = flags
     out["checks_skipped"] = skipped
     return out
+
+
+def detect_partial_session(rows, cfg):
+    """Is this sweep reading a LIVE, part-finished session? Returns (bool, note).
+
+    `relative_volume_10d_calc` compares today's volume so far against the 10-day average. Run
+    mid-session that is not a measurement, it is a partial sum: an hour into the day every name
+    in the market reads ~0.1x. Observed on a live 2026-09-23 sweep - every row came back between
+    0.06x and 0.44x, while SPY's own bar showed 2.4M shares against a ~40M norm.
+
+    That matters because ceiling() uses relative volume as a HARD cap on S: below `thin_vol` the
+    letter cannot pass at all. Taken intraday it would cap S at fail for practically the whole
+    market, drop every ceiling by a full point, and prune names that would have qualified - the
+    one error the ceiling must never make.
+
+    Detected from the sweep itself rather than from a clock, because there is no session-progress
+    field and a clock would need a market calendar to be right about holidays and early closes.
+    A whole market does not trade at a fifth of its normal volume; a whole market that LOOKS like
+    it did is a session that has not finished yet.
+    """
+    vals = [r.get("rel_volume_10d") for r in rows]
+    vals = [v for v in vals if v is not None]
+    if len(vals) < 5:
+        return False, ""
+    thin = sum(1 for v in vals if v < cfg["partial_session_rv"])
+    frac = thin / float(len(vals))
+    if frac < cfg["partial_session_frac"]:
+        return False, ""
+    return True, ("relative volume looks like a part-finished session: %d of %d rows (%.0f%%) "
+                  "read under %.2fx. Treating relative volume as UNMEASURED rather than thin, so "
+                  "S is not capped on a partial sum. Re-run after the close for a real S reading."
+                  % (thin, len(vals), 100 * frac, cfg["partial_session_rv"]))
 
 
 def ceiling(out, cfg, known=None):
@@ -2810,6 +2857,16 @@ def run(blob, cfg, known=None):
     # The ceiling needs the finished sector ranking (L depends on group strength), so it runs
     # only once every sector has been placed - never inside score_row.
     known = known or {}
+
+    # A live session makes relative volume a partial sum, not a measurement. Discard it before it
+    # reaches the S cap: the skill's rule everywhere else is that missing data is SKIPPED, never
+    # failed, and an unfinished session is missing data rather than thin trading.
+    all_members = [m for sec in sectors for m in sec["members"]]
+    partial_session, session_note = detect_partial_session(all_members, cfg)
+    if partial_session:
+        for m in all_members:
+            m["rel_volume_unmeasured"] = m["rel_volume_10d"]
+            m["rel_volume_10d"] = None
     for s in sectors:
         for m in s["members"]:
             m["sector_count"] = len(sectors)
@@ -2842,6 +2899,8 @@ def run(blob, cfg, known=None):
         "threshold": cfg["threshold"],
         "must_grade": len(must),
         "eliminated_by_ceiling": len(queue) - len(must),
+        "partial_session": partial_session,
+        "partial_session_note": session_note,
         "ceiling_basis": {"M": cfg["m_grade"], "I": cfg["i_grade"],
                           "pivot_band_pct": cfg["pivot_band"],
                           "thin_vol": cfg["thin_vol"]},
@@ -6824,6 +6883,56 @@ def check_run_counts_reconcile_with_known_grades():
     assert res["must_grade"] + res["eliminated_by_ceiling"] == res["graded_candidates"]
     q = {m["symbol"]: m for m in res["grade_queue"]}
     assert q["NYSE:B"]["ceiling"] < q["NYSE:TEST"]["ceiling"]
+
+
+def check_an_unfinished_session_does_not_cap_S():
+    """Found by running the skill live on 2026-09-23. `relative_volume_10d_calc` compares today's
+    volume SO FAR against the 10-day average, so mid-session it is a partial sum, not a
+    measurement: every row of the real sweep came back between 0.06x and 0.44x while SPY's own bar
+    showed 2.4M shares against a ~40M norm.
+
+    ceiling() uses that field as a HARD cap on S, so taken intraday it capped S=fail across the
+    market and dropped every ceiling a full point. On the real Electronic Technology rows that
+    pruned 3 of 6 survivors - MU and SNDK among them - which is the one error the ceiling must
+    never make. An unfinished session is MISSING data, and the rule everywhere else in this skill
+    is that missing data is skipped, never failed.
+    """
+    real = [("QMCO", 26.11, 27.80, 0.424), ("DELL", 554.63, 595.51, 0.293),
+            ("SNDK", 1836.25, 2354.39, 0.324), ("AMD", 611.91, 624.69, 0.213),
+            ("MU", 1078.1, 1255.0, 0.314), ("AMBQ", 69.53, 91.61, 0.067)]
+    rows = [row(symbol="NASDAQ:" + t, description=t, close=c, price_52_week_high=h,
+                relative_volume_10d_calc=rv, EMA50=c * 0.9, EMA200=c * 0.7, **{"Perf.6M": 200.0})
+            for t, c, h, rv in real]
+    res = ss.run(sweep({"Electronic Technology": rows}, bench=19.76), CFG)
+    assert res["partial_session"] is True, "a whole market at a fifth of normal volume is a "\
+        "part-finished session, not thin trading"
+    assert "part-finished session" in res["partial_session_note"]
+    members = [m for s in res["sectors"] for m in s["members"] if m["triage"] == "grade"]
+    assert members, "the fixture should survive triage"
+    for m in members:
+        assert m["ceiling_caps"]["S"] == "pass", \
+            "%s: S capped on a partial sum (%s)" % (m["symbol"], m["ceiling_caps"]["S"])
+
+    # ...and with the detector off, the old behaviour prunes names it should not have
+    off = dict(CFG, partial_session_frac=2.0)
+    old = ss.run(sweep({"Electronic Technology": rows}, bench=19.76), off)
+    assert old["must_grade"] < res["must_grade"], \
+        "the detector makes no difference, so it is not doing anything"
+
+
+def check_real_thin_volume_is_still_caught_after_the_close():
+    """The detector must not become a blanket excuse. A normal post-close sweep has a spread of
+    readings, and a genuinely thin name in it still has to be capped - that cap is what the S
+    letter is for."""
+    vols = [1.6, 1.2, 0.9, 0.4, 1.1, 1.8, 0.7, 1.3, 2.0, 0.95]
+    rows = [row(symbol="NASDAQ:T%d" % i, description="T%d" % i,
+                relative_volume_10d_calc=v, **{"Perf.6M": 80.0}) for i, v in enumerate(vols)]
+    res = ss.run(sweep({"Electronic Technology": rows}), CFG)
+    assert res["partial_session"] is False, "a normal spread was mistaken for a partial session"
+    caps = sorted({m["ceiling_caps"]["S"] for s in res["sectors"] for m in s["members"]
+                   if m["triage"] == "grade"})
+    assert caps == ["fail", "partial", "pass"], \
+        "S stopped discriminating after the close: %s" % caps
 
 
 def check_dropped_rows_carry_no_ceiling():

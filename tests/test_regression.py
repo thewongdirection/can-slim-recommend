@@ -319,6 +319,56 @@ def check_run_counts_reconcile_with_known_grades():
     assert q["NYSE:B"]["ceiling"] < q["NYSE:TEST"]["ceiling"]
 
 
+def check_an_unfinished_session_does_not_cap_S():
+    """Found by running the skill live on 2026-09-23. `relative_volume_10d_calc` compares today's
+    volume SO FAR against the 10-day average, so mid-session it is a partial sum, not a
+    measurement: every row of the real sweep came back between 0.06x and 0.44x while SPY's own bar
+    showed 2.4M shares against a ~40M norm.
+
+    ceiling() uses that field as a HARD cap on S, so taken intraday it capped S=fail across the
+    market and dropped every ceiling a full point. On the real Electronic Technology rows that
+    pruned 3 of 6 survivors - MU and SNDK among them - which is the one error the ceiling must
+    never make. An unfinished session is MISSING data, and the rule everywhere else in this skill
+    is that missing data is skipped, never failed.
+    """
+    real = [("QMCO", 26.11, 27.80, 0.424), ("DELL", 554.63, 595.51, 0.293),
+            ("SNDK", 1836.25, 2354.39, 0.324), ("AMD", 611.91, 624.69, 0.213),
+            ("MU", 1078.1, 1255.0, 0.314), ("AMBQ", 69.53, 91.61, 0.067)]
+    rows = [row(symbol="NASDAQ:" + t, description=t, close=c, price_52_week_high=h,
+                relative_volume_10d_calc=rv, EMA50=c * 0.9, EMA200=c * 0.7, **{"Perf.6M": 200.0})
+            for t, c, h, rv in real]
+    res = ss.run(sweep({"Electronic Technology": rows}, bench=19.76), CFG)
+    assert res["partial_session"] is True, "a whole market at a fifth of normal volume is a "\
+        "part-finished session, not thin trading"
+    assert "part-finished session" in res["partial_session_note"]
+    members = [m for s in res["sectors"] for m in s["members"] if m["triage"] == "grade"]
+    assert members, "the fixture should survive triage"
+    for m in members:
+        assert m["ceiling_caps"]["S"] == "pass", \
+            "%s: S capped on a partial sum (%s)" % (m["symbol"], m["ceiling_caps"]["S"])
+
+    # ...and with the detector off, the old behaviour prunes names it should not have
+    off = dict(CFG, partial_session_frac=2.0)
+    old = ss.run(sweep({"Electronic Technology": rows}, bench=19.76), off)
+    assert old["must_grade"] < res["must_grade"], \
+        "the detector makes no difference, so it is not doing anything"
+
+
+def check_real_thin_volume_is_still_caught_after_the_close():
+    """The detector must not become a blanket excuse. A normal post-close sweep has a spread of
+    readings, and a genuinely thin name in it still has to be capped - that cap is what the S
+    letter is for."""
+    vols = [1.6, 1.2, 0.9, 0.4, 1.1, 1.8, 0.7, 1.3, 2.0, 0.95]
+    rows = [row(symbol="NASDAQ:T%d" % i, description="T%d" % i,
+                relative_volume_10d_calc=v, **{"Perf.6M": 80.0}) for i, v in enumerate(vols)]
+    res = ss.run(sweep({"Electronic Technology": rows}), CFG)
+    assert res["partial_session"] is False, "a normal spread was mistaken for a partial session"
+    caps = sorted({m["ceiling_caps"]["S"] for s in res["sectors"] for m in s["members"]
+                   if m["triage"] == "grade"})
+    assert caps == ["fail", "partial", "pass"], \
+        "S stopped discriminating after the close: %s" % caps
+
+
 def check_dropped_rows_carry_no_ceiling():
     blob = sweep({"Energy Minerals": [row(close=9.0)]})
     res = ss.run(blob, CFG)

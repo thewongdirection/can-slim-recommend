@@ -63,7 +63,11 @@ DEFAULTS = {
     "m_grade": "partial",   # M is graded ONCE market-wide, before any name; it bounds every row
     "i_grade": "partial",   # I is routinely unavailable, which caps every row - say so, never guess
     "pivot_band": 10.0,     # % below the 52-week high beyond which there is no pivot, so N <= partial
-    "thin_vol": 0.8,        # relative volume under this is drying up, not accumulating, so S = fail
+    "thin_vol": 0.8,
+    # Fraction of a sweep that must read below `partial_session_rv` before the run is treated as
+    # INTRADAY and relative volume is discarded - see detect_partial_session().
+    "partial_session_frac": 0.6,
+    "partial_session_rv": 0.5,        # relative volume under this is drying up, not accumulating, so S = fail
 }
 
 WEIGHT = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
@@ -218,6 +222,38 @@ def score_row(row, window, bench_perf, cfg):
     out["flags"] = flags
     out["checks_skipped"] = skipped
     return out
+
+
+def detect_partial_session(rows, cfg):
+    """Is this sweep reading a LIVE, part-finished session? Returns (bool, note).
+
+    `relative_volume_10d_calc` compares today's volume so far against the 10-day average. Run
+    mid-session that is not a measurement, it is a partial sum: an hour into the day every name
+    in the market reads ~0.1x. Observed on a live 2026-09-23 sweep - every row came back between
+    0.06x and 0.44x, while SPY's own bar showed 2.4M shares against a ~40M norm.
+
+    That matters because ceiling() uses relative volume as a HARD cap on S: below `thin_vol` the
+    letter cannot pass at all. Taken intraday it would cap S at fail for practically the whole
+    market, drop every ceiling by a full point, and prune names that would have qualified - the
+    one error the ceiling must never make.
+
+    Detected from the sweep itself rather than from a clock, because there is no session-progress
+    field and a clock would need a market calendar to be right about holidays and early closes.
+    A whole market does not trade at a fifth of its normal volume; a whole market that LOOKS like
+    it did is a session that has not finished yet.
+    """
+    vals = [r.get("rel_volume_10d") for r in rows]
+    vals = [v for v in vals if v is not None]
+    if len(vals) < 5:
+        return False, ""
+    thin = sum(1 for v in vals if v < cfg["partial_session_rv"])
+    frac = thin / float(len(vals))
+    if frac < cfg["partial_session_frac"]:
+        return False, ""
+    return True, ("relative volume looks like a part-finished session: %d of %d rows (%.0f%%) "
+                  "read under %.2fx. Treating relative volume as UNMEASURED rather than thin, so "
+                  "S is not capped on a partial sum. Re-run after the close for a real S reading."
+                  % (thin, len(vals), 100 * frac, cfg["partial_session_rv"]))
 
 
 def ceiling(out, cfg, known=None):
@@ -379,6 +415,16 @@ def run(blob, cfg, known=None):
     # The ceiling needs the finished sector ranking (L depends on group strength), so it runs
     # only once every sector has been placed - never inside score_row.
     known = known or {}
+
+    # A live session makes relative volume a partial sum, not a measurement. Discard it before it
+    # reaches the S cap: the skill's rule everywhere else is that missing data is SKIPPED, never
+    # failed, and an unfinished session is missing data rather than thin trading.
+    all_members = [m for sec in sectors for m in sec["members"]]
+    partial_session, session_note = detect_partial_session(all_members, cfg)
+    if partial_session:
+        for m in all_members:
+            m["rel_volume_unmeasured"] = m["rel_volume_10d"]
+            m["rel_volume_10d"] = None
     for s in sectors:
         for m in s["members"]:
             m["sector_count"] = len(sectors)
@@ -411,6 +457,8 @@ def run(blob, cfg, known=None):
         "threshold": cfg["threshold"],
         "must_grade": len(must),
         "eliminated_by_ceiling": len(queue) - len(must),
+        "partial_session": partial_session,
+        "partial_session_note": session_note,
         "ceiling_basis": {"M": cfg["m_grade"], "I": cfg["i_grade"],
                           "pivot_band_pct": cfg["pivot_band"],
                           "thin_vol": cfg["thin_vol"]},

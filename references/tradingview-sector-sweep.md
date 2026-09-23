@@ -196,6 +196,17 @@ payload **as it came back**.
 2. The **TTM** growth fields break across a spin-off or a restatement. Take growth from the
    per-period `yoy_pct`, never from TTM.
 
+**`relative_volume_10d_calc` is a PARTIAL SUM during market hours, not a measurement.** It
+compares today's volume *so far* against the 10-day average, so an hour into the session every
+name in the market reads about 0.1x. Observed live on 2026-09-23: every row of an Electronic
+Technology sweep came back between 0.06x and 0.44x while SPY's own bar showed 2.4M shares against
+a ~40M norm. This matters because `ceiling()` uses the field as a **hard cap on S** — taken
+intraday it caps S=fail across the whole market, drops every ceiling a full point, and prunes
+names that would have qualified. On those real rows it removed **3 of 6 survivors, MU and SNDK
+among them**. `sector_screen.py` now detects it from the sweep itself (a whole market does not
+trade at a fifth of its normal volume) and discards relative volume rather than reading it as
+thin, reporting `partial_session` in its output. **For a real S reading, sweep after the close.**
+
 **I (institutional sponsorship) is the one letter TradingView cannot answer.** Take it from
 `scripts/institutional_cache.py` (SEC 13F, built once a quarter), falling open to
 `scripts/accumulation.py` (volume proxy). Record which in `CONFIG.sourceMap` — the cache carries

@@ -20,3 +20,7 @@ data/i-cache.json
 data/13f/
 # Throttle pacing state - per-session, never shared.
 data/.tv-throttle.json
+
+# Scratch directory for a live run's intermediate JSON (the sweep payload handed to
+# sector_screen.py). Same rule as the report outputs: never commit run results.
+run/
