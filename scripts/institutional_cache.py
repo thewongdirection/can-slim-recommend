@@ -90,9 +90,49 @@ DEFAULTS = {
 
 INDEX_URL = "https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets"
 
-# SEC requires a declared User-Agent with contact details and returns 403 without one. This is
-# their stated access policy, not an obstacle to route around.
-UA = "can-slim-recommend/1.0 (contact: set --contact)"
+# SEC requires a declared User-Agent carrying a real contact address, and returns 403 without one.
+# This is their stated access policy, not an obstacle to route around.
+#
+# THE TRAP THIS CODE EXISTS TO CLOSE. The obvious shape - a constant UA with a placeholder where
+# the address goes - looks configured and is not: SEC 403s it, every dataset read fails, and the
+# run reports "13F UNAVAILABLE" with an HTTP code. Nothing in that output says the cause was the
+# header this script sent, so the failure reads as "SEC is blocked here" and the next step taken
+# is usually to go argue with a firewall. Measured against SEC, with the product token held fixed:
+#
+#     (contact: set --contact)                     403   <- the old default
+#     <no address at all>                          403
+#     (contact: you@your-domain.com)               200
+#     (contact: x@users.noreply.github.com)        403   <- domain blocklist, not parseability
+#
+# So an address is required, and a throwaway one is not a loophole either: SEC blocklists the
+# common no-reply domains, and the fourth line is why this file ships NO built-in default. Any
+# address hardcoded here would either be someone else's inbox or a domain SEC already refuses.
+# The contact has to come from whoever is running it, so the rule is: refuse to send a request
+# we can already tell will be rejected, and say exactly what to set.
+UA_TEMPLATE = "can-slim-recommend/1.0 (contact: %s)"
+
+# Deliberately permissive - this is a "did you paste an address or a placeholder" check, not an
+# RFC 5322 validator. It exists to catch the bad value locally, before it becomes a 403.
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+
+CONTACT_HELP = (
+    "SEC requires a contact address in the User-Agent. Pass --contact you@your-domain.com, "
+    "or set the SEC_CONTACT environment variable once. Use an address you actually read - "
+    "SEC rejects throwaway no-reply domains, and it is how they reach you about your traffic.")
+
+
+def resolve_contact(cli_contact):
+    """The contact to send, or (None, why) if there is not a usable one.
+
+    Checked BEFORE any request goes out. A placeholder that reaches SEC costs a 403 and an error
+    message pointing at the wrong layer; caught here it costs one line that names the fix.
+    """
+    c = (cli_contact or os.environ.get("SEC_CONTACT") or "").strip()
+    if not c:
+        return None, "no SEC contact address configured. " + CONTACT_HELP
+    if not EMAIL_RE.match(c):
+        return None, "SEC contact %r is not an email address. %s" % (c, CONTACT_HELP)
+    return c, None
 
 MONTHS = {m: i + 1 for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
@@ -133,7 +173,10 @@ def http(url, contact, timeout, retries=6):
     then success on the third attempt. Treating the first 429 as failure would make this script
     look broken most of the time it is run.
     """
-    hdrs = {"User-Agent": ("can-slim-recommend/1.0 (contact: %s)" % contact) if contact else UA,
+    ok, why_contact = resolve_contact(contact)
+    if not ok:
+        return None, why_contact          # never spend a request we know SEC will refuse
+    hdrs = {"User-Agent": UA_TEMPLATE % ok,
             "Accept-Encoding": "gzip, deflate"}
     wait, why = 5, ""
     for _ in range(retries):
@@ -144,6 +187,11 @@ def http(url, contact, timeout, retries=6):
             return maybe_gunzip(body), None
         except urllib.error.HTTPError as e:
             why = "HTTP %s" % e.code
+            if e.code == 403:
+                # Almost always the User-Agent, not the network. Say so, or this gets debugged
+                # as an egress problem.
+                why = ("HTTP 403 - SEC rejected the User-Agent. " + CONTACT_HELP +
+                       " (sent: %s)" % (UA_TEMPLATE % ok))
             if e.code != 429:
                 return None, why
             time.sleep(wait)
@@ -612,12 +660,25 @@ def main():
     ap.add_argument("--fallback", metavar="FILE",
                     help="accumulation.py output, used for tickers 13F could not answer")
     ap.add_argument("--cache-dir", default="data/13f", help="keep the zips (default %(default)s)")
-    ap.add_argument("--contact", default="", help="contact address for SEC's User-Agent policy")
+    ap.add_argument("--contact", default="",
+                    help="contact email for SEC's User-Agent policy - REQUIRED. Defaults to the "
+                         "SEC_CONTACT environment variable. SEC returns 403 without a real "
+                         "address and blocklists throwaway no-reply domains, so there is no "
+                         "usable built-in default")
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--thin-holders", type=int, default=DEFAULTS["thin_holders"])
     ap.add_argument("-o", "--out", metavar="FILE", help="write here (default: stdout)")
     ap.add_argument("--known-only", action="store_true", help="print just the --known map")
     a = ap.parse_args()
+
+    # Fail here rather than 400MB and six retries later. Without a contact every SEC read 403s,
+    # and the run still produces a well-formed cache with zero tickers in it - a file that looks
+    # like an answer and silently grades nothing. One upfront check, naming the flag, is the
+    # difference between a fixable error and a quiet wrong result.
+    _, why_contact = resolve_contact(a.contact)
+    if why_contact:
+        print("cannot reach SEC: " + why_contact, file=sys.stderr)
+        return 2
 
     if a.list:
         datasets, why = list_datasets(a.contact, a.timeout)

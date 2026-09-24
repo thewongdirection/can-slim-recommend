@@ -659,6 +659,56 @@ def check_gzip_is_undone_before_parsing():
     assert ic.maybe_gunzip(raw) == raw          # not compressed: passed through untouched
 
 
+def check_sec_contact_is_required_before_any_request_goes_out():
+    """SEC 403s a User-Agent without a real contact address, and the old default shipped a
+    PLACEHOLDER ("contact: set --contact") that looked configured and was not. Every read 403d,
+    and the run still wrote a well-formed cache with zero tickers - an answer-shaped file that
+    graded nothing, whose only clue was an HTTP code that reads like a firewall problem.
+
+    So the contract is: a missing or non-email contact is caught LOCALLY, before a request is
+    spent, and the reason names the flag to set."""
+    assert ic.resolve_contact("me@example.com") == ("me@example.com", None)
+
+    for bad in ("", None, "   ", "set --contact", "not-an-email", "a@b"):
+        got, why = ic.resolve_contact(bad)
+        assert got is None, "%r should not be accepted as a contact" % (bad,)
+        assert "--contact" in why, why          # the message must name the fix
+
+    # The env var is the configure-once path, and an explicit --contact still wins over it.
+    import os as _os
+    old = _os.environ.get("SEC_CONTACT")
+    try:
+        _os.environ["SEC_CONTACT"] = "env@example.com"
+        assert ic.resolve_contact("") == ("env@example.com", None)
+        assert ic.resolve_contact("cli@example.com") == ("cli@example.com", None)
+    finally:
+        if old is None:
+            _os.environ.pop("SEC_CONTACT", None)
+        else:
+            _os.environ["SEC_CONTACT"] = old
+
+
+def check_a_bad_contact_never_reaches_the_network():
+    """The check above is only worth anything if http() actually honours it: a placeholder that
+    still gets sent costs a 403 and an error pointing at the wrong layer. urlopen is replaced
+    with a detonator, so a single escaping request fails the test."""
+    import urllib.request as _u
+    old = _u.urlopen
+
+    def boom(*a, **k):                      # pragma: no cover - reaching this IS the failure
+        raise AssertionError("http() sent a request with no usable contact")
+
+    _u.urlopen = boom
+    old_env = __import__("os").environ.pop("SEC_CONTACT", None)
+    try:
+        body, why = ic.http("https://www.sec.gov/files/company_tickers.json", "", 5)
+        assert body is None and "--contact" in why, why
+    finally:
+        _u.urlopen = old
+        if old_env is not None:
+            __import__("os").environ["SEC_CONTACT"] = old_env
+
+
 def check_dataset_names_parse_under_both_sec_schemes():
     """SEC renamed these files in 2024, from the holdings quarter to the window in which filings
     were RECEIVED. The original guessed URL 404s for every quarter after 2023 - which is why the

@@ -62,9 +62,17 @@ The **I-cache** (institutional sponsorship) is built from SEC bulk data, not fro
 Rebuild it once a quarter, after each 13F deadline — mid-Feb, mid-May, mid-Aug, mid-Nov:
 
 ```bash
+export SEC_CONTACT=you@your-domain.com      # once; or pass --contact on each run
 python scripts/institutional_cache.py --quarter 2026Q1 \
-  --sec-tickers auto --contact you@example.com -o data/i-cache.json
+  --sec-tickers auto -o data/i-cache.json
 ```
+
+**The contact address is required, not decorative.** SEC's access policy wants a real way to
+reach whoever is pulling the data, and returns `403` for a User-Agent without one — including
+for throwaway no-reply domains, which they blocklist. There is deliberately no built-in default:
+any address baked in here would be someone else's inbox. If it is missing or is not an email the
+script stops immediately and names the flag, rather than 403ing its way to a well-formed cache
+with zero tickers in it.
 
 Takes about 40 seconds and needs `www.sec.gov` reachable. Without it the skill still runs — **I**
 falls back to the volume proxy in `scripts/accumulation.py`, and every reason string says so.

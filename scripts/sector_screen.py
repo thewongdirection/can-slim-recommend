@@ -606,11 +606,16 @@ def main():
     raw = open(a.input).read() if a.input else sys.stdin.read()
     blob = json.loads(raw)
     known = load_known(a.known)
-    cfg = {"top": a.top, "fallback": a.fallback, "min_price": a.min_price,
-           "min_dollar_vol": a.min_dollar_vol, "min_market_cap": a.min_market_cap,
-           "max_off_high": a.max_off_high, "min_rs": a.min_rs, "threshold": a.threshold,
-           "m_grade": a.m_grade, "i_grade": a.i_grade, "pivot_band": a.pivot_band,
-           "thin_vol": a.thin_vol}
+    # Start from DEFAULTS and let the CLI override. Building this dict literally instead meant
+    # every key added to DEFAULTS without a matching flag - partial_session_rv/_frac were the
+    # first - was simply absent here, so the library path (tests, which pass DEFAULTS) worked
+    # while every CLI run died on a KeyError. Deriving it removes the whole class of bug.
+    cfg = dict(DEFAULTS)
+    cfg.update({"top": a.top, "fallback": a.fallback, "min_price": a.min_price,
+                "min_dollar_vol": a.min_dollar_vol, "min_market_cap": a.min_market_cap,
+                "max_off_high": a.max_off_high, "min_rs": a.min_rs, "threshold": a.threshold,
+                "m_grade": a.m_grade, "i_grade": a.i_grade, "pivot_band": a.pivot_band,
+                "thin_vol": a.thin_vol})
     res = run(blob, cfg, known)
     print(to_markdown(res) if a.md else json.dumps(res, indent=2))
 
