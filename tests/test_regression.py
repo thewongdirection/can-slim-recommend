@@ -38,6 +38,7 @@ import html_to_pdf as h2p                                   # noqa: E402
 import build_report as br                                   # noqa: E402
 import check_for_updates as cfu                             # noqa: E402
 import tv_throttle as thr                                   # noqa: E402
+import market_session as mses                               # noqa: E402
 import accumulation as acc                                  # noqa: E402
 import institutional_cache as ic                            # noqa: E402
 
@@ -1490,6 +1491,87 @@ def check_no_angle_bracket_placeholders(tmp):
         found = [t for t in re.findall(r"</?[a-zA-Z][a-zA-Z0-9_ -]*/?>", text)
                  if not (rel == "README.md" and t == "<html>")]
         assert not found, "%s uses angle-bracket placeholders %s - use {braces}" % (rel, sorted(set(found)))
+
+
+def check_no_reference_points_at_a_workflow_step_that_moved():
+    """Inserting a step renumbers every later one, and the cross-references elsewhere do not
+    follow. Inserting the market-session check as step 1 left SKILL.md pointing at "step 4a" (now
+    5a), "Step 7" (now 8), and build_report.py calling itself "the entry point for step 7" - each
+    silently sending a reader to the wrong instruction.
+    """
+    skill = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    # the headings that actually exist, e.g. {"0","1","2","5a",...}
+    steps = set(re.findall(r"^###\s+([0-9]+[a-z]?)\s+—", skill, re.M))
+    assert len(steps) >= 8, "could not read the workflow headings: %s" % sorted(steps)
+    targets = [os.path.join(ROOT, "SKILL.md"), os.path.join(ROOT, "scripts", "build_report.py")]
+    bad = []
+    for path in targets:
+        text = io.open(path, encoding="utf-8").read()
+        for m in re.finditer(r"\b[Ss]tep\s+([0-9]+[a-z]?)\b", text):
+            if m.group(1) not in steps:
+                bad.append("%s: 'step %s' (headings are %s)"
+                           % (os.path.basename(path), m.group(1), sorted(steps)))
+    assert not bad, "cross-reference to a workflow step that does not exist: %s" % bad[:4]
+
+
+def check_market_session_classifies_the_whole_day():
+    """Before the open and after the close BOTH serve the last complete session, which is what S
+    needs - so the condition is "a session is not in progress", not "it is after the close"."""
+    import datetime
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        return "skipped: no zoneinfo"
+    et = ZoneInfo("America/New_York")
+    cases = [((2026, 9, 24, 8, 0), "premarket", True), ((2026, 9, 24, 9, 31), "open", False),
+             ((2026, 9, 24, 13, 0), "open", False), ((2026, 9, 24, 16, 10), "settling", False),
+             ((2026, 9, 24, 16, 35), "after-close", True), ((2026, 9, 26, 11, 0), "weekend", True)]
+    for parts, state, gradeable in cases:
+        v = mses.classify(datetime.datetime(*parts, tzinfo=et))
+        assert v["state"] == state and v["s_gradeable"] is gradeable, (parts, v)
+
+
+def check_a_long_wait_is_never_sat_through_silently():
+    """THE policy question. Waiting until after the close sounds tidy and is a trap: a run started
+    at 09:31 would block for nearly seven hours, and an agent that disappears for the afternoon has
+    failed the person who asked for stock ideas whatever it eventually prints. Short waits are
+    waited; long ones are announced with a resume time so the user can choose."""
+    import datetime
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        return "skipped: no zoneinfo"
+    et = ZoneInfo("America/New_York")
+    just_opened = mses.classify(datetime.datetime(2026, 9, 24, 9, 31, tzinfo=et))
+    assert just_opened["wait_seconds"] > mses.MAX_AUTO_WAIT, "a 7-hour wait must not be automatic"
+    out = mses.render(just_opened)
+    assert "too long to sit through" in out and "16:30" in out, out
+    assert "Do NOT silently block" in out
+
+    near_bell = mses.classify(datetime.datetime(2026, 9, 24, 15, 55, tzinfo=et))
+    assert 0 < near_bell["wait_seconds"] <= mses.MAX_AUTO_WAIT, near_bell
+    assert "short wait" in mses.render(near_bell)
+
+
+def check_confirming_the_market_open_actually_holds_the_run(tmp):
+    """--confirm-open exists to override the clock, which cannot see an early close. The first
+    version overrode the STATE but kept the premarket dict's wait_seconds=0, so `--wait` slept for
+    nothing, reclassified from the clock and exited 0 - the override could not hold the run, which
+    is the only thing it is for."""
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "market_session.py"),
+                        "--confirm-open", "true", "--json"],
+                       capture_output=True, text=True, timeout=60)
+    v = json.loads(r.stdout)
+    assert r.returncode == 2 and v["s_gradeable"] is False, (r.returncode, v)
+    assert v["wait_seconds"] > 0 and v["resume_at_et"], \
+        "the override reports no wait, so --wait would sleep zero and pass: %s" % v
+
+
+def check_skill_documents_the_market_session_check():
+    s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    assert "market_session.py" in s, "SKILL.md never tells the run to check the session"
+    assert "partial sum" in s, "SKILL.md never says WHY a live session breaks S"
+    assert "Never block silently for hours" in s, "SKILL.md omits the wait policy"
 
 
 def check_skill_documents_step_zero():

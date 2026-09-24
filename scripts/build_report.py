@@ -2,7 +2,7 @@
 """
 build_report.py - turn a filled dashboard into the deliverable(s) the user asked for.
 
-This is the single entry point for step 7. It exists so "PDF by default, HTML on request"
+This is the single entry point for step 8. It exists so "PDF by default, HTML on request"
 is a resolved argument rather than a convention someone has to remember:
 
     python scripts/build_report.py canslim-recommendations-<date>.html                 -> PDF

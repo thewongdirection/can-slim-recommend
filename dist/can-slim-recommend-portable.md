@@ -240,7 +240,7 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
   Symbols are `EXCHANGE:TICKER`. Tools are deferred — load with `ToolSearch`.
 - **Screen A before spending calls on history.** `get_financials` alone (ROE + TTM EPS growth)
   settles **A** for one call, which is what re-cuts the ceiling and eliminates names before the
-  expensive `fq`/`fy` history — see step 4a. Run it on **every** triage survivor: it is the
+  expensive `fq`/`fy` history — see step 5a. Run it on **every** triage survivor: it is the
   cheapest letter that can eliminate, and skipping it is what forces a run to guess which names
   are worth grading.
 - **`can-slim-grader`** — the sister skill that grades each candidate. If it isn't installed,
@@ -386,7 +386,40 @@ date the figure underneath is from) — a source pulled today can still hand bac
 number. Every row needs `pulled`; a reused row also needs `asOf`. Also set
 `freshness.attemptedAt` to when the run tried its sources, so "fresh" has a timestamp behind it.
 
-### 1 — Set the scope
+### 1 — Check the market session BEFORE anything else, and say so immediately
+
+```
+python scripts/market_session.py          # exit 0 = S is gradeable; exit 2 = a session is running
+```
+
+**S is graded from `relative_volume_10d_calc`, which during the session is today's volume SO FAR
+— a partial sum, not a measurement.** An hour in, every name in the market reads about 0.1x.
+Before the open and after the close the screener serves the last COMPLETE session, which is
+exactly what S needs, so the condition is simply: *the session must not be in progress*.
+
+**On exit 2, tell the user straight away** — do not discover it in the data, and do not grade S on
+a partial session. What to say depends on how long the wait is, and the script prints which:
+
+| Wait | Do this |
+|---|---|
+| **≤ 45 min** (after ~15:45 ET) | just wait: `python scripts/market_session.py --wait` |
+| **longer** | **say so now**, with the resume time, and let the user choose: come back after the close, run now with S ungraded, or scope the request down |
+
+Never block silently for hours. A run started at 09:31 would sit mute until 16:30, and an agent
+that disappears for the afternoon has failed the person who asked for stock ideas whatever it
+eventually prints. State the cost and let them decide.
+
+If you run anyway, `sector_screen.py` detects the partial session and **discards** relative volume
+rather than reading it as thin — so nothing is wrongly pruned, but S is *unmeasured* on every
+name and the report must say so (`status:"unavailable"` for the S row in `CONFIG.sourceMap`, plus
+a `freshness.failures` entry).
+
+The clock cannot see an **early close** (13:00 ET), so between 13:00 and 16:00 on those days it
+reports "open" when the session has finished — a needless wait, never a wrong grade. If a
+connector tells you otherwise (FMP `marketHours` → `isMarketOpen`, which is not plan-gated), pass
+`--confirm-open false` / `--confirm-open true`.
+
+### 2 — Set the scope
 Defaults, applied without asking when the user just said "recommend stocks":
 **all ~20 TradingView sectors · top 10 performers each · ranked on 6-month performance ·
 grade cut 4.5 of 7 · overall list of 10 · US primary listings.**
@@ -394,7 +427,7 @@ Confirm only what the user actually scoped — a theme ("AI", "energy"), a subse
 different ranking window ("this year"), a different cut, or their own watchlist. Record whatever
 you changed in `CONFIG.sweep.note` so the report says what was swept.
 
-### 2 — Assess market direction (M) — first, and it gates everything
+### 3 — Assess market direction (M) — first, and it gates everything
 Per `tradingview-sector-sweep.md` Step 0: pull SPY/QQQ daily bars, count distribution days,
 check the 50/200-day, cross-check with a web search. Classify **Confirmed uptrend / Under
 pressure / Correction** and set `CONFIG.market.mGrade` to `pass` / `partial` / `fail`.
@@ -404,7 +437,7 @@ to compensate** — state the market status prominently, switch to higher-risk f
 3% stops, "bases to watch for the next follow-through day"), and let the lists come out short.
 Also record **SPY's performance over the sweep window** — it is the benchmark for every RS figure.
 
-### 3 — Sweep every sector for its top 10 performers (TradingView)
+### 4 — Sweep every sector for its top 10 performers (TradingView)
 
 **Pace every TradingView call through `scripts/tv_throttle.py`, without exception.** A sweep is
 ~20 screener calls plus per-name follow-ups, and this connector does not warn before it blocks:
@@ -461,7 +494,7 @@ traps that produce wrong answers (`analyze_sector_tool` does not rank by perform
 `exchange` filter) — are in `tradingview-sector-sweep.md` Step 2. **Always read
 `ignored_filters` in each response.**
 
-### 4 — Triage the sweep down (`scripts/sector_screen.py`)
+### 5 — Triage the sweep down (`scripts/sector_screen.py`)
 Feed every screener row into the script exactly as it came back — never retype numbers. It
 computes % off the 52-week high, RS vs SPY, position vs the 50/200-day EMA, dollar volume, the
 **sector ranking**, and a per-name triage verdict against the method's hard disqualifiers (cheap,
@@ -476,7 +509,7 @@ single name is graded and both bound every row:
 python scripts/sector_screen.py sweep.json --m-grade partial --i-grade partial --md
 ```
 
-### 4a — The ceiling: which names MUST be graded
+### 5a — The ceiling: which names MUST be graded
 You cannot know a name clears 4.5 until you grade it — the score *is* the output of grading. So
 the coverage rule runs the other way, on the **ceiling**: the highest score a name could still
 reach. `sector_screen.py` computes it for every triage survivor from what is already known —
@@ -517,7 +550,7 @@ coverage.** Raise `--threshold`, or tighten triage (`--max-off-high 15`, a highe
 `CONFIG.sweep`. Silently grading a subset is the one thing that is not allowed, because it makes
 the two lists a sample while the report reads as a sweep.
 
-### 5 — Grade every survivor with `can-slim-grader`
+### 6 — Grade every survivor with `can-slim-grader`
 Run the sister skill on each name in the grade queue (or apply its rubric inline if it isn't
 installed). Per ticker that is ~five TradingView calls plus `scripts/relative_strength.py`;
 `tradingview-sector-sweep.md` Step 4 lists them, along with the two TradingView traps that
@@ -538,7 +571,7 @@ dashboard can check any buy point you name.
 When a candidate needs a deeper individual dive, delegate — see "Delegating for deeper
 financials" below.
 
-### 6 — Build the two recommendation lists
+### 7 — Build the two recommendation lists
 Put **every fully graded name** in `CONFIG.picks[]` with its sector, sector rank, six letter
 grades and verdict. The dashboard derives both lists — **do not hand-build them**:
 
@@ -596,7 +629,7 @@ company," no personal vibe. If a name cannot be defended in CAN SLIM terms, it d
 either list. Keep each reason concrete (cite the actual EPS/sales %, the RS figure, the base and
 pivot).
 
-### 7 — Deliver: PDF by default, HTML on request (`--format` decides)
+### 8 — Deliver: PDF by default, HTML on request (`--format` decides)
 1. **Fill the report.** Copy `assets/dashboard_template.html` to
    `canslim-recommendations-{date}.html` and fill the `CONFIG` object — the *only* thing you
    edit; the page renders itself. Populate `market` (verdict + tone + **`mGrade`** + implication),
@@ -802,7 +835,7 @@ apply the same rubric inline from the shared methodology."*)
 - `scripts/html_to_pdf.py` — the PDF engine chain behind it (Chrome → Playwright → WeasyPrint →
   wkhtmltopdf; honours the template's `@page` size and margin). Usable directly, and shared
   with `can-slim-grader`.
-- `assets/dashboard_template.html` — the report (full behavior in Step 7): a self-contained,
+- `assets/dashboard_template.html` — the report (full behavior in Step 8): a self-contained,
   print-optimized, pure-ASCII dashboard that is **dark on screen and white in print** (A4
   landscape, 15mm margins),
   driven by a `CONFIG` object. Derives both recommendation lists from one `picks[]` array (both
@@ -3256,6 +3289,206 @@ if __name__ == "__main__":
 ```
 
 
+## `scripts/market_session.py`
+
+Step 1: is a trading session in progress? S is graded from relative volume, which mid-session is today's volume SO FAR - a partial sum. Waits out a short gap, and on a long one says so immediately rather than blocking for hours.
+
+```python
+#!/usr/bin/env python3
+"""
+market_session.py - is a US trading session in progress right now, and can S be graded?
+
+WHY THE RUN HAS TO ASK THIS FIRST. `relative_volume_10d_calc` - the field the S letter turns on -
+compares today's volume SO FAR against the 10-day average. During the session that is a partial
+sum, not a measurement: an hour in, every name in the market reads about 0.1x. Measured on the
+same twelve Electronic Technology names 26 hours apart:
+
+    during the session   12/12 read under 0.5x   (AMD 0.21x)
+    before the open       1/12 read under 0.5x   (AMD 0.64x - its real full-day figure)
+
+Outside the session the screener serves the last COMPLETE session, which is exactly what S wants.
+So the condition is simple, and it is the same one either side of the day: the session must not be
+in progress. Before the open and after the close are both fine; only "open" is not.
+
+WHY THIS IS NOT A BLANKET WAIT. Waiting until after the close sounds tidy and is a trap: a run
+started at 09:31 would block for nearly seven hours, and an agent session that sits mute for seven
+hours has failed the person who asked for stock ideas, whatever it eventually prints. So the
+policy is graded by how long the wait actually is:
+
+  * a SHORT wait (default: up to 45 minutes) - just wait. Someone running at 16:05 wants the
+    report, and a 25-minute pause costs them nothing they would not have spent re-running.
+  * a LONG wait - say so, immediately, with the exact local time to come back, and let the person
+    choose. The run must not decide on their behalf to disappear for the afternoon.
+
+Either way the answer is announced UP FRONT rather than discovered in the data, which is the part
+that was actually broken: a mid-session run used to look completely normal and quietly grade S on
+a partial sum.
+
+TIME SOURCE. The ET clock, because it needs no network and cannot be rate-limited. A holiday
+cannot fool it in the dangerous direction - a closed market reads as closed either way, and
+"closed" is the state S wants. An EARLY CLOSE (13:00 ET) is the one gap: between 13:00 and 16:00
+this reports "open" when the session has actually finished, which costs a needless wait but never
+a wrong S grade. Pass `--confirm-open false/true` when a connector has told you otherwise.
+
+Usage:
+  python scripts/market_session.py                      # report, human-readable
+  python scripts/market_session.py --json               # machine-readable
+  python scripts/market_session.py --wait               # block ONLY if the wait is short
+  python scripts/market_session.py --wait --max-wait 3600
+  python scripts/market_session.py --confirm-open false # a connector says it is closed
+
+Exit status:
+  0  a session is NOT in progress - S is gradeable, carry on
+  2  a session IS in progress and the wait is too long to sit through - ASK the user
+  0  (--wait, short wait) after sleeping until the window opens
+Pure standard library.
+"""
+import argparse
+import datetime
+import json
+import sys
+import time
+
+try:
+    from zoneinfo import ZoneInfo
+    ET = ZoneInfo("America/New_York")
+except Exception:                      # pragma: no cover - ancient python
+    ET = None
+
+OPEN_H, OPEN_M = 9, 30
+CLOSE_H, CLOSE_M = 16, 0
+# Minutes after the bell before the closing print is trusted. The last bar settles and late prints
+# land in the first few minutes; 30 is the skill's default and is deliberately generous.
+SETTLE_MIN = 30
+# Wait this long or less and just wait. Longer and the run must ask rather than vanish.
+MAX_AUTO_WAIT = 45 * 60
+
+
+def now_et():
+    if ET is None:
+        return datetime.datetime.now()
+    return datetime.datetime.now(datetime.timezone.utc).astimezone(ET)
+
+
+def classify(now=None, settle_min=SETTLE_MIN):
+    """Return a dict describing the session. `s_gradeable` is the only field most callers need."""
+    now = now or now_et()
+    o = now.replace(hour=OPEN_H, minute=OPEN_M, second=0, microsecond=0)
+    c = now.replace(hour=CLOSE_H, minute=CLOSE_M, second=0, microsecond=0)
+    settled = c + datetime.timedelta(minutes=settle_min)
+
+    if now.weekday() >= 5:
+        return {"state": "weekend", "s_gradeable": True, "wait_seconds": 0,
+                "detail": "weekend - the screener serves Friday's completed session.",
+                "now_et": now.strftime("%Y-%m-%d %H:%M %Z"), "resume_at_et": None}
+    if now < o:
+        return {"state": "premarket", "s_gradeable": True, "wait_seconds": 0,
+                "detail": ("before the open - the screener still serves the previous completed "
+                           "session, which is what S needs."),
+                "now_et": now.strftime("%Y-%m-%d %H:%M %Z"), "resume_at_et": None}
+    if now >= settled:
+        return {"state": "after-close", "s_gradeable": True, "wait_seconds": 0,
+                "detail": "after the close - today's session is complete.",
+                "now_et": now.strftime("%Y-%m-%d %H:%M %Z"), "resume_at_et": None}
+
+    # Between the bell and the settle window, or mid-session: a session's data is not final.
+    wait = max(0, int((settled - now).total_seconds()))
+    mid = now < c
+    return {
+        "state": "open" if mid else "settling",
+        "s_gradeable": False,
+        "wait_seconds": wait,
+        "detail": (("a session is in progress" if mid else
+                    "the session has just closed and the final print is still settling") +
+                   " - relative volume is a partial sum, so S cannot be graded on it."),
+        "now_et": now.strftime("%Y-%m-%d %H:%M %Z"),
+        "resume_at_et": settled.strftime("%Y-%m-%d %H:%M %Z"),
+    }
+
+
+def render(v, auto_max=MAX_AUTO_WAIT):
+    L = []
+    if v["s_gradeable"]:
+        L.append("Market session: %s - S CAN be graded." % v["state"].upper())
+        L.append("  " + v["detail"])
+        return "\n".join(L)
+    mins = v["wait_seconds"] / 60.0
+    L.append("Market session: %s - S CANNOT be graded on live data." % v["state"].upper())
+    L.append("  " + v["detail"])
+    L.append("  Now %s. A complete session is available from %s (%.0f min)."
+             % (v["now_et"], v["resume_at_et"], mins))
+    if v["wait_seconds"] <= auto_max:
+        L.append("  That is a short wait - waiting is the right call; --wait will sit it out.")
+    else:
+        L.append("  That is too long to sit through. TELL THE USER NOW, with the resume time, and")
+        L.append("  let them choose: wait and re-run then, run now with S ungraded (the ceiling")
+        L.append("  stays generous and the report says S was not measured), or scope the request.")
+        L.append("  Do NOT silently block, and do NOT grade S on a partial session.")
+    return "\n".join(L)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--json", action="store_true", help="machine-readable verdict")
+    ap.add_argument("--wait", action="store_true",
+                    help="sleep until a complete session is available, but ONLY if the wait is "
+                         "under --max-wait; otherwise exit 2 so the run can ask the user")
+    ap.add_argument("--max-wait", type=float, default=MAX_AUTO_WAIT,
+                    help="longest wait to sit through without asking, seconds (default %(default)s)")
+    ap.add_argument("--settle-min", type=int, default=SETTLE_MIN,
+                    help="minutes after the bell before the close is trusted (default %(default)s)")
+    ap.add_argument("--confirm-open", choices=("true", "false"),
+                    help="override the clock when a connector has reported the market state - "
+                         "the clock cannot see an early close on its own")
+    a = ap.parse_args()
+
+    v = classify(settle_min=a.settle_min)
+    if a.confirm_open == "false" and not v["s_gradeable"]:
+        v = {"state": "after-close", "s_gradeable": True, "wait_seconds": 0,
+             "now_et": v["now_et"], "resume_at_et": None,
+             "detail": ("a connector reports the market closed (an early close the clock cannot "
+                        "see) - today's session is complete.")}
+    elif a.confirm_open == "true" and v["s_gradeable"]:
+        # Overriding the state is not enough: the wait has to be recomputed too. Carrying the
+        # premarket dict's wait_seconds=0 through made `--wait` sleep for nothing, reclassify
+        # from the clock, and exit 0 - so the override could not actually hold the run, which is
+        # the only thing it exists to do.
+        now = now_et()
+        settled = now.replace(hour=CLOSE_H, minute=CLOSE_M, second=0, microsecond=0) \
+            + datetime.timedelta(minutes=a.settle_min)
+        if settled <= now:                      # already past today's close: the next one is tomorrow
+            settled += datetime.timedelta(days=1)
+        v = dict(v, state="open", s_gradeable=False,
+                 wait_seconds=max(0, int((settled - now).total_seconds())),
+                 resume_at_et=settled.strftime("%Y-%m-%d %H:%M %Z"),
+                 detail="a connector reports the market OPEN - relative volume is a partial sum.")
+
+    if a.wait and not v["s_gradeable"]:
+        if v["wait_seconds"] > a.max_wait:
+            print(render(v, a.max_wait), file=sys.stderr)
+            return 2
+        print("waiting %.0f min for the session to complete (until %s)"
+              % (v["wait_seconds"] / 60.0, v["resume_at_et"]))
+        time.sleep(v["wait_seconds"] + 1)
+        after = classify(settle_min=a.settle_min)
+        # Keep the override's verdict if the clock still disagrees - a connector that said "open"
+        # knows something the clock does not, and silently reverting to the clock here would undo
+        # the wait we just sat through.
+        v = after if (after["s_gradeable"] or a.confirm_open != "true") else v
+
+    if a.json:
+        print(json.dumps(v, indent=2))
+    else:
+        print(render(v, a.max_wait))
+    return 0 if v["s_gradeable"] else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+
 ## `scripts/tv_throttle.py`
 
 Paces TradingView calls so a sweep never earns a block. --wait BLOCKS the caller rather than advising it, because the connector does not warn: a burst succeeds, then the screener 403s for 20+ minutes with no server-side remedy.
@@ -4560,7 +4793,7 @@ The step-7 entry point: produces the PDF (default), the HTML, or both, and refus
 """
 build_report.py - turn a filled dashboard into the deliverable(s) the user asked for.
 
-This is the single entry point for step 7. It exists so "PDF by default, HTML on request"
+This is the single entry point for step 8. It exists so "PDF by default, HTML on request"
 is a resolved argument rather than a convention someone has to remember:
 
     python scripts/build_report.py canslim-recommendations-<date>.html                 -> PDF
@@ -6604,6 +6837,7 @@ import html_to_pdf as h2p                                   # noqa: E402
 import build_report as br                                   # noqa: E402
 import check_for_updates as cfu                             # noqa: E402
 import tv_throttle as thr                                   # noqa: E402
+import market_session as mses                               # noqa: E402
 import accumulation as acc                                  # noqa: E402
 import institutional_cache as ic                            # noqa: E402
 
@@ -8056,6 +8290,87 @@ def check_no_angle_bracket_placeholders(tmp):
         found = [t for t in re.findall(r"</?[a-zA-Z][a-zA-Z0-9_ -]*/?>", text)
                  if not (rel == "README.md" and t == "<html>")]
         assert not found, "%s uses angle-bracket placeholders %s - use {braces}" % (rel, sorted(set(found)))
+
+
+def check_no_reference_points_at_a_workflow_step_that_moved():
+    """Inserting a step renumbers every later one, and the cross-references elsewhere do not
+    follow. Inserting the market-session check as step 1 left SKILL.md pointing at "step 4a" (now
+    5a), "Step 7" (now 8), and build_report.py calling itself "the entry point for step 7" - each
+    silently sending a reader to the wrong instruction.
+    """
+    skill = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    # the headings that actually exist, e.g. {"0","1","2","5a",...}
+    steps = set(re.findall(r"^###\s+([0-9]+[a-z]?)\s+—", skill, re.M))
+    assert len(steps) >= 8, "could not read the workflow headings: %s" % sorted(steps)
+    targets = [os.path.join(ROOT, "SKILL.md"), os.path.join(ROOT, "scripts", "build_report.py")]
+    bad = []
+    for path in targets:
+        text = io.open(path, encoding="utf-8").read()
+        for m in re.finditer(r"\b[Ss]tep\s+([0-9]+[a-z]?)\b", text):
+            if m.group(1) not in steps:
+                bad.append("%s: 'step %s' (headings are %s)"
+                           % (os.path.basename(path), m.group(1), sorted(steps)))
+    assert not bad, "cross-reference to a workflow step that does not exist: %s" % bad[:4]
+
+
+def check_market_session_classifies_the_whole_day():
+    """Before the open and after the close BOTH serve the last complete session, which is what S
+    needs - so the condition is "a session is not in progress", not "it is after the close"."""
+    import datetime
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        return "skipped: no zoneinfo"
+    et = ZoneInfo("America/New_York")
+    cases = [((2026, 9, 24, 8, 0), "premarket", True), ((2026, 9, 24, 9, 31), "open", False),
+             ((2026, 9, 24, 13, 0), "open", False), ((2026, 9, 24, 16, 10), "settling", False),
+             ((2026, 9, 24, 16, 35), "after-close", True), ((2026, 9, 26, 11, 0), "weekend", True)]
+    for parts, state, gradeable in cases:
+        v = mses.classify(datetime.datetime(*parts, tzinfo=et))
+        assert v["state"] == state and v["s_gradeable"] is gradeable, (parts, v)
+
+
+def check_a_long_wait_is_never_sat_through_silently():
+    """THE policy question. Waiting until after the close sounds tidy and is a trap: a run started
+    at 09:31 would block for nearly seven hours, and an agent that disappears for the afternoon has
+    failed the person who asked for stock ideas whatever it eventually prints. Short waits are
+    waited; long ones are announced with a resume time so the user can choose."""
+    import datetime
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        return "skipped: no zoneinfo"
+    et = ZoneInfo("America/New_York")
+    just_opened = mses.classify(datetime.datetime(2026, 9, 24, 9, 31, tzinfo=et))
+    assert just_opened["wait_seconds"] > mses.MAX_AUTO_WAIT, "a 7-hour wait must not be automatic"
+    out = mses.render(just_opened)
+    assert "too long to sit through" in out and "16:30" in out, out
+    assert "Do NOT silently block" in out
+
+    near_bell = mses.classify(datetime.datetime(2026, 9, 24, 15, 55, tzinfo=et))
+    assert 0 < near_bell["wait_seconds"] <= mses.MAX_AUTO_WAIT, near_bell
+    assert "short wait" in mses.render(near_bell)
+
+
+def check_confirming_the_market_open_actually_holds_the_run(tmp):
+    """--confirm-open exists to override the clock, which cannot see an early close. The first
+    version overrode the STATE but kept the premarket dict's wait_seconds=0, so `--wait` slept for
+    nothing, reclassified from the clock and exited 0 - the override could not hold the run, which
+    is the only thing it is for."""
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "market_session.py"),
+                        "--confirm-open", "true", "--json"],
+                       capture_output=True, text=True, timeout=60)
+    v = json.loads(r.stdout)
+    assert r.returncode == 2 and v["s_gradeable"] is False, (r.returncode, v)
+    assert v["wait_seconds"] > 0 and v["resume_at_et"], \
+        "the override reports no wait, so --wait would sleep zero and pass: %s" % v
+
+
+def check_skill_documents_the_market_session_check():
+    s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    assert "market_session.py" in s, "SKILL.md never tells the run to check the session"
+    assert "partial sum" in s, "SKILL.md never says WHY a live session breaks S"
+    assert "Never block silently for hours" in s, "SKILL.md omits the wait policy"
 
 
 def check_skill_documents_step_zero():

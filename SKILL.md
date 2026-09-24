@@ -82,7 +82,7 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
   Symbols are `EXCHANGE:TICKER`. Tools are deferred — load with `ToolSearch`.
 - **Screen A before spending calls on history.** `get_financials` alone (ROE + TTM EPS growth)
   settles **A** for one call, which is what re-cuts the ceiling and eliminates names before the
-  expensive `fq`/`fy` history — see step 4a. Run it on **every** triage survivor: it is the
+  expensive `fq`/`fy` history — see step 5a. Run it on **every** triage survivor: it is the
   cheapest letter that can eliminate, and skipping it is what forces a run to guess which names
   are worth grading.
 - **`can-slim-grader`** — the sister skill that grades each candidate. If it isn't installed,
@@ -228,7 +228,40 @@ date the figure underneath is from) — a source pulled today can still hand bac
 number. Every row needs `pulled`; a reused row also needs `asOf`. Also set
 `freshness.attemptedAt` to when the run tried its sources, so "fresh" has a timestamp behind it.
 
-### 1 — Set the scope
+### 1 — Check the market session BEFORE anything else, and say so immediately
+
+```
+python scripts/market_session.py          # exit 0 = S is gradeable; exit 2 = a session is running
+```
+
+**S is graded from `relative_volume_10d_calc`, which during the session is today's volume SO FAR
+— a partial sum, not a measurement.** An hour in, every name in the market reads about 0.1x.
+Before the open and after the close the screener serves the last COMPLETE session, which is
+exactly what S needs, so the condition is simply: *the session must not be in progress*.
+
+**On exit 2, tell the user straight away** — do not discover it in the data, and do not grade S on
+a partial session. What to say depends on how long the wait is, and the script prints which:
+
+| Wait | Do this |
+|---|---|
+| **≤ 45 min** (after ~15:45 ET) | just wait: `python scripts/market_session.py --wait` |
+| **longer** | **say so now**, with the resume time, and let the user choose: come back after the close, run now with S ungraded, or scope the request down |
+
+Never block silently for hours. A run started at 09:31 would sit mute until 16:30, and an agent
+that disappears for the afternoon has failed the person who asked for stock ideas whatever it
+eventually prints. State the cost and let them decide.
+
+If you run anyway, `sector_screen.py` detects the partial session and **discards** relative volume
+rather than reading it as thin — so nothing is wrongly pruned, but S is *unmeasured* on every
+name and the report must say so (`status:"unavailable"` for the S row in `CONFIG.sourceMap`, plus
+a `freshness.failures` entry).
+
+The clock cannot see an **early close** (13:00 ET), so between 13:00 and 16:00 on those days it
+reports "open" when the session has finished — a needless wait, never a wrong grade. If a
+connector tells you otherwise (FMP `marketHours` → `isMarketOpen`, which is not plan-gated), pass
+`--confirm-open false` / `--confirm-open true`.
+
+### 2 — Set the scope
 Defaults, applied without asking when the user just said "recommend stocks":
 **all ~20 TradingView sectors · top 10 performers each · ranked on 6-month performance ·
 grade cut 4.5 of 7 · overall list of 10 · US primary listings.**
@@ -236,7 +269,7 @@ Confirm only what the user actually scoped — a theme ("AI", "energy"), a subse
 different ranking window ("this year"), a different cut, or their own watchlist. Record whatever
 you changed in `CONFIG.sweep.note` so the report says what was swept.
 
-### 2 — Assess market direction (M) — first, and it gates everything
+### 3 — Assess market direction (M) — first, and it gates everything
 Per `tradingview-sector-sweep.md` Step 0: pull SPY/QQQ daily bars, count distribution days,
 check the 50/200-day, cross-check with a web search. Classify **Confirmed uptrend / Under
 pressure / Correction** and set `CONFIG.market.mGrade` to `pass` / `partial` / `fail`.
@@ -246,7 +279,7 @@ to compensate** — state the market status prominently, switch to higher-risk f
 3% stops, "bases to watch for the next follow-through day"), and let the lists come out short.
 Also record **SPY's performance over the sweep window** — it is the benchmark for every RS figure.
 
-### 3 — Sweep every sector for its top 10 performers (TradingView)
+### 4 — Sweep every sector for its top 10 performers (TradingView)
 
 **Pace every TradingView call through `scripts/tv_throttle.py`, without exception.** A sweep is
 ~20 screener calls plus per-name follow-ups, and this connector does not warn before it blocks:
@@ -303,7 +336,7 @@ traps that produce wrong answers (`analyze_sector_tool` does not rank by perform
 `exchange` filter) — are in `tradingview-sector-sweep.md` Step 2. **Always read
 `ignored_filters` in each response.**
 
-### 4 — Triage the sweep down (`scripts/sector_screen.py`)
+### 5 — Triage the sweep down (`scripts/sector_screen.py`)
 Feed every screener row into the script exactly as it came back — never retype numbers. It
 computes % off the 52-week high, RS vs SPY, position vs the 50/200-day EMA, dollar volume, the
 **sector ranking**, and a per-name triage verdict against the method's hard disqualifiers (cheap,
@@ -318,7 +351,7 @@ single name is graded and both bound every row:
 python scripts/sector_screen.py sweep.json --m-grade partial --i-grade partial --md
 ```
 
-### 4a — The ceiling: which names MUST be graded
+### 5a — The ceiling: which names MUST be graded
 You cannot know a name clears 4.5 until you grade it — the score *is* the output of grading. So
 the coverage rule runs the other way, on the **ceiling**: the highest score a name could still
 reach. `sector_screen.py` computes it for every triage survivor from what is already known —
@@ -359,7 +392,7 @@ coverage.** Raise `--threshold`, or tighten triage (`--max-off-high 15`, a highe
 `CONFIG.sweep`. Silently grading a subset is the one thing that is not allowed, because it makes
 the two lists a sample while the report reads as a sweep.
 
-### 5 — Grade every survivor with `can-slim-grader`
+### 6 — Grade every survivor with `can-slim-grader`
 Run the sister skill on each name in the grade queue (or apply its rubric inline if it isn't
 installed). Per ticker that is ~five TradingView calls plus `scripts/relative_strength.py`;
 `tradingview-sector-sweep.md` Step 4 lists them, along with the two TradingView traps that
@@ -380,7 +413,7 @@ dashboard can check any buy point you name.
 When a candidate needs a deeper individual dive, delegate — see "Delegating for deeper
 financials" below.
 
-### 6 — Build the two recommendation lists
+### 7 — Build the two recommendation lists
 Put **every fully graded name** in `CONFIG.picks[]` with its sector, sector rank, six letter
 grades and verdict. The dashboard derives both lists — **do not hand-build them**:
 
@@ -438,7 +471,7 @@ company," no personal vibe. If a name cannot be defended in CAN SLIM terms, it d
 either list. Keep each reason concrete (cite the actual EPS/sales %, the RS figure, the base and
 pivot).
 
-### 7 — Deliver: PDF by default, HTML on request (`--format` decides)
+### 8 — Deliver: PDF by default, HTML on request (`--format` decides)
 1. **Fill the report.** Copy `assets/dashboard_template.html` to
    `canslim-recommendations-{date}.html` and fill the `CONFIG` object — the *only* thing you
    edit; the page renders itself. Populate `market` (verdict + tone + **`mGrade`** + implication),
@@ -644,7 +677,7 @@ apply the same rubric inline from the shared methodology."*)
 - `scripts/html_to_pdf.py` — the PDF engine chain behind it (Chrome → Playwright → WeasyPrint →
   wkhtmltopdf; honours the template's `@page` size and margin). Usable directly, and shared
   with `can-slim-grader`.
-- `assets/dashboard_template.html` — the report (full behavior in Step 7): a self-contained,
+- `assets/dashboard_template.html` — the report (full behavior in Step 8): a self-contained,
   print-optimized, pure-ASCII dashboard that is **dark on screen and white in print** (A4
   landscape, 15mm margins),
   driven by a `CONFIG` object. Derives both recommendation lists from one `picks[]` array (both
