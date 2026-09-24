@@ -98,6 +98,12 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
   up/down volume footprint — a proxy, and its reason strings say so. Only if BOTH are unavailable
   does I fall back to a blanket `--i-grade partial`. Record which source graded it in
   `CONFIG.sourceMap`; the cache carries `detail[ticker].source` per name.
+- **Annual earnings (A)** is the other letter the connector cannot answer: `get_financial_history`
+  returns 8 quarters whatever `period` is passed, which is two fiscal years against the three the
+  rubric tests, and TTM growth is a different question (Avnet reads +46% TTM while its FY2025 EPS
+  fell 49%). Run `scripts/annual_eps.py` for audited annual EPS from SEC XBRL and pass it with
+  `--known`. These are filings, not a proxy, so a `fail` is evidence and may prune; "no filings"
+  and "series too old" grade partial and never prune.
 - **Web search** for the market read and the "new" in N.
 - **Fallbacks — unverified, use only when the proven path fails:** IBKR MCP, Massive Market Data,
   then web, and **FMP last of all** — it is verified plan-gated on this account (`form13F` and

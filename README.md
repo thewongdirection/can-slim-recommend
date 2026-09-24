@@ -258,6 +258,9 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
   **learned**, not configured — `scanner.tradingview.com` publishes no limit, so `--observe` reads
   each response and adapts (obeying a named `Retry after Ns` exactly, halving on a rate signal,
   easing up after clean calls), hard-capped at 90/min.
+- `scripts/annual_eps.py` — grades **A** from SEC XBRL annual EPS. TradingView returns only 8
+  quarters, so the three-year test cannot be run from the connector at all; these are audited
+  figures, so a `fail` here is evidence and is safe to prune on.
 - `scripts/institutional_cache.py` — grades **I** from SEC Form 13F, aggregated once per quarter
   and cached so a run spends no network on it. Discovers the available data sets from SEC's own
   index rather than constructing URLs, and fails open to the proxy below.

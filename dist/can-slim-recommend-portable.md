@@ -248,11 +248,20 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
   and apply its rubric inline from the shared methodology rather than inventing a different scale.
 - **Institutional sponsorship (I)** is the one letter TradingView cannot answer. Run
   `scripts/institutional_cache.py` ONCE PER QUARTER (after each 13F deadline: mid-Feb/May/Aug/Nov)
-  to build `data/i-cache.json` from SEC Form 13F, then pass it to every run with `--known`. It
+  to build `data/i-cache.json` from SEC Form 13F, then pass it to every run with `--known`.
+  **SEC requires a contact email in the User-Agent and returns 403 without one**, so set
+  `SEC_CONTACT` once (or pass `--contact`); the script refuses up front rather than writing an
+  empty cache, and a throwaway no-reply domain will not do — SEC blocklists them. It
   falls open to `scripts/accumulation.py`, which reads institutional buying pressure from the
   up/down volume footprint — a proxy, and its reason strings say so. Only if BOTH are unavailable
   does I fall back to a blanket `--i-grade partial`. Record which source graded it in
   `CONFIG.sourceMap`; the cache carries `detail[ticker].source` per name.
+- **Annual earnings (A)** is the other letter the connector cannot answer: `get_financial_history`
+  returns 8 quarters whatever `period` is passed, which is two fiscal years against the three the
+  rubric tests, and TTM growth is a different question (Avnet reads +46% TTM while its FY2025 EPS
+  fell 49%). Run `scripts/annual_eps.py` for audited annual EPS from SEC XBRL and pass it with
+  `--known`. These are filings, not a proxy, so a `fail` is evidence and may prune; "no filings"
+  and "series too old" grade partial and never prune.
 - **Web search** for the market read and the "new" in N.
 - **Fallbacks — unverified, use only when the proven path fails:** IBKR MCP, Massive Market Data,
   then web, and **FMP last of all** — it is verified plan-gated on this account (`form13F` and
@@ -914,9 +923,17 @@ The **I-cache** (institutional sponsorship) is built from SEC bulk data, not fro
 Rebuild it once a quarter, after each 13F deadline — mid-Feb, mid-May, mid-Aug, mid-Nov:
 
 ```bash
+export SEC_CONTACT=you@your-domain.com      # once; or pass --contact on each run
 python scripts/institutional_cache.py --quarter 2026Q1 \
-  --sec-tickers auto --contact you@example.com -o data/i-cache.json
+  --sec-tickers auto -o data/i-cache.json
 ```
+
+**The contact address is required, not decorative.** SEC's access policy wants a real way to
+reach whoever is pulling the data, and returns `403` for a User-Agent without one — including
+for throwaway no-reply domains, which they blocklist. There is deliberately no built-in default:
+any address baked in here would be someone else's inbox. If it is missing or is not an email the
+script stops immediately and names the flag, rather than 403ing its way to a well-formed cache
+with zero tickers in it.
 
 Takes about 40 seconds and needs `www.sec.gov` reachable. Without it the skill still runs — **I**
 falls back to the volume proxy in `scripts/accumulation.py`, and every reason string says so.
@@ -1102,6 +1119,9 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
   **learned**, not configured — `scanner.tradingview.com` publishes no limit, so `--observe` reads
   each response and adapts (obeying a named `Retry after Ns` exactly, halving on a rate signal,
   easing up after clean calls), hard-capped at 90/min.
+- `scripts/annual_eps.py` — grades **A** from SEC XBRL annual EPS. TradingView returns only 8
+  quarters, so the three-year test cannot be run from the connector at all; these are audited
+  figures, so a `fail` here is evidence and is safe to prune on.
 - `scripts/institutional_cache.py` — grades **I** from SEC Form 13F, aggregated once per quarter
   and cached so a run spends no network on it. Discovers the available data sets from SEC's own
   index rather than constructing URLs, and fails open to the proxy below.
@@ -3081,11 +3101,16 @@ def main():
     raw = open(a.input).read() if a.input else sys.stdin.read()
     blob = json.loads(raw)
     known = load_known(a.known)
-    cfg = {"top": a.top, "fallback": a.fallback, "min_price": a.min_price,
-           "min_dollar_vol": a.min_dollar_vol, "min_market_cap": a.min_market_cap,
-           "max_off_high": a.max_off_high, "min_rs": a.min_rs, "threshold": a.threshold,
-           "m_grade": a.m_grade, "i_grade": a.i_grade, "pivot_band": a.pivot_band,
-           "thin_vol": a.thin_vol}
+    # Start from DEFAULTS and let the CLI override. Building this dict literally instead meant
+    # every key added to DEFAULTS without a matching flag - partial_session_rv/_frac were the
+    # first - was simply absent here, so the library path (tests, which pass DEFAULTS) worked
+    # while every CLI run died on a KeyError. Deriving it removes the whole class of bug.
+    cfg = dict(DEFAULTS)
+    cfg.update({"top": a.top, "fallback": a.fallback, "min_price": a.min_price,
+                "min_dollar_vol": a.min_dollar_vol, "min_market_cap": a.min_market_cap,
+                "max_off_high": a.max_off_high, "min_rs": a.min_rs, "threshold": a.threshold,
+                "m_grade": a.m_grade, "i_grade": a.i_grade, "pivot_band": a.pivot_band,
+                "thin_vol": a.thin_vol})
     res = run(blob, cfg, known)
     print(to_markdown(res) if a.md else json.dumps(res, indent=2))
 
@@ -3972,9 +3997,49 @@ DEFAULTS = {
 
 INDEX_URL = "https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets"
 
-# SEC requires a declared User-Agent with contact details and returns 403 without one. This is
-# their stated access policy, not an obstacle to route around.
-UA = "can-slim-recommend/1.0 (contact: set --contact)"
+# SEC requires a declared User-Agent carrying a real contact address, and returns 403 without one.
+# This is their stated access policy, not an obstacle to route around.
+#
+# THE TRAP THIS CODE EXISTS TO CLOSE. The obvious shape - a constant UA with a placeholder where
+# the address goes - looks configured and is not: SEC 403s it, every dataset read fails, and the
+# run reports "13F UNAVAILABLE" with an HTTP code. Nothing in that output says the cause was the
+# header this script sent, so the failure reads as "SEC is blocked here" and the next step taken
+# is usually to go argue with a firewall. Measured against SEC, with the product token held fixed:
+#
+#     (contact: set --contact)                     403   <- the old default
+#     <no address at all>                          403
+#     (contact: you@your-domain.com)               200
+#     (contact: x@users.noreply.github.com)        403   <- domain blocklist, not parseability
+#
+# So an address is required, and a throwaway one is not a loophole either: SEC blocklists the
+# common no-reply domains, and the fourth line is why this file ships NO built-in default. Any
+# address hardcoded here would either be someone else's inbox or a domain SEC already refuses.
+# The contact has to come from whoever is running it, so the rule is: refuse to send a request
+# we can already tell will be rejected, and say exactly what to set.
+UA_TEMPLATE = "can-slim-recommend/1.0 (contact: %s)"
+
+# Deliberately permissive - this is a "did you paste an address or a placeholder" check, not an
+# RFC 5322 validator. It exists to catch the bad value locally, before it becomes a 403.
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+
+CONTACT_HELP = (
+    "SEC requires a contact address in the User-Agent. Pass --contact you@your-domain.com, "
+    "or set the SEC_CONTACT environment variable once. Use an address you actually read - "
+    "SEC rejects throwaway no-reply domains, and it is how they reach you about your traffic.")
+
+
+def resolve_contact(cli_contact):
+    """The contact to send, or (None, why) if there is not a usable one.
+
+    Checked BEFORE any request goes out. A placeholder that reaches SEC costs a 403 and an error
+    message pointing at the wrong layer; caught here it costs one line that names the fix.
+    """
+    c = (cli_contact or os.environ.get("SEC_CONTACT") or "").strip()
+    if not c:
+        return None, "no SEC contact address configured. " + CONTACT_HELP
+    if not EMAIL_RE.match(c):
+        return None, "SEC contact %r is not an email address. %s" % (c, CONTACT_HELP)
+    return c, None
 
 MONTHS = {m: i + 1 for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
@@ -4015,7 +4080,10 @@ def http(url, contact, timeout, retries=6):
     then success on the third attempt. Treating the first 429 as failure would make this script
     look broken most of the time it is run.
     """
-    hdrs = {"User-Agent": ("can-slim-recommend/1.0 (contact: %s)" % contact) if contact else UA,
+    ok, why_contact = resolve_contact(contact)
+    if not ok:
+        return None, why_contact          # never spend a request we know SEC will refuse
+    hdrs = {"User-Agent": UA_TEMPLATE % ok,
             "Accept-Encoding": "gzip, deflate"}
     wait, why = 5, ""
     for _ in range(retries):
@@ -4026,6 +4094,11 @@ def http(url, contact, timeout, retries=6):
             return maybe_gunzip(body), None
         except urllib.error.HTTPError as e:
             why = "HTTP %s" % e.code
+            if e.code == 403:
+                # Almost always the User-Agent, not the network. Say so, or this gets debugged
+                # as an egress problem.
+                why = ("HTTP 403 - SEC rejected the User-Agent. " + CONTACT_HELP +
+                       " (sent: %s)" % (UA_TEMPLATE % ok))
             if e.code != 429:
                 return None, why
             time.sleep(wait)
@@ -4494,12 +4567,25 @@ def main():
     ap.add_argument("--fallback", metavar="FILE",
                     help="accumulation.py output, used for tickers 13F could not answer")
     ap.add_argument("--cache-dir", default="data/13f", help="keep the zips (default %(default)s)")
-    ap.add_argument("--contact", default="", help="contact address for SEC's User-Agent policy")
+    ap.add_argument("--contact", default="",
+                    help="contact email for SEC's User-Agent policy - REQUIRED. Defaults to the "
+                         "SEC_CONTACT environment variable. SEC returns 403 without a real "
+                         "address and blocklists throwaway no-reply domains, so there is no "
+                         "usable built-in default")
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--thin-holders", type=int, default=DEFAULTS["thin_holders"])
     ap.add_argument("-o", "--out", metavar="FILE", help="write here (default: stdout)")
     ap.add_argument("--known-only", action="store_true", help="print just the --known map")
     a = ap.parse_args()
+
+    # Fail here rather than 400MB and six retries later. Without a contact every SEC read 403s,
+    # and the run still produces a well-formed cache with zero tickers in it - a file that looks
+    # like an answer and silently grades nothing. One upfront check, naming the flag, is the
+    # difference between a fixable error and a quiet wrong result.
+    _, why_contact = resolve_contact(a.contact)
+    if why_contact:
+        print("cannot reach SEC: " + why_contact, file=sys.stderr)
+        return 2
 
     if a.list:
         datasets, why = list_datasets(a.contact, a.timeout)
@@ -4781,6 +4867,405 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
+
+
+## `scripts/annual_eps.py`
+
+Grades A (annual earnings growth) from SEC XBRL, because the connector cannot: TradingView returns 8 quarters whatever period is asked for, which is two fiscal years against the three the rubric tests. Unlike the I proxy these are audited figures, so a fail here is evidence and may prune.
+
+```python
+#!/usr/bin/env python3
+"""
+annual_eps.py - grade A (annual earnings growth) from SEC XBRL, because nothing else can.
+
+WHY THIS EXISTS. A asks for "EPS up EACH of 3 years at >=25%", and the connector cannot answer
+it: TradingView's `get_financial_history` returns 8 quarters no matter what `period` is passed,
+which is two fiscal years - one short. Grading A off TTM growth instead is not a shortcut, it is
+a DIFFERENT TEST, and the difference changes answers. Avnet's TTM EPS growth reads +46%, which
+looks like a comfortable pass; its FY2025 EPS actually FELL 49%, so the three-year rule fails on
+a year TTM cannot see. Without a third year every A in a run has to be capped at partial, and a
+letter that is always partial is an admission, not a grade.
+
+SEC's XBRL API publishes audited annual figures for every registrant, for free. This reads them.
+
+WHAT IS SAFE TO FEED THE CEILING. Unlike accumulation.py, this is EVIDENCE, not a proxy - the
+figures are the ones in the filing - so a `fail` here is sound to hand `sector_screen.py --known`
+and let it prune. The cases that are NOT evidence of failure (no filings, a stale series) grade
+`partial` instead, so an absence of data can never eliminate a name.
+
+FOUR THINGS THAT LOOK LIKE THEY WORK AND DO NOT - each cost a wrong answer here:
+
+  1. Keying on the `fy` field. In XBRL `fy`/`fp` describe the FILING's fiscal focus, so a 10-K
+     tags its comparative prior-year figures with the SAME `fy` as the current one. Keying on it
+     collapses three different years into one bucket; "latest filed wins" then picks an
+     arbitrary member. Micron came out with FY2025 EPS of -5.34, which is really its FY2023
+     loss, and AMD's years arrived shuffled. Both still looked like plausible series. The period
+     END date identifies a fiscal year uniquely, so that is the key.
+  2. Requiring fp == "FY". Foreign private issuers filing 20-F/40-F frequently leave `fp` unset,
+     which silently dropped every one of them. The 330-400 day duration is what actually
+     identifies a fiscal year.
+  3. Assuming us-gaap. IFRS filers put the figure under `ifrs-full`, so the us-gaap concept 404s
+     and the name reads as "no data" when the number is simply in another namespace.
+  4. Falling back on payload SIZE. `companyconcept` can return a healthy-looking body holding
+     only quarterly durations (Eton: 44 facts, none annual). A size check waves that through and
+     the name vanishes from the graded set. The fallback has to trigger on CONTENT.
+  5. Stopping at the first EPS tag that has ANY rows. Filers change tag over time, so one tag
+     rarely spans the whole history. Eton reports EarningsPerShareDiluted quarterly only,
+     EarningsPerShareBasicAndDiluted annually for 2018-2021, and EarningsPerShareBasic annually
+     for 2022-2025 - so "first tag wins" returns either nothing or a series that stops in 2021,
+     and the years the test actually needs are in the third tag. The tags are merged in
+     preference order instead, each filling only the period ends the better ones left empty.
+
+OUTPUT: the same three-part shape institutional_cache.py and accumulation.py emit -
+  meta    what was measured, and every name that could not be graded
+  known   {symbol: {"A": grade}} - ready for `sector_screen.py --known`
+  detail  {symbol: {...}} - the EPS series, the year-on-year steps and the reason string
+
+Usage:
+  python scripts/annual_eps.py symbols.json -o data/a-grades.json
+  python scripts/annual_eps.py run/screen.json --contact you@your-domain.com
+  python scripts/sector_screen.py sweep.json --known data/a-grades.json --md
+
+`symbols.json` may be a plain list of symbols, a sweep payload, or sector_screen.py's own
+output - the shape is detected. SEC requires a contact address; see --contact.
+Pure standard library.
+"""
+import argparse
+import datetime as dt
+import io
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+# Reuse the SEC User-Agent policy rather than restating it: one place decides what a usable
+# contact is, and this script inherits the 403-names-the-cause behaviour for free.
+from institutional_cache import resolve_contact, UA_TEMPLATE, CONTACT_HELP  # noqa: E402
+
+TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+CONCEPT_URL = "https://data.sec.gov/api/xbrl/companyconcept/CIK%s/%s/%s.json"
+FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK%s.json"
+
+# Tried in PREFERENCE order, and merged rather than raced - see trap 5. The us-gaap entries
+# cover domestic filers; the ifrs-full ones cover the 20-F/40-F crowd (ArcelorMittal, TORM,
+# Teck, Centerra ...). Diluted first because that is the figure the rubric names; the basic
+# tags are last-resort fillers for period ends the diluted tags do not cover (for a loss-making
+# company the two are usually identical anyway).
+CONCEPTS = (("us-gaap", "EarningsPerShareDiluted"),
+            ("us-gaap", "EarningsPerShareBasicAndDiluted"),
+            ("us-gaap", "EarningsPerShareBasic"),
+            ("ifrs-full", "DilutedEarningsLossPerShare"),
+            ("ifrs-full", "BasicEarningsLossPerShare"))
+
+DEFAULTS = {
+    "growth": 25.0,      # the rubric's threshold: EPS up at least this much, EACH year
+    "years": 3,          # ... across this many year-on-year steps (so 4 annual figures)
+    "min_days": 330,     # a fiscal year's duration, wide enough for 52/53-week calendars
+    "max_days": 400,
+    "stale_days": 700,   # a series ending longer ago than this cannot answer "the last 3 years"
+    "pause": 0.15,       # SEC asks for <= 10 requests/second; stay well under
+}
+
+
+def http(url, contact, timeout=60, retries=5):
+    """GET with backoff. Returns (bytes, None) or (None, why). Never raises.
+
+    404 is a real answer here - it means "this filer does not report that concept" - so it
+    returns immediately rather than burning the retry budget.
+    """
+    hdrs = {"User-Agent": UA_TEMPLATE % contact}
+    wait, why = 2, ""
+    for _ in range(retries):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=hdrs),
+                                        timeout=timeout) as r:
+                return r.read(), None
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None, "HTTP 404"
+            why = "HTTP %s" % e.code
+            if e.code == 403:
+                return None, "HTTP 403 - SEC rejected the User-Agent. " + CONTACT_HELP
+        except Exception as e:                      # pragma: no cover - network flake
+            why = str(e)
+        time.sleep(wait)
+        wait *= 2
+    return None, why or "unreachable"
+
+
+def _cached(path, fetch, pause=DEFAULTS["pause"]):
+    """Read `path`, or fetch and write it. Returns bytes (possibly b'{}').
+
+    An empty body is cached too, deliberately: "this filer does not report that tag" is a real
+    answer and re-asking for it on every run is rude to SEC and slow for us.
+    """
+    if os.path.exists(path):
+        return io.open(path, "rb").read()
+    body = fetch() or b"{}"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    io.open(path, "wb").write(body)
+    time.sleep(pause)               # SEC asks for <= 10 requests/second; stay well under
+    return body
+
+
+def load_tickers(cache_dir, contact):
+    """{TICKER: zero-padded CIK} from SEC's own registrant list."""
+    body = _cached(os.path.join(cache_dir, "company_tickers.json"),
+                   lambda: http(TICKERS_URL, contact)[0])
+    try:
+        d = json.loads(body)
+    except ValueError:
+        return {}
+    return {v["ticker"].upper(): "%010d" % int(v["cik_str"]) for v in d.values()}
+
+
+def parse_annual(body, cfg):
+    """{period_end: eps} for every ANNUAL-duration fact in an XBRL payload.
+
+    Keyed by period end, never by `fy` - see trap 1 in the module docstring. Within one end
+    date the latest FILED value wins, so a restatement supersedes the original.
+    """
+    try:
+        d = json.loads(body)
+    except ValueError:
+        return {}
+    best = {}
+    for unit in (d.get("units") or {}).values():
+        for x in unit:
+            if not x.get("start"):          # instant facts carry no duration
+                continue
+            try:
+                start = dt.date.fromisoformat(x["start"])
+                end = dt.date.fromisoformat(x["end"])
+            except (ValueError, TypeError, KeyError):
+                continue
+            if not (cfg["min_days"] <= (end - start).days <= cfg["max_days"]):
+                continue
+            key, filed = x["end"], x.get("filed", "")
+            if key not in best or filed > best[key][0]:
+                best[key] = (filed, x.get("val"))
+    return {k: v[1] for k, v in best.items() if v[1] is not None}
+
+
+def _fill(into, more):
+    """Add period ends `into` does not already have. Preference order does the rest."""
+    for end, val in more.items():
+        into.setdefault(end, val)
+    return into
+
+
+def annual_eps(cik, cache_dir, contact, cfg):
+    """{period_end: eps}, from companyconcept and then companyfacts. May be empty.
+
+    Tags are MERGED in preference order rather than raced (trap 5): each one fills only the
+    period ends the better-preferred tags left empty, so a filer that changed tag mid-history
+    still yields one continuous series.
+    """
+    got = {}
+    for ns, tag in CONCEPTS:
+        body = _cached(os.path.join(cache_dir, "concept_%s_%s.json" % (cik, tag)),
+                       lambda ns=ns, tag=tag: http(CONCEPT_URL % (cik, ns, tag), contact)[0])
+        _fill(got, parse_annual(body, cfg))
+        # Enough consecutive years to answer the test, and the newest is recent? Stop paying
+        # for calls. Otherwise keep filling from the less-preferred tags.
+        keep = consecutive(list(got), cfg)
+        if len(keep) >= cfg["years"] + 1 and \
+                (dt.date.today() - dt.date.fromisoformat(keep[-1])).days <= cfg["stale_days"]:
+            return got
+    if got:
+        return got
+    # Nothing ANNUAL under any tag in the concept feed - trap 4. companyfacts is larger but
+    # complete, and is merged across tags for the same reason.
+    body = _cached(os.path.join(cache_dir, "facts_%s.json" % cik),
+                   lambda: http(FACTS_URL % cik, contact)[0])
+    try:
+        facts = json.loads(body).get("facts", {})
+    except ValueError:
+        return {}
+    for ns, tag in CONCEPTS:
+        hit = (facts.get(ns) or {}).get(tag)
+        if hit:
+            _fill(got, parse_annual(json.dumps({"units": hit.get("units") or {}}).encode("utf-8"),
+                                    cfg))
+    return got
+
+
+def consecutive(ends, cfg):
+    """Collapse restatements of one year and keep the run of adjacent fiscal years.
+
+    Two entries less than ~200 days apart are the same fiscal year filed twice under slightly
+    different end dates, not two years; keeping both would compare a year against itself.
+    """
+    keep = []
+    for e in sorted(ends):
+        if keep and (dt.date.fromisoformat(e) - dt.date.fromisoformat(keep[-1])).days < 200:
+            keep[-1] = e
+        else:
+            keep.append(e)
+    return keep
+
+
+def grade(eps_by_end, cfg, today=None):
+    """(grade, reason, series, steps) for one name. See the module docstring on what is safe.
+
+    `partial` means "the filings cannot answer this", `fail` means "they answer it, and it is a
+    no". Only the second is evidence, and only the second should ever prune a name.
+    """
+    today = today or dt.date.today()
+    need = cfg["years"] + 1
+    keep = consecutive(list(eps_by_end), cfg)
+    if len(keep) < need:
+        return ("partial", "only %d fiscal year(s) on file - cannot test %d years of growth"
+                % (len(keep), cfg["years"]), [], [])
+
+    last = keep[-need:]
+    vals = [eps_by_end[e] for e in last]
+    series = [(e[:4], v) for e, v in zip(last, vals)]
+
+    age = (today - dt.date.fromisoformat(last[-1])).days
+    if age > cfg["stale_days"]:
+        return ("partial",
+                "latest annual EPS on file ends %s (%.1f years stale) - cannot test the last %d "
+                "years" % (last[-1], age / 365.0, cfg["years"]), series, [])
+
+    steps = []
+    for i in range(1, need):
+        prev, cur = vals[i - 1], vals[i]
+        steps.append(None if prev is None or cur is None or prev <= 0
+                     else (cur - prev) / abs(prev) * 100.0)
+    if any(s is None for s in steps):
+        # A loss year makes "growth" undefined rather than negative. That is a gap in the
+        # evidence, not proof of failure, so it must not prune.
+        return ("partial", "a year is a loss or missing, so %d-year growth is not defined"
+                % cfg["years"], series, steps)
+
+    shown = ", ".join("%.0f%%" % s for s in steps)
+    if all(s >= cfg["growth"] for s in steps):
+        return ("pass", "EPS up %s over %d years, each >=%.0f%%"
+                % (shown, cfg["years"], cfg["growth"]), series, steps)
+    if all(s > 0 for s in steps):
+        return ("partial", "EPS up each year (%s) but not every year >=%.0f%%"
+                % (shown, cfg["growth"]), series, steps)
+    return ("fail", "EPS not up each of %d years (%s)" % (cfg["years"], shown), series, steps)
+
+
+def symbols_from(blob):
+    """Pull a symbol list out of whichever shape was handed in.
+
+    A plain list, sector_screen.py's output (grade_queue) and a raw sweep payload are all
+    things a caller reasonably has lying around; guessing wrong is a silent empty run.
+    """
+    if isinstance(blob, list):
+        return [s for s in blob if isinstance(s, str)]
+    if isinstance(blob, dict):
+        if isinstance(blob.get("grade_queue"), list):
+            return [r["symbol"] for r in blob["grade_queue"] if r.get("symbol")]
+        if isinstance(blob.get("sectors"), dict):
+            return [r["symbol"] for rows in blob["sectors"].values() for r in rows
+                    if r.get("symbol")]
+        if isinstance(blob.get("known"), dict):
+            return list(blob["known"])
+    return []
+
+
+def run(symbols, cache_dir, contact, cfg):
+    tmap = load_tickers(cache_dir, contact)
+    known, detail, ungraded = {}, {}, []
+    for sym in symbols:
+        tick = sym.split(":")[-1].upper()
+        cik = tmap.get(tick)
+        eps = annual_eps(cik, cache_dir, contact, cfg) if cik else {}
+        if not eps:
+            # Record it rather than dropping it. A name missing from the output looks like a
+            # name that was never a candidate; "partial, nothing on file" is an honest
+            # ungraded letter the ceiling can still reason about.
+            why = ("no CIK for this ticker in SEC's registrant list" if not cik
+                   else "no annual EPS on file at SEC")
+            ungraded.append("%s (%s)" % (sym, why))
+            known[sym] = {"A": "partial"}
+            detail[sym] = {"grade": "partial", "cik": cik, "series": [], "steps": [],
+                           "reason": "A: not graded - " + why, "source": "sec-xbrl"}
+            continue
+        g, why, series, steps = grade(eps, cfg)
+        known[sym] = {"A": g}
+        detail[sym] = {"grade": g, "cik": cik, "series": series,
+                       "steps": [None if s is None else round(s, 1) for s in steps],
+                       "reason": "A: " + why, "source": "sec-xbrl"}
+    return {
+        "meta": {
+            "source": "sec-xbrl",
+            "measures": "audited annual diluted EPS, %d year-on-year steps at >=%.0f%%"
+                        % (cfg["years"], cfg["growth"]),
+            "is_proxy": False,
+            "ceiling_policy": "a fail here is EVIDENCE and may prune; partial means the filings "
+                              "could not answer, and never prunes",
+            "thresholds": {k: v for k, v in cfg.items()},
+            "graded": len(known),
+            "ungraded": ungraded,
+        },
+        "known": known,
+        "detail": detail,
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("input", nargs="?", help="symbols JSON (default: stdin)")
+    ap.add_argument("--contact", default="",
+                    help="contact email for SEC's User-Agent policy - REQUIRED. Defaults to the "
+                         "SEC_CONTACT environment variable")
+    ap.add_argument("--cache-dir", default="data/sec-eps",
+                    help="keep SEC responses here (default %(default)s)")
+    ap.add_argument("--growth", type=float, default=DEFAULTS["growth"],
+                    help="each year must beat this %% (default %(default)s)")
+    ap.add_argument("--years", type=int, default=DEFAULTS["years"],
+                    help="year-on-year steps to require (default %(default)s)")
+    ap.add_argument("--stale-days", type=int, default=DEFAULTS["stale_days"],
+                    help="a series older than this cannot answer the test (default %(default)s)")
+    ap.add_argument("-o", "--out", metavar="FILE", help="write here (default: stdout)")
+    ap.add_argument("--known-only", action="store_true",
+                    help="print just the --known map, ready for sector_screen.py")
+    a = ap.parse_args()
+
+    contact, why = resolve_contact(a.contact)
+    if why:
+        print("cannot reach SEC: " + why, file=sys.stderr)
+        return 2
+
+    raw = io.open(a.input, encoding="utf-8").read() if a.input else sys.stdin.read()
+    symbols = symbols_from(json.loads(raw))
+    if not symbols:
+        print("no symbols found in the input - expected a list, a sweep payload, or "
+              "sector_screen.py output", file=sys.stderr)
+        return 2
+
+    cfg = dict(DEFAULTS, growth=a.growth, years=a.years, stale_days=a.stale_days)
+    res = run(symbols, a.cache_dir, contact, cfg)
+    text = json.dumps(res["known"] if a.known_only else res, indent=2)
+    if a.out:
+        os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+        io.open(a.out, "w", encoding="utf-8").write(text + "\n")
+        from collections import Counter
+        tally = Counter(v["A"] for v in res["known"].values())
+        print("%s: %d graded (%s)" % (a.out, len(res["known"]),
+                                      ", ".join("%s %d" % (k, tally[k])
+                                                for k in ("pass", "partial", "fail") if tally[k])),
+              file=sys.stderr)
+        for u in res["meta"]["ungraded"]:
+            print("  ungraded: " + u, file=sys.stderr)
+    else:
+        sys.stdout.write(text + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 ```
 
 
@@ -6818,6 +7303,7 @@ could plausibly break without any other signal:
 
 Tests are plain functions named check_*; each returns None and raises AssertionError on failure.
 """
+import datetime as _dt
 import io
 import json
 import os
@@ -6840,6 +7326,7 @@ import tv_throttle as thr                                   # noqa: E402
 import market_session as mses                               # noqa: E402
 import accumulation as acc                                  # noqa: E402
 import institutional_cache as ic                            # noqa: E402
+import annual_eps as aeps                                   # noqa: E402
 
 W = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
 CFG = dict(ss.DEFAULTS)
@@ -7456,6 +7943,182 @@ def check_gzip_is_undone_before_parsing():
     raw = b'<a href="/x/01mar2026-31may2026_form13f.zip">z</a>'
     assert ic.maybe_gunzip(_g.compress(raw)) == raw
     assert ic.maybe_gunzip(raw) == raw          # not compressed: passed through untouched
+
+
+def _xbrl(rows, fy=2025, fp="FY"):
+    """An XBRL companyconcept payload from (start, end, val, filed) tuples.
+
+    Every row carries the SAME `fy`/`fp`, which is what a real 10-K does to its comparative
+    prior-year figures - and is the whole reason keying on `fy` is wrong. Without these fields
+    in the fixture a mutant that keys on fy falls back to the end date and the test passes
+    while proving nothing; it did exactly that until this was added.
+    """
+    return json.dumps({"units": {"USD/shares": [
+        {"start": s, "end": e, "val": v, "filed": f, "fy": fy, "fp": fp}
+        for s, e, v, f in rows]}}).encode("utf-8")
+
+
+def check_annual_eps_keys_on_period_end_not_the_filing_fiscal_year():
+    """XBRL's `fy`/`fp` describe the FILING's fiscal focus, so a 10-K tags its comparative
+    prior-year figures with the SAME fy as the current year. Keying on fy collapses three
+    distinct years into one bucket and an arbitrary member wins: Micron came out with a FY2025
+    EPS of -5.34 that is really its FY2023 loss, and the series still LOOKED plausible.
+
+    Here one filing reports three years, all stamped fy=2025. Keying on the period end must
+    keep all three, in order."""
+    body = _xbrl([
+        ("2022-09-01", "2023-08-31", 1.00, "2025-10-01"),
+        ("2023-09-01", "2024-08-31", 2.00, "2025-10-01"),
+        ("2024-09-01", "2025-08-31", 3.00, "2025-10-01"),
+    ])
+    got = aeps.parse_annual(body, aeps.DEFAULTS)
+    assert sorted(got.items()) == [("2023-08-31", 1.0), ("2024-08-31", 2.0), ("2025-08-31", 3.0)], got
+
+
+def check_annual_eps_takes_the_latest_filing_for_a_restated_year():
+    """Same period end filed twice - the restatement (later `filed`) supersedes."""
+    body = _xbrl([("2024-01-01", "2024-12-31", 5.00, "2025-02-01"),
+                  ("2024-01-01", "2024-12-31", 4.10, "2025-11-01")])
+    assert aeps.parse_annual(body, aeps.DEFAULTS) == {"2024-12-31": 4.10}
+
+
+def check_annual_eps_ignores_quarters_and_keeps_odd_length_fiscal_years():
+    """A quarter is not a year, and a 52/53-week retailer's year is not exactly 365 days."""
+    body = _xbrl([("2025-01-01", "2025-03-31", 0.25, "2025-05-01"),   # a quarter
+                  ("2024-01-01", "2024-12-31", 1.00, "2025-02-01"),   # 365 days
+                  ("2023-01-29", "2024-02-03", 2.00, "2024-03-01")])  # 53-week year
+    got = aeps.parse_annual(body, aeps.DEFAULTS)
+    assert sorted(got) == ["2024-02-03", "2024-12-31"], got
+
+
+def check_annual_eps_does_not_require_the_fp_field():
+    """20-F/40-F filers frequently leave `fp` unset. Requiring fp == "FY" silently dropped
+    every IFRS filer - ArcelorMittal, TORM, Teck - and they read as "no data"."""
+    body = json.dumps({"units": {"USD/shares": [
+        {"start": "2024-01-01", "end": "2024-12-31", "val": 2.5, "filed": "2025-03-01"}]}}
+    ).encode("utf-8")
+    assert aeps.parse_annual(body, aeps.DEFAULTS) == {"2024-12-31": 2.5}
+
+
+def check_A_grades_follow_the_three_year_rule():
+    """pass needs EVERY step at >=25%; all-positive-but-short is partial; any down year fails."""
+    def g(vals, today="2026-03-01"):
+        ends = ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]
+        return aeps.grade(dict(zip(ends, vals)), aeps.DEFAULTS,
+                          today=_dt.date.fromisoformat(today))[0]
+
+    assert g([1.0, 1.30, 1.70, 2.20]) == "pass"       # +30, +31, +29
+    assert g([1.0, 1.30, 1.70, 1.90]) == "partial"    # last step +12: up, but under 25
+    assert g([1.0, 1.30, 1.20, 2.00]) == "fail"       # a down year
+    # AVT: the case that made TTM growth the wrong test - +46% TTM, but FY2025 fell 49%.
+    assert g([8.26, 5.43, 2.75, 4.01]) == "fail"
+
+
+def check_A_never_fails_on_an_absence_of_evidence():
+    """A `fail` from this script prunes a name in the ceiling, so it must mean "the filings
+    answer the question and the answer is no" - never "the filings could not answer".
+
+    Too few years, a loss year (growth undefined) and a series that stops long ago are all
+    gaps in the evidence and must grade partial."""
+    import datetime as _d
+    today = _d.date.fromisoformat("2026-03-01")
+    ends = ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]
+
+    short = aeps.grade({"2024-12-31": 1.0, "2025-12-31": 2.0}, aeps.DEFAULTS, today=today)
+    assert short[0] == "partial" and "fiscal year" in short[1], short
+
+    loss = aeps.grade(dict(zip(ends, [-1.0, 0.5, 1.0, 2.0])), aeps.DEFAULTS, today=today)
+    assert loss[0] == "partial" and "loss" in loss[1], loss
+
+    stale = aeps.grade(dict(zip(["2018-12-31", "2019-12-31", "2020-12-31", "2021-12-31"],
+                                [1.0, 1.4, 1.9, 2.6])), aeps.DEFAULTS, today=today)
+    assert stale[0] == "partial" and "stale" in stale[1], stale
+
+
+def check_annual_eps_merges_tags_instead_of_racing_them():
+    """A filer changes EPS tag over time, so one tag rarely spans the whole history. Eton
+    reports EarningsPerShareDiluted quarterly only, BasicAndDiluted annually for 2018-2021 and
+    Basic annually for 2022-2025 - so "first tag with any rows wins" returns either nothing or
+    a series that stops in 2021, and the years the test needs live in the third tag.
+
+    The preferred tag must still win a period end both report."""
+    facts = {"us-gaap": {
+        "EarningsPerShareDiluted": {"units": {"USD/shares": [
+            {"start": "2025-01-01", "end": "2025-03-31", "val": 0.1, "filed": "2025-05-01"},
+            {"start": "2025-01-01", "end": "2025-12-31", "val": 9.99, "filed": "2026-02-01"}]}},
+        "EarningsPerShareBasic": {"units": {"USD/shares": [
+            {"start": "2023-01-01", "end": "2023-12-31", "val": 1.0, "filed": "2024-02-01"},
+            {"start": "2024-01-01", "end": "2024-12-31", "val": 2.0, "filed": "2025-02-01"},
+            {"start": "2025-01-01", "end": "2025-12-31", "val": 8.88, "filed": "2026-02-01"}]}},
+    }}
+    got = {}
+    for ns, tag in aeps.CONCEPTS:
+        hit = (facts.get(ns) or {}).get(tag)
+        if hit:
+            aeps._fill(got, aeps.parse_annual(
+                json.dumps({"units": hit["units"]}).encode("utf-8"), aeps.DEFAULTS))
+    assert sorted(got) == ["2023-12-31", "2024-12-31", "2025-12-31"], got
+    # diluted is preferred, so it keeps 2025 even though basic also reports it
+    assert got["2025-12-31"] == 9.99, got
+
+
+def check_symbol_input_shapes_are_all_understood():
+    """A plain list, sector_screen.py's output and a raw sweep payload are all things a caller
+    has lying around; guessing wrong is a silent empty run, not an error."""
+    assert aeps.symbols_from(["NASDAQ:AAPL"]) == ["NASDAQ:AAPL"]
+    assert aeps.symbols_from({"grade_queue": [{"symbol": "NYSE:X"}]}) == ["NYSE:X"]
+    assert aeps.symbols_from({"sectors": {"Tech": [{"symbol": "NASDAQ:Y"}]}}) == ["NASDAQ:Y"]
+    assert aeps.symbols_from({"nothing": 1}) == []
+
+
+def check_sec_contact_is_required_before_any_request_goes_out():
+    """SEC 403s a User-Agent without a real contact address, and the old default shipped a
+    PLACEHOLDER ("contact: set --contact") that looked configured and was not. Every read 403d,
+    and the run still wrote a well-formed cache with zero tickers - an answer-shaped file that
+    graded nothing, whose only clue was an HTTP code that reads like a firewall problem.
+
+    So the contract is: a missing or non-email contact is caught LOCALLY, before a request is
+    spent, and the reason names the flag to set."""
+    assert ic.resolve_contact("me@example.com") == ("me@example.com", None)
+
+    for bad in ("", None, "   ", "set --contact", "not-an-email", "a@b"):
+        got, why = ic.resolve_contact(bad)
+        assert got is None, "%r should not be accepted as a contact" % (bad,)
+        assert "--contact" in why, why          # the message must name the fix
+
+    # The env var is the configure-once path, and an explicit --contact still wins over it.
+    import os as _os
+    old = _os.environ.get("SEC_CONTACT")
+    try:
+        _os.environ["SEC_CONTACT"] = "env@example.com"
+        assert ic.resolve_contact("") == ("env@example.com", None)
+        assert ic.resolve_contact("cli@example.com") == ("cli@example.com", None)
+    finally:
+        if old is None:
+            _os.environ.pop("SEC_CONTACT", None)
+        else:
+            _os.environ["SEC_CONTACT"] = old
+
+
+def check_a_bad_contact_never_reaches_the_network():
+    """The check above is only worth anything if http() actually honours it: a placeholder that
+    still gets sent costs a 403 and an error pointing at the wrong layer. urlopen is replaced
+    with a detonator, so a single escaping request fails the test."""
+    import urllib.request as _u
+    old = _u.urlopen
+
+    def boom(*a, **k):                      # pragma: no cover - reaching this IS the failure
+        raise AssertionError("http() sent a request with no usable contact")
+
+    _u.urlopen = boom
+    old_env = __import__("os").environ.pop("SEC_CONTACT", None)
+    try:
+        body, why = ic.http("https://www.sec.gov/files/company_tickers.json", "", 5)
+        assert body is None and "--contact" in why, why
+    finally:
+        _u.urlopen = old
+        if old_env is not None:
+            __import__("os").environ["SEC_CONTACT"] = old_env
 
 
 def check_dataset_names_parse_under_both_sec_schemes():

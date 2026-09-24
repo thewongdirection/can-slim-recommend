@@ -19,6 +19,7 @@ could plausibly break without any other signal:
 
 Tests are plain functions named check_*; each returns None and raises AssertionError on failure.
 """
+import datetime as _dt
 import io
 import json
 import os
@@ -41,6 +42,7 @@ import tv_throttle as thr                                   # noqa: E402
 import market_session as mses                               # noqa: E402
 import accumulation as acc                                  # noqa: E402
 import institutional_cache as ic                            # noqa: E402
+import annual_eps as aeps                                   # noqa: E402
 
 W = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
 CFG = dict(ss.DEFAULTS)
@@ -657,6 +659,132 @@ def check_gzip_is_undone_before_parsing():
     raw = b'<a href="/x/01mar2026-31may2026_form13f.zip">z</a>'
     assert ic.maybe_gunzip(_g.compress(raw)) == raw
     assert ic.maybe_gunzip(raw) == raw          # not compressed: passed through untouched
+
+
+def _xbrl(rows, fy=2025, fp="FY"):
+    """An XBRL companyconcept payload from (start, end, val, filed) tuples.
+
+    Every row carries the SAME `fy`/`fp`, which is what a real 10-K does to its comparative
+    prior-year figures - and is the whole reason keying on `fy` is wrong. Without these fields
+    in the fixture a mutant that keys on fy falls back to the end date and the test passes
+    while proving nothing; it did exactly that until this was added.
+    """
+    return json.dumps({"units": {"USD/shares": [
+        {"start": s, "end": e, "val": v, "filed": f, "fy": fy, "fp": fp}
+        for s, e, v, f in rows]}}).encode("utf-8")
+
+
+def check_annual_eps_keys_on_period_end_not_the_filing_fiscal_year():
+    """XBRL's `fy`/`fp` describe the FILING's fiscal focus, so a 10-K tags its comparative
+    prior-year figures with the SAME fy as the current year. Keying on fy collapses three
+    distinct years into one bucket and an arbitrary member wins: Micron came out with a FY2025
+    EPS of -5.34 that is really its FY2023 loss, and the series still LOOKED plausible.
+
+    Here one filing reports three years, all stamped fy=2025. Keying on the period end must
+    keep all three, in order."""
+    body = _xbrl([
+        ("2022-09-01", "2023-08-31", 1.00, "2025-10-01"),
+        ("2023-09-01", "2024-08-31", 2.00, "2025-10-01"),
+        ("2024-09-01", "2025-08-31", 3.00, "2025-10-01"),
+    ])
+    got = aeps.parse_annual(body, aeps.DEFAULTS)
+    assert sorted(got.items()) == [("2023-08-31", 1.0), ("2024-08-31", 2.0), ("2025-08-31", 3.0)], got
+
+
+def check_annual_eps_takes_the_latest_filing_for_a_restated_year():
+    """Same period end filed twice - the restatement (later `filed`) supersedes."""
+    body = _xbrl([("2024-01-01", "2024-12-31", 5.00, "2025-02-01"),
+                  ("2024-01-01", "2024-12-31", 4.10, "2025-11-01")])
+    assert aeps.parse_annual(body, aeps.DEFAULTS) == {"2024-12-31": 4.10}
+
+
+def check_annual_eps_ignores_quarters_and_keeps_odd_length_fiscal_years():
+    """A quarter is not a year, and a 52/53-week retailer's year is not exactly 365 days."""
+    body = _xbrl([("2025-01-01", "2025-03-31", 0.25, "2025-05-01"),   # a quarter
+                  ("2024-01-01", "2024-12-31", 1.00, "2025-02-01"),   # 365 days
+                  ("2023-01-29", "2024-02-03", 2.00, "2024-03-01")])  # 53-week year
+    got = aeps.parse_annual(body, aeps.DEFAULTS)
+    assert sorted(got) == ["2024-02-03", "2024-12-31"], got
+
+
+def check_annual_eps_does_not_require_the_fp_field():
+    """20-F/40-F filers frequently leave `fp` unset. Requiring fp == "FY" silently dropped
+    every IFRS filer - ArcelorMittal, TORM, Teck - and they read as "no data"."""
+    body = json.dumps({"units": {"USD/shares": [
+        {"start": "2024-01-01", "end": "2024-12-31", "val": 2.5, "filed": "2025-03-01"}]}}
+    ).encode("utf-8")
+    assert aeps.parse_annual(body, aeps.DEFAULTS) == {"2024-12-31": 2.5}
+
+
+def check_A_grades_follow_the_three_year_rule():
+    """pass needs EVERY step at >=25%; all-positive-but-short is partial; any down year fails."""
+    def g(vals, today="2026-03-01"):
+        ends = ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]
+        return aeps.grade(dict(zip(ends, vals)), aeps.DEFAULTS,
+                          today=_dt.date.fromisoformat(today))[0]
+
+    assert g([1.0, 1.30, 1.70, 2.20]) == "pass"       # +30, +31, +29
+    assert g([1.0, 1.30, 1.70, 1.90]) == "partial"    # last step +12: up, but under 25
+    assert g([1.0, 1.30, 1.20, 2.00]) == "fail"       # a down year
+    # AVT: the case that made TTM growth the wrong test - +46% TTM, but FY2025 fell 49%.
+    assert g([8.26, 5.43, 2.75, 4.01]) == "fail"
+
+
+def check_A_never_fails_on_an_absence_of_evidence():
+    """A `fail` from this script prunes a name in the ceiling, so it must mean "the filings
+    answer the question and the answer is no" - never "the filings could not answer".
+
+    Too few years, a loss year (growth undefined) and a series that stops long ago are all
+    gaps in the evidence and must grade partial."""
+    import datetime as _d
+    today = _d.date.fromisoformat("2026-03-01")
+    ends = ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]
+
+    short = aeps.grade({"2024-12-31": 1.0, "2025-12-31": 2.0}, aeps.DEFAULTS, today=today)
+    assert short[0] == "partial" and "fiscal year" in short[1], short
+
+    loss = aeps.grade(dict(zip(ends, [-1.0, 0.5, 1.0, 2.0])), aeps.DEFAULTS, today=today)
+    assert loss[0] == "partial" and "loss" in loss[1], loss
+
+    stale = aeps.grade(dict(zip(["2018-12-31", "2019-12-31", "2020-12-31", "2021-12-31"],
+                                [1.0, 1.4, 1.9, 2.6])), aeps.DEFAULTS, today=today)
+    assert stale[0] == "partial" and "stale" in stale[1], stale
+
+
+def check_annual_eps_merges_tags_instead_of_racing_them():
+    """A filer changes EPS tag over time, so one tag rarely spans the whole history. Eton
+    reports EarningsPerShareDiluted quarterly only, BasicAndDiluted annually for 2018-2021 and
+    Basic annually for 2022-2025 - so "first tag with any rows wins" returns either nothing or
+    a series that stops in 2021, and the years the test needs live in the third tag.
+
+    The preferred tag must still win a period end both report."""
+    facts = {"us-gaap": {
+        "EarningsPerShareDiluted": {"units": {"USD/shares": [
+            {"start": "2025-01-01", "end": "2025-03-31", "val": 0.1, "filed": "2025-05-01"},
+            {"start": "2025-01-01", "end": "2025-12-31", "val": 9.99, "filed": "2026-02-01"}]}},
+        "EarningsPerShareBasic": {"units": {"USD/shares": [
+            {"start": "2023-01-01", "end": "2023-12-31", "val": 1.0, "filed": "2024-02-01"},
+            {"start": "2024-01-01", "end": "2024-12-31", "val": 2.0, "filed": "2025-02-01"},
+            {"start": "2025-01-01", "end": "2025-12-31", "val": 8.88, "filed": "2026-02-01"}]}},
+    }}
+    got = {}
+    for ns, tag in aeps.CONCEPTS:
+        hit = (facts.get(ns) or {}).get(tag)
+        if hit:
+            aeps._fill(got, aeps.parse_annual(
+                json.dumps({"units": hit["units"]}).encode("utf-8"), aeps.DEFAULTS))
+    assert sorted(got) == ["2023-12-31", "2024-12-31", "2025-12-31"], got
+    # diluted is preferred, so it keeps 2025 even though basic also reports it
+    assert got["2025-12-31"] == 9.99, got
+
+
+def check_symbol_input_shapes_are_all_understood():
+    """A plain list, sector_screen.py's output and a raw sweep payload are all things a caller
+    has lying around; guessing wrong is a silent empty run, not an error."""
+    assert aeps.symbols_from(["NASDAQ:AAPL"]) == ["NASDAQ:AAPL"]
+    assert aeps.symbols_from({"grade_queue": [{"symbol": "NYSE:X"}]}) == ["NYSE:X"]
+    assert aeps.symbols_from({"sectors": {"Tech": [{"symbol": "NASDAQ:Y"}]}}) == ["NASDAQ:Y"]
+    assert aeps.symbols_from({"nothing": 1}) == []
 
 
 def check_sec_contact_is_required_before_any_request_goes_out():

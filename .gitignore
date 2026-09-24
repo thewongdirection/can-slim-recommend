@@ -24,3 +24,8 @@ data/.tv-throttle.json
 # Scratch directory for a live run's intermediate JSON (the sweep payload handed to
 # sector_screen.py). Same rule as the report outputs: never commit run results.
 run/
+
+# Cached SEC XBRL responses behind annual_eps.py (the A letter). Rebuildable, and an empty body
+# is cached deliberately - "this filer does not report that tag" is a real answer worth keeping.
+data/sec-eps/
+data/a-grades.json
