@@ -782,6 +782,16 @@ than doing a shallow web dig:
   Sponsorship runs the other way and is an aggregation across every filer — use
   `scripts/institutional_cache.py`.
 
+**Keeping the pair at parity.** `can-slim-grader` and this skill are one methodology pointed at
+two questions, so a screened idea and a graded ticker must mean the same thing: same scale, same
+letter thresholds, same arithmetic. Before shipping any change to the rubric, the scoring, a
+shared file (`references/canslim-methodology.md`, `scripts/relative_strength.py`) or the
+dashboard's scoring block, run `python scripts/check_parity.py` against a `can-slim-grader`
+checkout. It compares the shared bytes three ways, runs BOTH dashboards' real scoring code over
+every one of the 2187 possible scorecards plus 100 random tickers, and checks the shared
+methodology's N rung against what `sector_screen.py` actually implements. The sister's own
+parity script only hashes files in its own tree and says so; this is the half it cannot do.
+
 **If a companion skill you need is not installed**, do not silently fall back — tell the user it's
 missing and prompt them to install it from its GitHub repo, then continue with the best available
 source (the connector ladder in `tradingview-sector-sweep.md`, or web search):
@@ -1270,7 +1280,7 @@ Two ideas underpin everything:
 - **Relative Strength (RS):** buy stocks whose 12-month price performance beats **≥ 80%**
   (ideally 90%+) of the market. Big winners averaged an **RS ~87** before their major run.
   **Do not buy RS below ~70.** (This skill computes an RS *proxy* from price history — see
-  ibkr-data-guide.md — since a true full-market 1–99 RS rating needs the whole market.)
+  each skill's data guide — since a true full-market 1–99 RS rating needs the whole market.)
 - **Avoid "sympathy plays"** — the cheaper laggard in the same group that never performs
   like the leader. "The first man gets the oyster; the second, the shell."
 - **Never buy on the way down** because it "looks cheap" (Cisco $82→$8, Crocs $75→$1, BofA
@@ -1461,78 +1471,46 @@ A candidate should satisfy as many as possible:
 22. Watch for buybacks (5–10%+) and new management.
 23. Don't buy at the bottom / on the way down / average down.
 
-## The pass / partial / fail grading rubric (how to score each letter)
-Grade every letter **pass (1.0) / partial (0.5) / fail (0)**. Seven letters, so a scorecard totals
-out of **7**. Both `can-slim-recommend` and `can-slim-grader` use this one scale, which is what
-makes a score portable between a screen and a single-ticker report.
+## Scoring: pass / partial / fail, total out of 7
+Grade each letter **pass / partial / fail** against the thresholds above, and total them at
+**one point per letter — pass 1, partial 0.5, fail 0 — across C-A-N-S-L-I-M, maximum 7.00.**
+Both skills in this pair score on that scale, so a screened idea and a graded ticker mean the
+same thing; the dashboards compute the total themselves. Never rescale it.
 
-**A grade follows mechanically from the threshold and the actual printed beside it.** If the
-evidence concedes a miss ("just under the 25% mark", "hasn't cleared the high"), the letter cannot
-be pass — call it partial. Where a threshold says **each** ("EPS up each of the last 3 yrs at
->=25%"), every period must clear it: one strong year among three below-bar years is a PARTIAL.
-Magnitude of a beat, backlog, guidance or a big volume day are colour for the write-up, never
-grounds to promote a letter.
+The grade for a letter follows mechanically from its threshold and the actual figure printed
+beside it: if the evidence concedes the bar was missed, the letter is not a pass, however
+impressive the story. Where a threshold says **each** ("EPS up each of the last 3 yrs at >=25%"),
+every period must clear it.
 
-- **C — current quarterly EPS & sales:** PASS = EPS and sales both up >=25% vs the year-ago
-  quarter, accelerating rather than decelerating. PARTIAL = one of the two clears the bar, or both
-  are up but short of 25%, or growth is decelerating. FAIL = flat, negative, or a loss. Downgrade
-  if sales lag EPS (buyback-driven) or margins are falling.
-- **A — annual earnings & ROE:** PASS = EPS up **each** of the last 3 years at >=25% **and** ROE
-  >=17%. PARTIAL = a broadly rising multi-year record that misses one leg (a year below the bar,
-  or ROE under 17%). FAIL = declining EPS, no annual profit, or an ROE far below the bar. A newly
-  public company without three years of record cannot exceed PARTIAL on A.
-- **N — new + new high off a base:** PASS = a genuine new driver **and** a sound base with the
-  stock at a proper pivot, no more than ~5% extended past it. PARTIAL = at or near new-high ground
-  but with no valid pivot to buy (base incomplete, or already extended beyond it). FAIL = no new
-  driver, more than ~10% below the 52-week high (a lower high is not a pivot), or a wide-and-loose
-  / late-stage base. Extension far above the 50-day (roughly >25%) after a climax run is a FAIL,
-  not a partial — there is no entry there.
-- **S — supply & demand:** PASS = breakout volume >=40-50% above the 50-day average, manageable
-  float, buybacks, low debt. PARTIAL = institutional-grade liquidity and a constructive trend but
-  no demand surge. FAIL = heavy distribution, dilution, illiquidity, or below the 200-day.
-- **L — leader not laggard:** PASS = clearly outperforming the benchmark over the window **and**
-  the #1 or #2 name in a strong group. PARTIAL = outperforming but mid-pack within its own group,
-  or leading a group that itself lags. FAIL = in line with or behind the benchmark.
-- **I — institutional sponsorship:** PASS = ownership **rising** over recent quarters with
-  quality funds adding, and not so over-owned that new sponsorship is impossible. PARTIAL =
-  adequate ownership whose trend you could not verify, or flat sponsorship. FAIL = thin, neglected,
-  or funds distributing. Verify the trend before awarding a pass — a high ownership *level* alone
-  is a PARTIAL.
-- **M — market direction (scored ONCE for the whole market, applied to every row via
-  `CONFIG.market.mGrade`):** PASS = confirmed uptrend, few distribution days, broad leadership.
-  PARTIAL = uptrend under pressure — distribution days building (4-5+), leadership narrowing, an
-  index slipping below its 50-day. FAIL = confirmed correction or downtrend. M is scored once
-  because market direction is a single market-wide gate: it moves every total together, so a weak
-  tape correctly makes any cut harder to clear. Never loosen the cut to compensate.
+**C, A and L weigh more in the verdict, not in the arithmetic.** They were the most predictive
+traits, so they gate the label rather than the number: a buy-range call needs C, A and L passing
+with a valid N, and no total earns it without them. Rough read of the total: **6.0-7.0** = leader in
+a strong tape; **4.5-5.5** = qualifies, buyable when N gives a pivot; **3.5-4.0** = watch (needs the
+market or a letter to improve); **under 3.5** = pass on it. The bands are a summary, never the
+decision — the C/A/L + N gate above decides the label.
 
-Rough total read: **6.0-7.0** = table-pounding leader in a strong tape; **4.5-5.5** = qualifies,
-buyable when N gives a pivot; **3.5-4.0** = watch (needs the market or a letter to improve);
-**< 3.5** = pass on it.
+**Rungs that are easy to grade too kindly**, and hold in both skills:
 
-## Modern refinements & professional practice (beyond the 1988 book)
-CAN SLIM's core is durable, but apply it with current, professionally-informed judgment — and
-refresh the specifics with web research each run rather than from memory:
-- **Why it works (factor evidence):** the edge is the *momentum* factor (Jegadeesh-Titman;
-  6-12 mo cross-sectional relative strength) combined with *quality* (profitability/ROE — Fama-
-  French RMW, AQR "quality-minus-junk"). A genuine leader is a momentum+quality name, not a
-  low-quality junk rip — down-weight L/S when the strength is purely speculative.
-- **Market structure O'Neil didn't have:** passive/ETF flows, index add/deletes and quarterly
-  rebalances, and dealer options positioning (gamma, 0DTE, max-pain) can extend or reverse moves
-  fast; mega-cap concentration means the index (M) can mask narrow leadership — check breadth
-  (advance/decline, % of stocks above their 50-day), not just the index level.
-- **Macro & event overlay:** Fed path, CPI/jobs prints, earnings-season dispersion, and
-  commodity/geopolitical shocks reprice whole sectors intraday — reflect them in the M score and
-  in stop width.
-- **Volatility regime & sizing:** in high-VIX / under-pressure tapes, cut size, tighten stops
-  toward 3-5%, demand cleaner bases, and require a follow-through day before buying breakouts.
-- **Valuation-sanity overlay (the value-investor lens):** CAN SLIM ignores P/E on purpose, but a
-  professional still flags a leader discounting implausible growth (extreme EV/Sales or P/E vs. its
-  own history and peers) as elevated risk — never *reject* on valuation alone, but note it.
-- **Data hygiene:** prefer as-reported / GAAP-reconciled figures; treat heavily-adjusted non-GAAP,
-  one-time gains, and buyback-inflated EPS skeptically (that is the C/A quality check).
+- **N.** A pivot needs a sound base *and* new-high ground. More than ~10% below the 52-week high
+  there is no pivot, so N cannot pass; **more than ~20% below, N fails** — that is a broken chart,
+  not a base under repair. A wide-and-loose or late-stage base fails on its own. A PASS also
+  requires the stock to be no more than **~5% extended past** the pivot, and extension far above the
+  50-day (roughly **>25%**) after a climax run is a **FAIL**, not a partial: there is no entry there.
+- **A.** A company without three years of record — newly public, or freshly restructured — **cannot
+  exceed PARTIAL on A**, however good the two years it has.
+- **S.** A stock **below its 200-day** fails S. A PASS wants breakout volume **>=40-50% above the
+  50-day average**, not merely healthy liquidity.
+- **L.** PASS needs clear outperformance **and** the #1 or #2 name in a strong group. Outperforming
+  but mid-pack, or leading a group that itself lags, is PARTIAL. **In line with the benchmark is a
+  FAIL** — matching the index is not leadership.
+- **I.** A high ownership *level* alone is a **PARTIAL**. A PASS needs the trend verified as
+  **rising**, with quality funds adding and room left to add. Funds distributing is a FAIL.
+- **M.** **4-5 or more distribution days** in a ~25-session window, narrowing leadership, or an
+  index slipping under its 50-day is PARTIAL (uptrend under pressure); a confirmed correction is a
+  FAIL. Never loosen a cut to compensate for a weak tape.
 
-Keep every pick's written reason in CAN SLIM terms; use these refinements to grade more accurately
-and to frame risk, not to smuggle in off-method rationale.
+Per-skill scoring detail (what counts as partial for each letter, and the verdict definitions)
+lives in each skill's own data guide, not here.
 ```
 
 
@@ -1710,6 +1688,53 @@ what was dropped and why, rather than reading the sweep as full coverage.
 ---
 
 ## Step 4 — Grade the survivors with `can-slim-grader`
+
+### This skill's per-letter scoring detail
+`references/canslim-methodology.md` is shared VERBATIM with `can-slim-grader` and carries the
+scale plus the rungs that are easy to grade too kindly; it deliberately leaves per-letter detail
+to each skill's own data guide, which is here. Read the two together, and never restate a
+threshold in a way that contradicts the shared file - `scripts/check_parity.py` compares the
+rungs against what the code actually implements, precisely because a reworded threshold is the
+drift that silently changes a grade.
+
+- **C — current quarterly EPS & sales:** PASS = EPS and sales both up >=25% vs the year-ago
+  quarter, accelerating rather than decelerating. PARTIAL = one of the two clears the bar, or both
+  are up but short of 25%, or growth is decelerating. FAIL = flat, negative, or a loss. Downgrade
+  if sales lag EPS (buyback-driven) or margins are falling.
+- **A — annual earnings & ROE:** PASS = EPS up **each** of the last 3 years at >=25% **and** ROE
+  >=17%. PARTIAL = a broadly rising multi-year record that misses one leg (a year below the bar,
+  or ROE under 17%). FAIL = declining EPS, no annual profit, or an ROE far below the bar. A newly
+  public company without three years of record cannot exceed PARTIAL on A.
+- **N — new + new high off a base:** PASS = a genuine new driver **and** a sound base with the
+  stock at a proper pivot, no more than ~5% extended past it. PARTIAL = at or near new-high ground
+  but with no valid pivot to buy (base incomplete, or already extended beyond it). FAIL = no new
+  driver, more than ~10% below the 52-week high (a lower high is not a pivot), or a wide-and-loose
+  / late-stage base. Extension far above the 50-day (roughly >25%) after a climax run is a FAIL,
+  not a partial — there is no entry there.
+- **S — supply & demand:** PASS = breakout volume >=40-50% above the 50-day average, manageable
+  float, buybacks, low debt. PARTIAL = institutional-grade liquidity and a constructive trend but
+  no demand surge. FAIL = heavy distribution, dilution, illiquidity, or below the 200-day.
+- **L — leader not laggard:** PASS = clearly outperforming the benchmark over the window **and**
+  the #1 or #2 name in a strong group. PARTIAL = outperforming but mid-pack within its own group,
+  or leading a group that itself lags. FAIL = in line with or behind the benchmark.
+- **I — institutional sponsorship:** PASS = ownership **rising** over recent quarters with
+  quality funds adding, and not so over-owned that new sponsorship is impossible. PARTIAL =
+  adequate ownership whose trend you could not verify, or flat sponsorship. FAIL = thin, neglected,
+  or funds distributing. Verify the trend before awarding a pass — a high ownership *level* alone
+  is a PARTIAL.
+- **M — market direction (scored ONCE for the whole market, applied to every row via
+  `CONFIG.market.mGrade`):** PASS = confirmed uptrend, few distribution days, broad leadership.
+  PARTIAL = uptrend under pressure — distribution days building (4-5+), leadership narrowing, an
+  index slipping below its 50-day. FAIL = confirmed correction or downtrend. M is scored once
+  because market direction is a single market-wide gate: it moves every total together, so a weak
+  tape correctly makes any cut harder to clear. Never loosen the cut to compensate.
+
+**On the N band specifically**, because an earlier copy of this guide got it wrong: within ~10%
+of the 52-week high N is still open; **10-20% below, N cannot pass and is at best PARTIAL**;
+**more than ~20% below, N FAILS**. `sector_screen.py`'s `pivot_band` (10.0) and its `-2 * band`
+fail cap implement exactly that, and a copy that lists ">10% below" under FAIL grades a name 15%
+off its high half a point below what `can-slim-grader` would give it.
+
 
 Every name that clears triage gets the **sister skill's** grade, so a 4.5 in this report means
 exactly what a 4.5 means in a single-ticker report. If `can-slim-grader` is installed, invoke it
@@ -3146,8 +3171,11 @@ INPUT: a JSON file (or stdin) shaped like:
      ...
   ]
 }
-Each bar is [timestamp, open, high, low, close, volume]. `t` may be any monotonic value;
-only ordering is used. Missing `weekly` disables base metrics for that name.
+Each bar is [timestamp, open, high, low, close, volume] OR the dict form {t, o, h, l, c, v}
+that TradingView's `get_ohlcv` and Polygon/Massive `/v2/aggs` return - both are accepted and
+normalized on the way in, so provider output can be dropped straight into this file without
+being reshaped by hand. `t` may be any monotonic value; only ordering is used. Missing
+`weekly` disables base metrics for that name.
 
 OUTPUT: JSON to stdout — per-candidate metrics plus a candidate-set RS rank (1 = strongest).
 
@@ -3161,6 +3189,24 @@ import json
 import sys
 
 
+def as_row(bar):
+    """Normalize one bar to [t, o, h, l, c, v].
+
+    Providers disagree about the shape: IBKR and this file's own format use positional rows,
+    while TradingView's `get_ohlcv` and Polygon/Massive `/v2/aggs` return {t, o, h, l, c, v}
+    dicts. Accepting both here is what lets a run paste provider output in unedited - and
+    hand-retyping bars is exactly where a grade quietly acquires a typo.
+    """
+    if isinstance(bar, dict):
+        t = bar.get("t", bar.get("time", bar.get("date", bar.get("d"))))
+        return [t, bar.get("o"), bar.get("h"), bar.get("l"), bar.get("c"), bar.get("v", 0)]
+    return bar
+
+
+def normalize(bars):
+    return [as_row(b) for b in (bars or []) if b]
+
+
 def closes(bars):
     return [float(b[4]) for b in bars if b and b[4] is not None]
 
@@ -3169,30 +3215,20 @@ def volumes(bars):
     return [float(b[5]) for b in bars if b and b[5] is not None]
 
 
-def _le(t, asof):
-    """Is bar-timestamp `t` on/before the as-of cutoff? Numeric when both parse as numbers;
-    otherwise ISO-date-aware string compare - a bare YYYY-MM-DD cutoff matches by date prefix so
-    the whole as-of day is inclusive (e.g. '2023-01-31T20:00Z' <= '2023-01-31')."""
-    try:
-        return float(t) <= float(asof)
-    except (TypeError, ValueError):
-        ts, a = str(t), str(asof)
-        return (ts[:10] <= a) if len(a) <= 10 else (ts <= a)
+def ret_over(series, lookback, tol=0.9):
+    """Return fractional price change over the last `lookback` bars (e.g. ~63=3mo daily).
 
-
-def truncate_asof(bars, asof):
-    """Point-in-time: keep only bars dated on/before `asof` (same units as the bar timestamp).
-    `asof=None` (the default) keeps everything - i.e. the normal 'as of now' run."""
-    if asof is None:
-        return bars
-    return [b for b in bars if b and _le(b[0], asof)]
-
-
-def ret_over(series, lookback):
-    """Return fractional price change over the last `lookback` bars (e.g. ~63=3mo daily)."""
-    if len(series) <= lookback or series[-lookback - 1] == 0:
+    If the series is a little shorter than `lookback` (e.g. IBKR's ONE_YEAR returns ~251
+    daily bars but the 12-month window wants 252+1), clamp to the oldest available bar as
+    long as we still have >= `tol` of the requested window. Below that, return None rather
+    than pass off, say, 3 months of data as a 12-month return."""
+    n = len(series)
+    if n < 2:
         return None
-    return series[-1] / series[-lookback - 1] - 1.0
+    lb = lookback if n > lookback else n - 1
+    if lb < lookback * tol or series[-lb - 1] == 0:
+        return None
+    return series[-1] / series[-lb - 1] - 1.0
 
 
 def rs_proxy(cand_daily, bench_daily):
@@ -3260,13 +3296,11 @@ def breakout_volume(daily, avg_window=50):
 
 
 def analyze(data):
-    # Point-in-time cutoff (optional): compute every metric as of this date, ignoring later bars.
-    asof = data.get("asof")
-    bench = truncate_asof(data.get("benchmark", {}).get("daily", []), asof)
+    bench = normalize(data.get("benchmark", {}).get("daily", []))
     out = []
     for cand in data.get("candidates", []):
-        daily = truncate_asof(cand.get("daily", []), asof)
-        weekly = truncate_asof(cand.get("weekly", []), asof)
+        daily = normalize(cand.get("daily", []))
+        weekly = normalize(cand.get("weekly", []))
         rel, blend = rs_proxy(daily, bench) if bench and daily else ({}, None)
         out.append({
             "symbol": cand.get("symbol"),
@@ -3284,27 +3318,11 @@ def analyze(data):
 
 
 def main():
-    # Optional: --asof <cutoff> for a point-in-time (historical) run. The cutoff must be in the
-    # same units as the bar timestamps (epoch, or an ISO date/datetime); a bare YYYY-MM-DD is
-    # inclusive of that whole day. Overrides any "asof" key already in the input JSON.
-    args = sys.argv[1:]
-    asof = None
-    path = None
-    i = 0
-    while i < len(args):
-        if args[i] == "--asof" and i + 1 < len(args):
-            asof = args[i + 1]
-            i += 2
-        else:
-            path = args[i]
-            i += 1
-    if path:
-        with open(path, "r", encoding="utf-8") as f:
+    if len(sys.argv) > 1:
+        with open(sys.argv[1], "r", encoding="utf-8") as f:
             data = json.load(f)
     else:
         data = json.load(sys.stdin)
-    if asof is not None:
-        data["asof"] = asof
     json.dump(analyze(data), sys.stdout, indent=2)
     sys.stdout.write("\n")
 
@@ -4964,6 +4982,7 @@ CONCEPTS = (("us-gaap", "EarningsPerShareDiluted"),
 
 DEFAULTS = {
     "growth": 25.0,      # the rubric's threshold: EPS up at least this much, EACH year
+    "roe": 17.0,         # ... AND return on equity at least this. BOTH legs, or it is not a pass
     "years": 3,          # ... across this many year-on-year steps (so 4 annual figures)
     "min_days": 330,     # a fiscal year's duration, wide enough for 52/53-week calendars
     "max_days": 400,
@@ -5110,11 +5129,18 @@ def consecutive(ends, cfg):
     return keep
 
 
-def grade(eps_by_end, cfg, today=None):
+def grade(eps_by_end, cfg, today=None, roe=None):
     """(grade, reason, series, steps) for one name. See the module docstring on what is safe.
 
     `partial` means "the filings cannot answer this", `fail` means "they answer it, and it is a
     no". Only the second is evidence, and only the second should ever prune a name.
+
+    A HAS TWO LEGS. The rubric is "EPS up each of 3 years at >=25% AND ROE >=17%", and grading the
+    EPS leg alone is an over-grade: can-slim-grader, working one ticker at a time, checks both, so
+    the same name came out A=pass here and A=partial there. `roe` is the percentage; None means it
+    could not be verified, which caps the letter at partial rather than awarding a pass on half
+    the test. DELL is the live example - EPS up 42/39/36% but negative book equity, so its ROE is
+    not a number and the pass is not earned.
     """
     today = today or dt.date.today()
     need = cfg["years"] + 1
@@ -5146,8 +5172,16 @@ def grade(eps_by_end, cfg, today=None):
 
     shown = ", ".join("%.0f%%" % s for s in steps)
     if all(s >= cfg["growth"] for s in steps):
-        return ("pass", "EPS up %s over %d years, each >=%.0f%%"
-                % (shown, cfg["years"], cfg["growth"]), series, steps)
+        if roe is None:
+            return ("partial", "EPS up %s over %d years, each >=%.0f%% - but ROE could not be "
+                    "verified, and A needs both legs" % (shown, cfg["years"], cfg["growth"]),
+                    series, steps)
+        if roe < cfg["roe"]:
+            return ("partial", "EPS up %s over %d years, each >=%.0f%%, but ROE %.1f%% is under "
+                    "%.0f%%" % (shown, cfg["years"], cfg["growth"], roe, cfg["roe"]),
+                    series, steps)
+        return ("pass", "EPS up %s over %d years, each >=%.0f%%, with ROE %.1f%%"
+                % (shown, cfg["years"], cfg["growth"], roe), series, steps)
     if all(s > 0 for s in steps):
         return ("partial", "EPS up each year (%s) but not every year >=%.0f%%"
                 % (shown, cfg["growth"]), series, steps)
@@ -5173,7 +5207,8 @@ def symbols_from(blob):
     return []
 
 
-def run(symbols, cache_dir, contact, cfg):
+def run(symbols, cache_dir, contact, cfg, roes=None):
+    roes = roes or {}
     tmap = load_tickers(cache_dir, contact)
     known, detail, ungraded = {}, {}, []
     for sym in symbols:
@@ -5191,11 +5226,12 @@ def run(symbols, cache_dir, contact, cfg):
             detail[sym] = {"grade": "partial", "cik": cik, "series": [], "steps": [],
                            "reason": "A: not graded - " + why, "source": "sec-xbrl"}
             continue
-        g, why, series, steps = grade(eps, cfg)
+        roe = roes.get(sym, roes.get(tick))
+        g, why, series, steps = grade(eps, cfg, roe=roe)
         known[sym] = {"A": g}
         detail[sym] = {"grade": g, "cik": cik, "series": series,
                        "steps": [None if s is None else round(s, 1) for s in steps],
-                       "reason": "A: " + why, "source": "sec-xbrl"}
+                       "roe": roe, "reason": "A: " + why, "source": "sec-xbrl"}
     return {
         "meta": {
             "source": "sec-xbrl",
@@ -5226,6 +5262,10 @@ def main():
                     help="each year must beat this %% (default %(default)s)")
     ap.add_argument("--years", type=int, default=DEFAULTS["years"],
                     help="year-on-year steps to require (default %(default)s)")
+    ap.add_argument("--roe", metavar="FILE",
+                    help='{"NASDAQ:AAPL": 147.2} return-on-equity percentages. A needs BOTH legs, '
+                         'so without this every A caps at partial rather than passing on the EPS '
+                         'leg alone. TradingView get_financials returns_on_equity is the source.')
     ap.add_argument("--stale-days", type=int, default=DEFAULTS["stale_days"],
                     help="a series older than this cannot answer the test (default %(default)s)")
     ap.add_argument("-o", "--out", metavar="FILE", help="write here (default: stdout)")
@@ -5246,7 +5286,8 @@ def main():
         return 2
 
     cfg = dict(DEFAULTS, growth=a.growth, years=a.years, stale_days=a.stale_days)
-    res = run(symbols, a.cache_dir, contact, cfg)
+    roes = json.load(io.open(a.roe, encoding="utf-8")) if a.roe else {}
+    res = run(symbols, a.cache_dir, contact, cfg, roes)
     text = json.dumps(res["known"] if a.known_only else res, indent=2)
     if a.out:
         os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
@@ -6341,8 +6382,17 @@ const num = (s)=>{ if(s==null) return NaN; const m=String(s).replace(/,/g,'').ma
    4.5 there mean the same thing. */
 const WEIGHT = {pass:1, partial:0.5, fail:0};
 const LETTERS6 = ["C","A","N","S","L","I"];
-const isGrade = (v)=> WEIGHT.hasOwnProperty(String(v==null?"":v).trim().toLowerCase());
-const gradeOf = (v)=>{ const g=String(v==null?"":v).trim().toLowerCase(); return WEIGHT.hasOwnProperty(g)?g:"fail"; };
+/* EXACT match, deliberately - no trim, no lowercase. can-slim-grader scores a letter with
+   `W[x.score] || 0`, so "PASS" counts ZERO there and its audit says so ("it must be exactly
+   pass, partial or fail"). Normalising here instead made the SAME scorecard total 6 in this
+   skill and 5 in the sister - scripts/check_parity.py found 16 such disagreements in 100 random
+   scorecards - and a score that means two different things defeats the whole point of the pair
+   sharing one scale. Strict plus the audit below is the behaviour that matches: a non-canonical
+   spelling is refused loudly in both skills rather than quietly accepted in one.
+   (`sector_screen.py --known` still normalises, on purpose: that is a machine-written data feed
+   from institutional_cache/annual_eps, not an authored scorecard.) */
+const isGrade = (v)=> typeof v === "string" && WEIGHT.hasOwnProperty(v);
+const gradeOf = (v)=> isGrade(v) ? v : "fail";
 const mGrade = ()=> gradeOf((CONFIG.market||{}).mGrade);
 const scoreTotal = (p)=> LETTERS6.reduce((n,k)=> n+WEIGHT[gradeOf((p.scores||{})[k])], 0) + WEIGHT[mGrade()];
 const fmtScore = (v)=> (Math.round(v*2)/2).toFixed(1).replace(/\.0$/,"");
@@ -7277,6 +7327,356 @@ if ((CONFIG.sources||[]).length){
 ```
 
 
+## `scripts/check_parity.py`
+
+Proves this skill and can-slim-grader still grade the same way: shared-file hashes attributed three ways, both dashboards' REAL scoring code run over all 2187 possible scorecards, 100 random tickers with messy authored input, and the shared methodology's N rung checked against what the ceiling implements. The sister's own parity script hashes files in its own tree and says outright that it cannot catch a reworded threshold - this is that gap.
+
+```python
+#!/usr/bin/env python3
+"""
+check_parity.py - prove this skill and `can-slim-grader` still grade the same way.
+
+WHY THE SISTER'S OWN CHECKER IS NOT ENOUGH. can-slim-grader ships a check_parity.py too, and its
+docstring is honest about the limit: "it compares bytes in THIS repo against the last recorded
+sync. It does not read the sister repo, and it cannot see a material change that lives somewhere
+other than a shared file - a threshold reworded in SKILL.md, a new freshness rule, a changed pivot
+definition. Those are the common case and they are yours to notice."
+
+A byte tripwire on two files cannot notice that one skill started failing N at 10% below the high
+while the other still graded it partial. That is the failure that matters: the same evidence
+scoring differently in the two skills makes "4.5/7" mean two things, and the whole point of the
+pair is that a screened idea and a graded ticker are comparable. So this checker reads BOTH repos
+and tests BEHAVIOUR, in four layers:
+
+  1. SHARED BYTES - the files the manifest calls verbatim, compared across the two checkouts and
+     against the manifest hash, so drift is attributed rather than merely detected.
+  2. ARITHMETIC - the two dashboards' REAL scoring code, lifted out of the templates and run in
+     node over every one of the 3^7 = 2187 possible scorecards. Exhaustive, so this is a proof and
+     not a sample: if any grade tuple totals differently, it is named.
+  3. RUNGS - the "easy to grade too kindly" thresholds in the shared methodology, parsed out of
+     the prose and checked against what sector_screen.py's ceiling actually implements. This is
+     the layer that catches a reworded threshold.
+  4. TICKERS - N random synthetic tickers (default 100) pushed through both scorers with messy
+     score spellings, to catch input handling that diverges where the arithmetic does not.
+
+Usage:
+  python scripts/check_parity.py                        # find the sister automatically
+  python scripts/check_parity.py --grader ../can-slim-grader
+  python scripts/check_parity.py --tickers 100 --seed 7 # reproduce a reported failure
+  python scripts/check_parity.py --json
+
+Exit: 0 all layers agree; 1 a divergence (the report names it); 2 the sister repo was not found.
+Needs node for layers 2 and 4; without it they are reported as skipped rather than passed.
+Pure standard library.
+"""
+import argparse
+import hashlib
+import io
+import itertools
+import json
+import os
+import random
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SHARED = ["references/canslim-methodology.md", "scripts/relative_strength.py"]
+GRADES = ("pass", "partial", "fail")
+LETTERS = "CANSLIM"
+
+# Where the sister checkout is likely to be, in order. The add_repo lane puts a read-only clone
+# under /home/user/<owner>/<repo>; a developer is more likely to have it beside this one.
+CANDIDATES = (
+    os.environ.get("CANSLIM_GRADER") or "",
+    os.path.join(os.path.dirname(ROOT), "can-slim-grader"),
+    "/home/user/thewongdirection/can-slim-grader",
+    "/home/user/can-slim-grader",
+)
+
+
+def find_grader(explicit=None):
+    for p in ((explicit,) if explicit else ()) + CANDIDATES:
+        if p and os.path.exists(os.path.join(p, "assets", "evaluation_template.html")):
+            return os.path.abspath(p)
+    return None
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with io.open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# --------------------------------------------------------------------------- layer 1: bytes
+def check_shared_bytes(grader):
+    """Compare each shared file across the two checkouts AND against the manifest hash.
+
+    Three-way, because two-way cannot say WHO moved: a file that differs from the sister but
+    matches the manifest means the sister changed it and owes us a port; one that matches the
+    sister but not the manifest means both moved and the manifest is stale.
+    """
+    man = {}
+    mp = os.path.join(grader, "parity-manifest.json")
+    if os.path.exists(mp):
+        man = (json.load(io.open(mp, encoding="utf-8")) or {}).get("files") or {}
+    rows, bad = [], 0
+    for rel in SHARED:
+        a, b = os.path.join(ROOT, rel), os.path.join(grader, rel)
+        ha = sha256(a) if os.path.exists(a) else None
+        hb = sha256(b) if os.path.exists(b) else None
+        hm = man.get(rel)
+        if ha == hb:
+            verdict = "identical"
+        elif hm and hb == hm:
+            verdict = "DIFFERS - the sister matches the manifest, so this copy is the one adrift"
+        elif hm and ha == hm:
+            verdict = "DIFFERS - this copy matches the manifest, so the sister moved and owes a port"
+        else:
+            verdict = "DIFFERS - and neither copy matches the manifest; both moved"
+        if ha != hb:
+            bad += 1
+        rows.append({"file": rel, "ours": ha, "theirs": hb, "manifest": hm, "verdict": verdict})
+    return {"name": "shared bytes", "ok": bad == 0, "detail": rows}
+
+
+# ------------------------------------------------------------------- layers 2 & 4: arithmetic
+GRADER_SCORE = re.compile(r"const SCORE = \(function\(\)\{.*?\}\)\(\);", re.S)
+# LINE-anchored on purpose. A non-greedy ".*?;" looks right and truncates every one of these at
+# the first semicolon INSIDE its own arrow body - gradeOf became
+# "const gradeOf = (v)=>{ const g=String(v==null?"":v).trim().toLowerCase();" - which is an
+# unbalanced brace that node reports as "Unexpected end of input" from a generated temp file,
+# about as far from the cause as an error can land. These are one-liners in the template; match
+# the line.
+OURS_PARTS = (
+    r"^const WEIGHT = \{[^}]*\};$",
+    r"^const LETTERS6 = \[[^\]]*\];$",
+    # "[^\n]*" not ".*": the grader's SCORE block needs re.S to span lines, and under DOTALL a
+    # ".*$" line pattern greedily swallows the rest of the file - which it did, dragging in a
+    # second "const m" and making node complain about a redeclared identifier.
+    r"^const isGrade = [^\n]*$",
+    r"^const gradeOf = [^\n]*$",
+    r"^const mGrade = [^\n]*$",
+    r"^const scoreTotal = [^\n]*$",
+)
+
+
+def _extract(text, pattern, what):
+    m = re.search(pattern, text, re.S | re.M)
+    if not m:
+        raise LookupError("could not find %s - the scoring block moved, so parity is unverified "
+                          "until this extractor is updated" % what)
+    return m.group(0)
+
+
+def build_harness(grader):
+    """A node program exposing both skills' REAL scoring functions over stdin scorecards."""
+    g = io.open(os.path.join(grader, "assets", "evaluation_template.html"), encoding="utf-8").read()
+    r = io.open(os.path.join(ROOT, "assets", "dashboard_template.html"), encoding="utf-8").read()
+    grader_src = _extract(g, GRADER_SCORE.pattern, "the grader's SCORE block")
+    ours_src = "\n".join(_extract(r, p, "our " + p.split()[1].lstrip("^")) for p in OURS_PARTS)
+    return """
+'use strict';
+// The two skills' own scoring code, lifted verbatim from their templates. Nothing is
+// reimplemented here: a divergence reported below is a divergence in the shipped skills.
+function graderTotal(letters){
+  const CONFIG = {letters: letters};
+  %s
+  return SCORE.tally;
+}
+function oursTotal(scores, m){
+  const CONFIG = {market: {mGrade: m}};
+  %s
+  return scoreTotal({scores: scores});
+}
+let input = '';
+process.stdin.on('data', d => input += d);
+process.stdin.on('end', () => {
+  const cases = JSON.parse(input);
+  const out = cases.map(c => {
+    const letters = "CANSLIM".split("").map(k => ({key: k, score: c.scores[k]}));
+    let a = null, b = null, ea = null, eb = null;
+    try { a = graderTotal(letters); } catch (e) { ea = String(e); }
+    try { b = oursTotal(c.scores, c.scores.M); } catch (e) { eb = String(e); }
+    return {id: c.id, grader: a, ours: b, graderErr: ea, oursErr: eb};
+  });
+  process.stdout.write(JSON.stringify(out));
+});
+""" % (grader_src, ours_src)
+
+
+def run_harness(harness, cases):
+    node = shutil.which("node") or shutil.which("nodejs")
+    if not node:
+        return None
+    d = tempfile.mkdtemp(prefix="canslim-parity-")
+    try:
+        p = os.path.join(d, "harness.js")
+        io.open(p, "w", encoding="utf-8").write(harness)
+        chk = subprocess.run([node, "--check", p], stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, timeout=60)
+        if chk.returncode != 0:
+            raise RuntimeError(
+                "the harness assembled from the two templates is not valid JS, so one of the "
+                "scoring blocks was extracted wrong (the extractor is anchored to the templates' "
+                "current shape - if either moved, fix the pattern). node said:\n" +
+                chk.stderr.decode("utf-8", "replace")[:400])
+        out = subprocess.run([node, p], input=json.dumps(cases).encode("utf-8"),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        if out.returncode != 0:
+            raise RuntimeError("node harness failed: " + out.stderr.decode("utf-8", "replace")[:400])
+        return json.loads(out.stdout.decode("utf-8"))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def compare(rows, label):
+    bad = [r for r in rows
+           if r["graderErr"] or r["oursErr"] or r["grader"] is None or r["ours"] is None
+           or abs(r["grader"] - r["ours"]) > 1e-9]
+    return {"name": label, "ok": not bad, "checked": len(rows),
+            "detail": bad[:15] + ([{"note": "... %d more" % (len(bad) - 15)}] if len(bad) > 15 else [])}
+
+
+def check_arithmetic(harness):
+    """EXHAUSTIVE over every possible scorecard - 3^7 = 2187 - so this is a proof, not a sample."""
+    cases = [{"id": "".join(t), "scores": dict(zip(LETTERS, t))}
+             for t in itertools.product(GRADES, repeat=7)]
+    rows = run_harness(harness, cases)
+    if rows is None:
+        return {"name": "arithmetic (all 2187 scorecards)", "ok": None, "detail": "node not installed"}
+    return compare(rows, "arithmetic (all 2187 scorecards)")
+
+
+# A real scorecard is authored by hand, so a letter can arrive capitalised, padded or blank. The
+# two skills must agree on what those mean, not merely on the clean case.
+MESSY = ("pass", "PASS", "Pass", " pass ", "partial", "Partial", "fail", "FAIL", "", None, "n/a")
+
+
+def check_tickers(harness, n, seed):
+    rng = random.Random(seed)
+    cases = []
+    for i in range(n):
+        # Most letters clean, a minority deliberately messy - the mix a hand-authored run has.
+        scores = {k: (rng.choice(GRADES) if rng.random() < 0.75 else rng.choice(MESSY))
+                  for k in LETTERS}
+        cases.append({"id": "T%03d-%s" % (i, "".join(str(scores[k])[:1] for k in LETTERS)),
+                      "scores": scores})
+    rows = run_harness(harness, cases)
+    if rows is None:
+        return {"name": "%d random tickers (seed %s)" % (n, seed), "ok": None,
+                "detail": "node not installed"}
+    res = compare(rows, "%d random tickers (seed %s)" % (n, seed))
+    res["cases"] = {c["id"]: c["scores"] for c in cases}
+    return res
+
+
+# ------------------------------------------------------------------------- layer 3: the rungs
+def check_rungs(grader):
+    """Parse the shared methodology's N rung and check our ceiling implements it.
+
+    N is the rung most easily reworded into a different grade, and it is the one that actually
+    drifted: the canonical text says more than ~10% below the high means N CANNOT PASS and more
+    than ~20% below means N FAILS, which is a partial band in between. A copy that lists ">10%
+    below" under FAIL grades a name 15% off its high half a point lower than the sister does.
+    """
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import sector_screen as ss
+
+    src = io.open(os.path.join(grader, "references", "canslim-methodology.md"),
+                  encoding="utf-8").read()
+    rung = re.search(r"\*\*N\.\*\*(.+?)(?=\n- \*\*|\n\n)", src, re.S)
+    text = " ".join((rung.group(1) if rung else "").split())
+    says_partial_band = bool(re.search(r"10%.{0,80}cannot pass", text)) and \
+        bool(re.search(r"20%.{0,40}fails?", text))
+
+    cfg = dict(ss.DEFAULTS)
+    band = cfg["pivot_band"]
+
+    def n_for(off_high):
+        row = {"symbol": "X:Y", "ticker": "Y", "off_high_pct": off_high, "rel_volume_10d": 1.2,
+               "sector_rank_overall": 1, "sector_count": 20}
+        ss.ceiling(row, cfg, {})
+        return row["ceiling_caps"]["N"] if "ceiling_caps" in row else None
+
+    probes = [(-(band / 2.0), "pass"), (-(band + 5), "partial"), (-(2 * band + 5), "fail")]
+    got = [(off, want, n_for(off)) for off, want in probes]
+    mism = [g for g in got if g[1] != g[2]]
+
+    # A has TWO legs - "EPS up each of 3 years at >=25% AND ROE >=17%" - and grading the EPS leg
+    # alone is an over-grade the sister would not make, because it checks both on the one ticker
+    # it is looking at. annual_eps.py must refuse to pass a name whose ROE it cannot verify.
+    import annual_eps as ae
+    import datetime as _dt
+    ends = ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]
+    strong = dict(zip(ends, [1.0, 1.3, 1.7, 2.2]))          # +30, +31, +29: EPS leg clears
+    day = _dt.date.fromisoformat("2026-03-01")
+    roe_probes = [(None, "partial"), (ae.DEFAULTS["roe"] - 5, "partial"),
+                  (ae.DEFAULTS["roe"] + 5, "pass")]
+    roe_got = [(r, want, ae.grade(strong, ae.DEFAULTS, today=day, roe=r)[0])
+               for r, want in roe_probes]
+    roe_mism = [g for g in roe_got if g[1] != g[2]]
+
+    ok = (not mism) and says_partial_band and (not roe_mism)
+    return {"name": "rungs: methodology prose vs our code (N band, A's two legs)", "ok": ok,
+            "detail": {"canonical_has_partial_band": says_partial_band,
+                       "canonical_text": text[:240],
+                       "N_probes": [{"off_high": o, "expected": w, "ceiling": c} for o, w, c in got],
+                       "A_roe_probes": [{"roe": r, "expected": w, "got": c} for r, w, c in roe_got]}}
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--grader", help="path to a can-slim-grader checkout")
+    ap.add_argument("--tickers", type=int, default=100,
+                    help="random synthetic tickers to compare (default %(default)s)")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="RNG seed; omitted means a fresh one, printed so a failure reproduces")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+
+    grader = find_grader(a.grader)
+    if not grader:
+        print("can-slim-grader not found. Clone it beside this repo, or pass --grader PATH, or "
+              "set CANSLIM_GRADER.\n  git clone --depth 1 "
+              "https://github.com/thewongdirection/can-slim-grader", file=sys.stderr)
+        return 2
+
+    seed = a.seed if a.seed is not None else random.randrange(1 << 30)
+    layers = [check_shared_bytes(grader)]
+    try:
+        harness = build_harness(grader)
+        layers.append(check_arithmetic(harness))
+        layers.append(check_tickers(harness, a.tickers, seed))
+    except LookupError as e:
+        layers.append({"name": "arithmetic", "ok": False, "detail": str(e)})
+    layers.append(check_rungs(grader))
+
+    failed = [l for l in layers if l["ok"] is False]
+    if a.json:
+        print(json.dumps({"grader": grader, "seed": seed, "layers": layers}, indent=2))
+    else:
+        print("parity vs %s  (seed %d)" % (grader, seed))
+        for l in layers:
+            mark = {True: "ok  ", False: "FAIL", None: "SKIP"}[l["ok"]]
+            print("  %s %s%s" % (mark, l["name"],
+                                 "" if l.get("checked") is None else "  [%d cases]" % l["checked"]))
+            if l["ok"] is not True:
+                print("       " + json.dumps(l["detail"], indent=2).replace("\n", "\n       ")[:1600])
+        print("\n%d layer(s) failing" % len(failed) if failed else "\nall layers agree")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+
 ## `tests/test_regression.py`
 
 The regression suite - pure stdlib, no pytest, no network. Run it after porting or editing anything: the ceiling's soundness is the one property whose failure is invisible in the output, so it is pinned twice over.
@@ -7945,6 +8345,74 @@ def check_gzip_is_undone_before_parsing():
     assert ic.maybe_gunzip(raw) == raw          # not compressed: passed through untouched
 
 
+def check_parity_with_the_sister_skill(tmp):
+    """Run scripts/check_parity.py against a can-slim-grader checkout - 100 RANDOM tickers plus
+    the exhaustive arithmetic sweep - and fail if the two skills would grade the same evidence
+    differently.
+
+    WHY THIS EXISTS AS A TEST AND NOT A CHORE. The pair's whole premise is that a screened idea
+    and a graded ticker are comparable, so "4.5/7" has to mean one thing. The sister ships its own
+    check_parity.py and its docstring is candid that it cannot do this: it hashes two files in its
+    own tree and "cannot see a material change that lives somewhere other than a shared file - a
+    threshold reworded in SKILL.md ... a changed pivot definition. Those are the common case."
+    Byte tripwires do not notice that one skill started failing N at 10% below the high while the
+    other still graded it partial.
+
+    THE SEED IS FRESH ON PURPOSE. The arithmetic layer is exhaustive over all 3^7 scorecards, so
+    deterministic coverage is already guaranteed and does not need a fixed seed; the random layer's
+    job is to keep exploring messy authored input (capitalised, padded, blank, unknown), and it
+    only does that if each run draws a different sample. A failure prints its seed, so
+    `--seed N` reproduces it exactly.
+    """
+    import random as _r
+    import subprocess as _sp
+    grader = None
+    for cand in (os.environ.get("CANSLIM_GRADER") or "",
+                 os.path.join(os.path.dirname(ROOT), "can-slim-grader"),
+                 "/home/user/thewongdirection/can-slim-grader",
+                 "/home/user/can-slim-grader"):
+        if cand and os.path.exists(os.path.join(cand, "assets", "evaluation_template.html")):
+            grader = cand
+            break
+    if not grader:
+        return ("skipped - no can-slim-grader checkout to compare against. This suite takes no "
+                "network, so clone it once and the check runs from then on: "
+                "git clone --depth 1 https://github.com/thewongdirection/can-slim-grader "
+                "(or set CANSLIM_GRADER). REQUIRED before shipping any change to the rubric, the "
+                "scoring arithmetic or a shared file.")
+    script = os.path.join(ROOT, "scripts", "check_parity.py")
+    if not os.path.exists(script):
+        return "skipped: no check_parity.py in this copy (a portable bundle)"
+    seed = _r.randrange(1 << 30)
+    r = _sp.run([sys.executable, script, "--grader", grader, "--tickers", "100",
+                 "--seed", str(seed), "--json"],
+                stdout=_sp.PIPE, stderr=_sp.PIPE, timeout=300)
+    if r.returncode == 2:
+        return "skipped - check_parity.py could not find the sister: " + r.stderr.decode()[:200]
+    report = json.loads(r.stdout.decode("utf-8"))
+    bad = [l for l in report["layers"] if l["ok"] is False]
+    assert not bad, ("the two skills disagree (seed %d - rerun with --seed %d to reproduce):\n%s"
+                     % (seed, seed, json.dumps(bad, indent=1)[:1800]))
+    # A layer that SKIPPED is not a pass. node drives the two templates' real scoring code, so
+    # without it the only thing actually compared is the file hashes.
+    skipped = [l["name"] for l in report["layers"] if l["ok"] is None]
+    if skipped:
+        return "skipped - parity layers could not run: " + ", ".join(skipped)
+
+
+def check_the_upgrade_path_requires_the_parity_check(tmp):
+    """A check nobody is told to run is a check that stops running. The instructions must name
+    scripts/check_parity.py as part of shipping a change, or this guard fails."""
+    hits = []
+    for rel in ("SKILL.md", "README.md", "references/tradingview-sector-sweep.md"):
+        p = os.path.join(ROOT, rel)
+        if os.path.exists(p):
+            if "check_parity.py" in io.open(p, encoding="utf-8").read():
+                hits.append(rel)
+    assert hits, ("no instruction file mentions scripts/check_parity.py, so nothing tells a "
+                  "future change to verify the sister skill still grades the same way")
+
+
 def _xbrl(rows, fy=2025, fp="FY"):
     """An XBRL companyconcept payload from (start, end, val, filed) tuples.
 
@@ -8002,16 +8470,37 @@ def check_annual_eps_does_not_require_the_fp_field():
 
 def check_A_grades_follow_the_three_year_rule():
     """pass needs EVERY step at >=25%; all-positive-but-short is partial; any down year fails."""
-    def g(vals, today="2026-03-01"):
+    def g(vals, today="2026-03-01", roe=31.0):
+        # A qualifying ROE by default, so this test isolates the EPS-growth leg; the ROE leg has
+        # its own test. Passing no ROE would cap every case at partial and hide the EPS rule.
         ends = ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]
         return aeps.grade(dict(zip(ends, vals)), aeps.DEFAULTS,
-                          today=_dt.date.fromisoformat(today))[0]
+                          today=_dt.date.fromisoformat(today), roe=roe)[0]
 
     assert g([1.0, 1.30, 1.70, 2.20]) == "pass"       # +30, +31, +29
     assert g([1.0, 1.30, 1.70, 1.90]) == "partial"    # last step +12: up, but under 25
     assert g([1.0, 1.30, 1.20, 2.00]) == "fail"       # a down year
     # AVT: the case that made TTM growth the wrong test - +46% TTM, but FY2025 fell 49%.
     assert g([8.26, 5.43, 2.75, 4.01]) == "fail"
+
+
+def check_A_needs_both_legs_eps_growth_and_roe():
+    """The rubric is "EPS up each of 3 years at >=25% AND ROE >=17%". Grading the EPS leg alone
+    is an over-grade, and it is one can-slim-grader does not make - working a single ticker it
+    checks both - so the same name scored A=pass here and A=partial there.
+
+    DELL is the live case: EPS up 42/39/36% on the filings, but negative book equity, so its ROE
+    is not a number and the pass is not earned. An unverifiable ROE caps A at partial; it never
+    fails the letter, because "we could not check" is not evidence against."""
+    ends = ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]
+    strong = dict(zip(ends, [1.0, 1.30, 1.70, 2.20]))      # +30, +31, +29 - the EPS leg clears
+    day = _dt.date.fromisoformat("2026-03-01")
+
+    assert aeps.grade(strong, aeps.DEFAULTS, today=day, roe=31.0)[0] == "pass"
+    for roe in (None, 0.0, 16.9):
+        g, why, _, _ = aeps.grade(strong, aeps.DEFAULTS, today=day, roe=roe)
+        assert g == "partial", (roe, g, why)
+        assert "ROE" in why, why
 
 
 def check_A_never_fails_on_an_absence_of_evidence():

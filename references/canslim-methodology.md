@@ -86,7 +86,7 @@ Two ideas underpin everything:
 - **Relative Strength (RS):** buy stocks whose 12-month price performance beats **≥ 80%**
   (ideally 90%+) of the market. Big winners averaged an **RS ~87** before their major run.
   **Do not buy RS below ~70.** (This skill computes an RS *proxy* from price history — see
-  ibkr-data-guide.md — since a true full-market 1–99 RS rating needs the whole market.)
+  each skill's data guide — since a true full-market 1–99 RS rating needs the whole market.)
 - **Avoid "sympathy plays"** — the cheaper laggard in the same group that never performs
   like the leader. "The first man gets the oyster; the second, the shell."
 - **Never buy on the way down** because it "looks cheap" (Cisco $82→$8, Crocs $75→$1, BofA
@@ -277,75 +277,43 @@ A candidate should satisfy as many as possible:
 22. Watch for buybacks (5–10%+) and new management.
 23. Don't buy at the bottom / on the way down / average down.
 
-## The pass / partial / fail grading rubric (how to score each letter)
-Grade every letter **pass (1.0) / partial (0.5) / fail (0)**. Seven letters, so a scorecard totals
-out of **7**. Both `can-slim-recommend` and `can-slim-grader` use this one scale, which is what
-makes a score portable between a screen and a single-ticker report.
+## Scoring: pass / partial / fail, total out of 7
+Grade each letter **pass / partial / fail** against the thresholds above, and total them at
+**one point per letter — pass 1, partial 0.5, fail 0 — across C-A-N-S-L-I-M, maximum 7.00.**
+Both skills in this pair score on that scale, so a screened idea and a graded ticker mean the
+same thing; the dashboards compute the total themselves. Never rescale it.
 
-**A grade follows mechanically from the threshold and the actual printed beside it.** If the
-evidence concedes a miss ("just under the 25% mark", "hasn't cleared the high"), the letter cannot
-be pass — call it partial. Where a threshold says **each** ("EPS up each of the last 3 yrs at
->=25%"), every period must clear it: one strong year among three below-bar years is a PARTIAL.
-Magnitude of a beat, backlog, guidance or a big volume day are colour for the write-up, never
-grounds to promote a letter.
+The grade for a letter follows mechanically from its threshold and the actual figure printed
+beside it: if the evidence concedes the bar was missed, the letter is not a pass, however
+impressive the story. Where a threshold says **each** ("EPS up each of the last 3 yrs at >=25%"),
+every period must clear it.
 
-- **C — current quarterly EPS & sales:** PASS = EPS and sales both up >=25% vs the year-ago
-  quarter, accelerating rather than decelerating. PARTIAL = one of the two clears the bar, or both
-  are up but short of 25%, or growth is decelerating. FAIL = flat, negative, or a loss. Downgrade
-  if sales lag EPS (buyback-driven) or margins are falling.
-- **A — annual earnings & ROE:** PASS = EPS up **each** of the last 3 years at >=25% **and** ROE
-  >=17%. PARTIAL = a broadly rising multi-year record that misses one leg (a year below the bar,
-  or ROE under 17%). FAIL = declining EPS, no annual profit, or an ROE far below the bar. A newly
-  public company without three years of record cannot exceed PARTIAL on A.
-- **N — new + new high off a base:** PASS = a genuine new driver **and** a sound base with the
-  stock at a proper pivot, no more than ~5% extended past it. PARTIAL = at or near new-high ground
-  but with no valid pivot to buy (base incomplete, or already extended beyond it). FAIL = no new
-  driver, more than ~10% below the 52-week high (a lower high is not a pivot), or a wide-and-loose
-  / late-stage base. Extension far above the 50-day (roughly >25%) after a climax run is a FAIL,
-  not a partial — there is no entry there.
-- **S — supply & demand:** PASS = breakout volume >=40-50% above the 50-day average, manageable
-  float, buybacks, low debt. PARTIAL = institutional-grade liquidity and a constructive trend but
-  no demand surge. FAIL = heavy distribution, dilution, illiquidity, or below the 200-day.
-- **L — leader not laggard:** PASS = clearly outperforming the benchmark over the window **and**
-  the #1 or #2 name in a strong group. PARTIAL = outperforming but mid-pack within its own group,
-  or leading a group that itself lags. FAIL = in line with or behind the benchmark.
-- **I — institutional sponsorship:** PASS = ownership **rising** over recent quarters with
-  quality funds adding, and not so over-owned that new sponsorship is impossible. PARTIAL =
-  adequate ownership whose trend you could not verify, or flat sponsorship. FAIL = thin, neglected,
-  or funds distributing. Verify the trend before awarding a pass — a high ownership *level* alone
-  is a PARTIAL.
-- **M — market direction (scored ONCE for the whole market, applied to every row via
-  `CONFIG.market.mGrade`):** PASS = confirmed uptrend, few distribution days, broad leadership.
-  PARTIAL = uptrend under pressure — distribution days building (4-5+), leadership narrowing, an
-  index slipping below its 50-day. FAIL = confirmed correction or downtrend. M is scored once
-  because market direction is a single market-wide gate: it moves every total together, so a weak
-  tape correctly makes any cut harder to clear. Never loosen the cut to compensate.
+**C, A and L weigh more in the verdict, not in the arithmetic.** They were the most predictive
+traits, so they gate the label rather than the number: a buy-range call needs C, A and L passing
+with a valid N, and no total earns it without them. Rough read of the total: **6.0-7.0** = leader in
+a strong tape; **4.5-5.5** = qualifies, buyable when N gives a pivot; **3.5-4.0** = watch (needs the
+market or a letter to improve); **under 3.5** = pass on it. The bands are a summary, never the
+decision — the C/A/L + N gate above decides the label.
 
-Rough total read: **6.0-7.0** = table-pounding leader in a strong tape; **4.5-5.5** = qualifies,
-buyable when N gives a pivot; **3.5-4.0** = watch (needs the market or a letter to improve);
-**< 3.5** = pass on it.
+**Rungs that are easy to grade too kindly**, and hold in both skills:
 
-## Modern refinements & professional practice (beyond the 1988 book)
-CAN SLIM's core is durable, but apply it with current, professionally-informed judgment — and
-refresh the specifics with web research each run rather than from memory:
-- **Why it works (factor evidence):** the edge is the *momentum* factor (Jegadeesh-Titman;
-  6-12 mo cross-sectional relative strength) combined with *quality* (profitability/ROE — Fama-
-  French RMW, AQR "quality-minus-junk"). A genuine leader is a momentum+quality name, not a
-  low-quality junk rip — down-weight L/S when the strength is purely speculative.
-- **Market structure O'Neil didn't have:** passive/ETF flows, index add/deletes and quarterly
-  rebalances, and dealer options positioning (gamma, 0DTE, max-pain) can extend or reverse moves
-  fast; mega-cap concentration means the index (M) can mask narrow leadership — check breadth
-  (advance/decline, % of stocks above their 50-day), not just the index level.
-- **Macro & event overlay:** Fed path, CPI/jobs prints, earnings-season dispersion, and
-  commodity/geopolitical shocks reprice whole sectors intraday — reflect them in the M score and
-  in stop width.
-- **Volatility regime & sizing:** in high-VIX / under-pressure tapes, cut size, tighten stops
-  toward 3-5%, demand cleaner bases, and require a follow-through day before buying breakouts.
-- **Valuation-sanity overlay (the value-investor lens):** CAN SLIM ignores P/E on purpose, but a
-  professional still flags a leader discounting implausible growth (extreme EV/Sales or P/E vs. its
-  own history and peers) as elevated risk — never *reject* on valuation alone, but note it.
-- **Data hygiene:** prefer as-reported / GAAP-reconciled figures; treat heavily-adjusted non-GAAP,
-  one-time gains, and buyback-inflated EPS skeptically (that is the C/A quality check).
+- **N.** A pivot needs a sound base *and* new-high ground. More than ~10% below the 52-week high
+  there is no pivot, so N cannot pass; **more than ~20% below, N fails** — that is a broken chart,
+  not a base under repair. A wide-and-loose or late-stage base fails on its own. A PASS also
+  requires the stock to be no more than **~5% extended past** the pivot, and extension far above the
+  50-day (roughly **>25%**) after a climax run is a **FAIL**, not a partial: there is no entry there.
+- **A.** A company without three years of record — newly public, or freshly restructured — **cannot
+  exceed PARTIAL on A**, however good the two years it has.
+- **S.** A stock **below its 200-day** fails S. A PASS wants breakout volume **>=40-50% above the
+  50-day average**, not merely healthy liquidity.
+- **L.** PASS needs clear outperformance **and** the #1 or #2 name in a strong group. Outperforming
+  but mid-pack, or leading a group that itself lags, is PARTIAL. **In line with the benchmark is a
+  FAIL** — matching the index is not leadership.
+- **I.** A high ownership *level* alone is a **PARTIAL**. A PASS needs the trend verified as
+  **rising**, with quality funds adding and room left to add. Funds distributing is a FAIL.
+- **M.** **4-5 or more distribution days** in a ~25-session window, narrowing leadership, or an
+  index slipping under its 50-day is PARTIAL (uptrend under pressure); a confirmed correction is a
+  FAIL. Never loosen a cut to compensate for a weak tape.
 
-Keep every pick's written reason in CAN SLIM terms; use these refinements to grade more accurately
-and to frame risk, not to smuggle in off-method rationale.
+Per-skill scoring detail (what counts as partial for each letter, and the verdict definitions)
+lives in each skill's own data guide, not here.

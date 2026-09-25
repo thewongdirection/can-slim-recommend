@@ -661,6 +661,74 @@ def check_gzip_is_undone_before_parsing():
     assert ic.maybe_gunzip(raw) == raw          # not compressed: passed through untouched
 
 
+def check_parity_with_the_sister_skill(tmp):
+    """Run scripts/check_parity.py against a can-slim-grader checkout - 100 RANDOM tickers plus
+    the exhaustive arithmetic sweep - and fail if the two skills would grade the same evidence
+    differently.
+
+    WHY THIS EXISTS AS A TEST AND NOT A CHORE. The pair's whole premise is that a screened idea
+    and a graded ticker are comparable, so "4.5/7" has to mean one thing. The sister ships its own
+    check_parity.py and its docstring is candid that it cannot do this: it hashes two files in its
+    own tree and "cannot see a material change that lives somewhere other than a shared file - a
+    threshold reworded in SKILL.md ... a changed pivot definition. Those are the common case."
+    Byte tripwires do not notice that one skill started failing N at 10% below the high while the
+    other still graded it partial.
+
+    THE SEED IS FRESH ON PURPOSE. The arithmetic layer is exhaustive over all 3^7 scorecards, so
+    deterministic coverage is already guaranteed and does not need a fixed seed; the random layer's
+    job is to keep exploring messy authored input (capitalised, padded, blank, unknown), and it
+    only does that if each run draws a different sample. A failure prints its seed, so
+    `--seed N` reproduces it exactly.
+    """
+    import random as _r
+    import subprocess as _sp
+    grader = None
+    for cand in (os.environ.get("CANSLIM_GRADER") or "",
+                 os.path.join(os.path.dirname(ROOT), "can-slim-grader"),
+                 "/home/user/thewongdirection/can-slim-grader",
+                 "/home/user/can-slim-grader"):
+        if cand and os.path.exists(os.path.join(cand, "assets", "evaluation_template.html")):
+            grader = cand
+            break
+    if not grader:
+        return ("skipped - no can-slim-grader checkout to compare against. This suite takes no "
+                "network, so clone it once and the check runs from then on: "
+                "git clone --depth 1 https://github.com/thewongdirection/can-slim-grader "
+                "(or set CANSLIM_GRADER). REQUIRED before shipping any change to the rubric, the "
+                "scoring arithmetic or a shared file.")
+    script = os.path.join(ROOT, "scripts", "check_parity.py")
+    if not os.path.exists(script):
+        return "skipped: no check_parity.py in this copy (a portable bundle)"
+    seed = _r.randrange(1 << 30)
+    r = _sp.run([sys.executable, script, "--grader", grader, "--tickers", "100",
+                 "--seed", str(seed), "--json"],
+                stdout=_sp.PIPE, stderr=_sp.PIPE, timeout=300)
+    if r.returncode == 2:
+        return "skipped - check_parity.py could not find the sister: " + r.stderr.decode()[:200]
+    report = json.loads(r.stdout.decode("utf-8"))
+    bad = [l for l in report["layers"] if l["ok"] is False]
+    assert not bad, ("the two skills disagree (seed %d - rerun with --seed %d to reproduce):\n%s"
+                     % (seed, seed, json.dumps(bad, indent=1)[:1800]))
+    # A layer that SKIPPED is not a pass. node drives the two templates' real scoring code, so
+    # without it the only thing actually compared is the file hashes.
+    skipped = [l["name"] for l in report["layers"] if l["ok"] is None]
+    if skipped:
+        return "skipped - parity layers could not run: " + ", ".join(skipped)
+
+
+def check_the_upgrade_path_requires_the_parity_check(tmp):
+    """A check nobody is told to run is a check that stops running. The instructions must name
+    scripts/check_parity.py as part of shipping a change, or this guard fails."""
+    hits = []
+    for rel in ("SKILL.md", "README.md", "references/tradingview-sector-sweep.md"):
+        p = os.path.join(ROOT, rel)
+        if os.path.exists(p):
+            if "check_parity.py" in io.open(p, encoding="utf-8").read():
+                hits.append(rel)
+    assert hits, ("no instruction file mentions scripts/check_parity.py, so nothing tells a "
+                  "future change to verify the sister skill still grades the same way")
+
+
 def _xbrl(rows, fy=2025, fp="FY"):
     """An XBRL companyconcept payload from (start, end, val, filed) tuples.
 
@@ -718,16 +786,37 @@ def check_annual_eps_does_not_require_the_fp_field():
 
 def check_A_grades_follow_the_three_year_rule():
     """pass needs EVERY step at >=25%; all-positive-but-short is partial; any down year fails."""
-    def g(vals, today="2026-03-01"):
+    def g(vals, today="2026-03-01", roe=31.0):
+        # A qualifying ROE by default, so this test isolates the EPS-growth leg; the ROE leg has
+        # its own test. Passing no ROE would cap every case at partial and hide the EPS rule.
         ends = ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]
         return aeps.grade(dict(zip(ends, vals)), aeps.DEFAULTS,
-                          today=_dt.date.fromisoformat(today))[0]
+                          today=_dt.date.fromisoformat(today), roe=roe)[0]
 
     assert g([1.0, 1.30, 1.70, 2.20]) == "pass"       # +30, +31, +29
     assert g([1.0, 1.30, 1.70, 1.90]) == "partial"    # last step +12: up, but under 25
     assert g([1.0, 1.30, 1.20, 2.00]) == "fail"       # a down year
     # AVT: the case that made TTM growth the wrong test - +46% TTM, but FY2025 fell 49%.
     assert g([8.26, 5.43, 2.75, 4.01]) == "fail"
+
+
+def check_A_needs_both_legs_eps_growth_and_roe():
+    """The rubric is "EPS up each of 3 years at >=25% AND ROE >=17%". Grading the EPS leg alone
+    is an over-grade, and it is one can-slim-grader does not make - working a single ticker it
+    checks both - so the same name scored A=pass here and A=partial there.
+
+    DELL is the live case: EPS up 42/39/36% on the filings, but negative book equity, so its ROE
+    is not a number and the pass is not earned. An unverifiable ROE caps A at partial; it never
+    fails the letter, because "we could not check" is not evidence against."""
+    ends = ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]
+    strong = dict(zip(ends, [1.0, 1.30, 1.70, 2.20]))      # +30, +31, +29 - the EPS leg clears
+    day = _dt.date.fromisoformat("2026-03-01")
+
+    assert aeps.grade(strong, aeps.DEFAULTS, today=day, roe=31.0)[0] == "pass"
+    for roe in (None, 0.0, 16.9):
+        g, why, _, _ = aeps.grade(strong, aeps.DEFAULTS, today=day, roe=roe)
+        assert g == "partial", (roe, g, why)
+        assert "ROE" in why, why
 
 
 def check_A_never_fails_on_an_absence_of_evidence():

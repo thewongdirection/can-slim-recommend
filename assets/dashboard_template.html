@@ -669,8 +669,17 @@ const num = (s)=>{ if(s==null) return NaN; const m=String(s).replace(/,/g,'').ma
    4.5 there mean the same thing. */
 const WEIGHT = {pass:1, partial:0.5, fail:0};
 const LETTERS6 = ["C","A","N","S","L","I"];
-const isGrade = (v)=> WEIGHT.hasOwnProperty(String(v==null?"":v).trim().toLowerCase());
-const gradeOf = (v)=>{ const g=String(v==null?"":v).trim().toLowerCase(); return WEIGHT.hasOwnProperty(g)?g:"fail"; };
+/* EXACT match, deliberately - no trim, no lowercase. can-slim-grader scores a letter with
+   `W[x.score] || 0`, so "PASS" counts ZERO there and its audit says so ("it must be exactly
+   pass, partial or fail"). Normalising here instead made the SAME scorecard total 6 in this
+   skill and 5 in the sister - scripts/check_parity.py found 16 such disagreements in 100 random
+   scorecards - and a score that means two different things defeats the whole point of the pair
+   sharing one scale. Strict plus the audit below is the behaviour that matches: a non-canonical
+   spelling is refused loudly in both skills rather than quietly accepted in one.
+   (`sector_screen.py --known` still normalises, on purpose: that is a machine-written data feed
+   from institutional_cache/annual_eps, not an authored scorecard.) */
+const isGrade = (v)=> typeof v === "string" && WEIGHT.hasOwnProperty(v);
+const gradeOf = (v)=> isGrade(v) ? v : "fail";
 const mGrade = ()=> gradeOf((CONFIG.market||{}).mGrade);
 const scoreTotal = (p)=> LETTERS6.reduce((n,k)=> n+WEIGHT[gradeOf((p.scores||{})[k])], 0) + WEIGHT[mGrade()];
 const fmtScore = (v)=> (Math.round(v*2)/2).toFixed(1).replace(/\.0$/,"");

@@ -624,6 +624,16 @@ than doing a shallow web dig:
   Sponsorship runs the other way and is an aggregation across every filer — use
   `scripts/institutional_cache.py`.
 
+**Keeping the pair at parity.** `can-slim-grader` and this skill are one methodology pointed at
+two questions, so a screened idea and a graded ticker must mean the same thing: same scale, same
+letter thresholds, same arithmetic. Before shipping any change to the rubric, the scoring, a
+shared file (`references/canslim-methodology.md`, `scripts/relative_strength.py`) or the
+dashboard's scoring block, run `python scripts/check_parity.py` against a `can-slim-grader`
+checkout. It compares the shared bytes three ways, runs BOTH dashboards' real scoring code over
+every one of the 2187 possible scorecards plus 100 random tickers, and checks the shared
+methodology's N rung against what `sector_screen.py` actually implements. The sister's own
+parity script only hashes files in its own tree and says so; this is the half it cannot do.
+
 **If a companion skill you need is not installed**, do not silently fall back — tell the user it's
 missing and prompt them to install it from its GitHub repo, then continue with the best available
 source (the connector ladder in `tradingview-sector-sweep.md`, or web search):

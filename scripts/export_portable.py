@@ -44,6 +44,7 @@ FILES = [
     ("scripts/build_report.py",              "python", "The step-7 entry point: produces the PDF (default), the HTML, or both, and refuses to emit a report that is failing its own self-audit."),
     ("scripts/html_to_pdf.py",               "python", "The PDF engine chain behind it; reads page size and margin from the document's @page rule."),
     ("assets/dashboard_template.html",       "html", "The report template. Fill its CONFIG object and it renders itself, audits itself, and refuses to ship a self-contradicting report."),
+    ("scripts/check_parity.py",               "python", "Proves this skill and can-slim-grader still grade the same way: shared-file hashes attributed three ways, both dashboards' REAL scoring code run over all 2187 possible scorecards, 100 random tickers with messy authored input, and the shared methodology's N rung checked against what the ceiling implements. The sister's own parity script hashes files in its own tree and says outright that it cannot catch a reworded threshold - this is that gap."),
     ("tests/test_regression.py",             "python", "The regression suite - pure stdlib, no pytest, no network. Run it after porting or editing anything: the ceiling's soundness is the one property whose failure is invisible in the output, so it is pinned twice over."),
 ]
 

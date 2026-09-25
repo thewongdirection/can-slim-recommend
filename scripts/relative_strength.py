@@ -19,8 +19,11 @@ INPUT: a JSON file (or stdin) shaped like:
      ...
   ]
 }
-Each bar is [timestamp, open, high, low, close, volume]. `t` may be any monotonic value;
-only ordering is used. Missing `weekly` disables base metrics for that name.
+Each bar is [timestamp, open, high, low, close, volume] OR the dict form {t, o, h, l, c, v}
+that TradingView's `get_ohlcv` and Polygon/Massive `/v2/aggs` return - both are accepted and
+normalized on the way in, so provider output can be dropped straight into this file without
+being reshaped by hand. `t` may be any monotonic value; only ordering is used. Missing
+`weekly` disables base metrics for that name.
 
 OUTPUT: JSON to stdout — per-candidate metrics plus a candidate-set RS rank (1 = strongest).
 
@@ -34,6 +37,24 @@ import json
 import sys
 
 
+def as_row(bar):
+    """Normalize one bar to [t, o, h, l, c, v].
+
+    Providers disagree about the shape: IBKR and this file's own format use positional rows,
+    while TradingView's `get_ohlcv` and Polygon/Massive `/v2/aggs` return {t, o, h, l, c, v}
+    dicts. Accepting both here is what lets a run paste provider output in unedited - and
+    hand-retyping bars is exactly where a grade quietly acquires a typo.
+    """
+    if isinstance(bar, dict):
+        t = bar.get("t", bar.get("time", bar.get("date", bar.get("d"))))
+        return [t, bar.get("o"), bar.get("h"), bar.get("l"), bar.get("c"), bar.get("v", 0)]
+    return bar
+
+
+def normalize(bars):
+    return [as_row(b) for b in (bars or []) if b]
+
+
 def closes(bars):
     return [float(b[4]) for b in bars if b and b[4] is not None]
 
@@ -42,30 +63,20 @@ def volumes(bars):
     return [float(b[5]) for b in bars if b and b[5] is not None]
 
 
-def _le(t, asof):
-    """Is bar-timestamp `t` on/before the as-of cutoff? Numeric when both parse as numbers;
-    otherwise ISO-date-aware string compare - a bare YYYY-MM-DD cutoff matches by date prefix so
-    the whole as-of day is inclusive (e.g. '2023-01-31T20:00Z' <= '2023-01-31')."""
-    try:
-        return float(t) <= float(asof)
-    except (TypeError, ValueError):
-        ts, a = str(t), str(asof)
-        return (ts[:10] <= a) if len(a) <= 10 else (ts <= a)
+def ret_over(series, lookback, tol=0.9):
+    """Return fractional price change over the last `lookback` bars (e.g. ~63=3mo daily).
 
-
-def truncate_asof(bars, asof):
-    """Point-in-time: keep only bars dated on/before `asof` (same units as the bar timestamp).
-    `asof=None` (the default) keeps everything - i.e. the normal 'as of now' run."""
-    if asof is None:
-        return bars
-    return [b for b in bars if b and _le(b[0], asof)]
-
-
-def ret_over(series, lookback):
-    """Return fractional price change over the last `lookback` bars (e.g. ~63=3mo daily)."""
-    if len(series) <= lookback or series[-lookback - 1] == 0:
+    If the series is a little shorter than `lookback` (e.g. IBKR's ONE_YEAR returns ~251
+    daily bars but the 12-month window wants 252+1), clamp to the oldest available bar as
+    long as we still have >= `tol` of the requested window. Below that, return None rather
+    than pass off, say, 3 months of data as a 12-month return."""
+    n = len(series)
+    if n < 2:
         return None
-    return series[-1] / series[-lookback - 1] - 1.0
+    lb = lookback if n > lookback else n - 1
+    if lb < lookback * tol or series[-lb - 1] == 0:
+        return None
+    return series[-1] / series[-lb - 1] - 1.0
 
 
 def rs_proxy(cand_daily, bench_daily):
@@ -133,13 +144,11 @@ def breakout_volume(daily, avg_window=50):
 
 
 def analyze(data):
-    # Point-in-time cutoff (optional): compute every metric as of this date, ignoring later bars.
-    asof = data.get("asof")
-    bench = truncate_asof(data.get("benchmark", {}).get("daily", []), asof)
+    bench = normalize(data.get("benchmark", {}).get("daily", []))
     out = []
     for cand in data.get("candidates", []):
-        daily = truncate_asof(cand.get("daily", []), asof)
-        weekly = truncate_asof(cand.get("weekly", []), asof)
+        daily = normalize(cand.get("daily", []))
+        weekly = normalize(cand.get("weekly", []))
         rel, blend = rs_proxy(daily, bench) if bench and daily else ({}, None)
         out.append({
             "symbol": cand.get("symbol"),
@@ -157,27 +166,11 @@ def analyze(data):
 
 
 def main():
-    # Optional: --asof <cutoff> for a point-in-time (historical) run. The cutoff must be in the
-    # same units as the bar timestamps (epoch, or an ISO date/datetime); a bare YYYY-MM-DD is
-    # inclusive of that whole day. Overrides any "asof" key already in the input JSON.
-    args = sys.argv[1:]
-    asof = None
-    path = None
-    i = 0
-    while i < len(args):
-        if args[i] == "--asof" and i + 1 < len(args):
-            asof = args[i + 1]
-            i += 2
-        else:
-            path = args[i]
-            i += 1
-    if path:
-        with open(path, "r", encoding="utf-8") as f:
+    if len(sys.argv) > 1:
+        with open(sys.argv[1], "r", encoding="utf-8") as f:
             data = json.load(f)
     else:
         data = json.load(sys.stdin)
-    if asof is not None:
-        data["asof"] = asof
     json.dump(analyze(data), sys.stdout, indent=2)
     sys.stdout.write("\n")
 

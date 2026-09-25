@@ -168,6 +168,53 @@ what was dropped and why, rather than reading the sweep as full coverage.
 
 ## Step 4 — Grade the survivors with `can-slim-grader`
 
+### This skill's per-letter scoring detail
+`references/canslim-methodology.md` is shared VERBATIM with `can-slim-grader` and carries the
+scale plus the rungs that are easy to grade too kindly; it deliberately leaves per-letter detail
+to each skill's own data guide, which is here. Read the two together, and never restate a
+threshold in a way that contradicts the shared file - `scripts/check_parity.py` compares the
+rungs against what the code actually implements, precisely because a reworded threshold is the
+drift that silently changes a grade.
+
+- **C — current quarterly EPS & sales:** PASS = EPS and sales both up >=25% vs the year-ago
+  quarter, accelerating rather than decelerating. PARTIAL = one of the two clears the bar, or both
+  are up but short of 25%, or growth is decelerating. FAIL = flat, negative, or a loss. Downgrade
+  if sales lag EPS (buyback-driven) or margins are falling.
+- **A — annual earnings & ROE:** PASS = EPS up **each** of the last 3 years at >=25% **and** ROE
+  >=17%. PARTIAL = a broadly rising multi-year record that misses one leg (a year below the bar,
+  or ROE under 17%). FAIL = declining EPS, no annual profit, or an ROE far below the bar. A newly
+  public company without three years of record cannot exceed PARTIAL on A.
+- **N — new + new high off a base:** PASS = a genuine new driver **and** a sound base with the
+  stock at a proper pivot, no more than ~5% extended past it. PARTIAL = at or near new-high ground
+  but with no valid pivot to buy (base incomplete, or already extended beyond it). FAIL = no new
+  driver, more than ~10% below the 52-week high (a lower high is not a pivot), or a wide-and-loose
+  / late-stage base. Extension far above the 50-day (roughly >25%) after a climax run is a FAIL,
+  not a partial — there is no entry there.
+- **S — supply & demand:** PASS = breakout volume >=40-50% above the 50-day average, manageable
+  float, buybacks, low debt. PARTIAL = institutional-grade liquidity and a constructive trend but
+  no demand surge. FAIL = heavy distribution, dilution, illiquidity, or below the 200-day.
+- **L — leader not laggard:** PASS = clearly outperforming the benchmark over the window **and**
+  the #1 or #2 name in a strong group. PARTIAL = outperforming but mid-pack within its own group,
+  or leading a group that itself lags. FAIL = in line with or behind the benchmark.
+- **I — institutional sponsorship:** PASS = ownership **rising** over recent quarters with
+  quality funds adding, and not so over-owned that new sponsorship is impossible. PARTIAL =
+  adequate ownership whose trend you could not verify, or flat sponsorship. FAIL = thin, neglected,
+  or funds distributing. Verify the trend before awarding a pass — a high ownership *level* alone
+  is a PARTIAL.
+- **M — market direction (scored ONCE for the whole market, applied to every row via
+  `CONFIG.market.mGrade`):** PASS = confirmed uptrend, few distribution days, broad leadership.
+  PARTIAL = uptrend under pressure — distribution days building (4-5+), leadership narrowing, an
+  index slipping below its 50-day. FAIL = confirmed correction or downtrend. M is scored once
+  because market direction is a single market-wide gate: it moves every total together, so a weak
+  tape correctly makes any cut harder to clear. Never loosen the cut to compensate.
+
+**On the N band specifically**, because an earlier copy of this guide got it wrong: within ~10%
+of the 52-week high N is still open; **10-20% below, N cannot pass and is at best PARTIAL**;
+**more than ~20% below, N FAILS**. `sector_screen.py`'s `pivot_band` (10.0) and its `-2 * band`
+fail cap implement exactly that, and a copy that lists ">10% below" under FAIL grades a name 15%
+off its high half a point below what `can-slim-grader` would give it.
+
+
 Every name that clears triage gets the **sister skill's** grade, so a 4.5 in this report means
 exactly what a 4.5 means in a single-ticker report. If `can-slim-grader` is installed, invoke it
 per ticker. If it is not, tell the user (install from

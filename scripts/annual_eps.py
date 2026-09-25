@@ -87,6 +87,7 @@ CONCEPTS = (("us-gaap", "EarningsPerShareDiluted"),
 
 DEFAULTS = {
     "growth": 25.0,      # the rubric's threshold: EPS up at least this much, EACH year
+    "roe": 17.0,         # ... AND return on equity at least this. BOTH legs, or it is not a pass
     "years": 3,          # ... across this many year-on-year steps (so 4 annual figures)
     "min_days": 330,     # a fiscal year's duration, wide enough for 52/53-week calendars
     "max_days": 400,
@@ -233,11 +234,18 @@ def consecutive(ends, cfg):
     return keep
 
 
-def grade(eps_by_end, cfg, today=None):
+def grade(eps_by_end, cfg, today=None, roe=None):
     """(grade, reason, series, steps) for one name. See the module docstring on what is safe.
 
     `partial` means "the filings cannot answer this", `fail` means "they answer it, and it is a
     no". Only the second is evidence, and only the second should ever prune a name.
+
+    A HAS TWO LEGS. The rubric is "EPS up each of 3 years at >=25% AND ROE >=17%", and grading the
+    EPS leg alone is an over-grade: can-slim-grader, working one ticker at a time, checks both, so
+    the same name came out A=pass here and A=partial there. `roe` is the percentage; None means it
+    could not be verified, which caps the letter at partial rather than awarding a pass on half
+    the test. DELL is the live example - EPS up 42/39/36% but negative book equity, so its ROE is
+    not a number and the pass is not earned.
     """
     today = today or dt.date.today()
     need = cfg["years"] + 1
@@ -269,8 +277,16 @@ def grade(eps_by_end, cfg, today=None):
 
     shown = ", ".join("%.0f%%" % s for s in steps)
     if all(s >= cfg["growth"] for s in steps):
-        return ("pass", "EPS up %s over %d years, each >=%.0f%%"
-                % (shown, cfg["years"], cfg["growth"]), series, steps)
+        if roe is None:
+            return ("partial", "EPS up %s over %d years, each >=%.0f%% - but ROE could not be "
+                    "verified, and A needs both legs" % (shown, cfg["years"], cfg["growth"]),
+                    series, steps)
+        if roe < cfg["roe"]:
+            return ("partial", "EPS up %s over %d years, each >=%.0f%%, but ROE %.1f%% is under "
+                    "%.0f%%" % (shown, cfg["years"], cfg["growth"], roe, cfg["roe"]),
+                    series, steps)
+        return ("pass", "EPS up %s over %d years, each >=%.0f%%, with ROE %.1f%%"
+                % (shown, cfg["years"], cfg["growth"], roe), series, steps)
     if all(s > 0 for s in steps):
         return ("partial", "EPS up each year (%s) but not every year >=%.0f%%"
                 % (shown, cfg["growth"]), series, steps)
@@ -296,7 +312,8 @@ def symbols_from(blob):
     return []
 
 
-def run(symbols, cache_dir, contact, cfg):
+def run(symbols, cache_dir, contact, cfg, roes=None):
+    roes = roes or {}
     tmap = load_tickers(cache_dir, contact)
     known, detail, ungraded = {}, {}, []
     for sym in symbols:
@@ -314,11 +331,12 @@ def run(symbols, cache_dir, contact, cfg):
             detail[sym] = {"grade": "partial", "cik": cik, "series": [], "steps": [],
                            "reason": "A: not graded - " + why, "source": "sec-xbrl"}
             continue
-        g, why, series, steps = grade(eps, cfg)
+        roe = roes.get(sym, roes.get(tick))
+        g, why, series, steps = grade(eps, cfg, roe=roe)
         known[sym] = {"A": g}
         detail[sym] = {"grade": g, "cik": cik, "series": series,
                        "steps": [None if s is None else round(s, 1) for s in steps],
-                       "reason": "A: " + why, "source": "sec-xbrl"}
+                       "roe": roe, "reason": "A: " + why, "source": "sec-xbrl"}
     return {
         "meta": {
             "source": "sec-xbrl",
@@ -349,6 +367,10 @@ def main():
                     help="each year must beat this %% (default %(default)s)")
     ap.add_argument("--years", type=int, default=DEFAULTS["years"],
                     help="year-on-year steps to require (default %(default)s)")
+    ap.add_argument("--roe", metavar="FILE",
+                    help='{"NASDAQ:AAPL": 147.2} return-on-equity percentages. A needs BOTH legs, '
+                         'so without this every A caps at partial rather than passing on the EPS '
+                         'leg alone. TradingView get_financials returns_on_equity is the source.')
     ap.add_argument("--stale-days", type=int, default=DEFAULTS["stale_days"],
                     help="a series older than this cannot answer the test (default %(default)s)")
     ap.add_argument("-o", "--out", metavar="FILE", help="write here (default: stdout)")
@@ -369,7 +391,8 @@ def main():
         return 2
 
     cfg = dict(DEFAULTS, growth=a.growth, years=a.years, stale_days=a.stale_days)
-    res = run(symbols, a.cache_dir, contact, cfg)
+    roes = json.load(io.open(a.roe, encoding="utf-8")) if a.roe else {}
+    res = run(symbols, a.cache_dir, contact, cfg, roes)
     text = json.dumps(res["known"] if a.known_only else res, indent=2)
     if a.out:
         os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
