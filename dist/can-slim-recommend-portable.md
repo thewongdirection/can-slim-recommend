@@ -1011,8 +1011,9 @@ critical ideas:
     out to **new highs from a sound price base** — the key entry trigger.
   - **S — Supply & demand** — a big volume surge on the breakout, a manageable share float,
     buybacks, low debt.
-  - **L — Leader, not laggard** — high relative price strength; the #1 or #2 name in a strong
-    industry group, not the cheap also-ran.
+  - **L — Leader, not laggard** — high relative price strength and a top-half rank in a strong
+    industry group, not the cheap also-ran. (O'Neil's ideal is the #1 or #2 name; the bar this
+    skill actually grades to is the top half — see `references/canslim-methodology.md`.)
   - **I — Institutional sponsorship** — increasing ownership by high-quality funds.
   - **M — Market direction** — the general market must be in a confirmed uptrend.
 - **"M" gates everything.** Roughly three of four stocks follow the general market, so the
@@ -1494,8 +1495,11 @@ decision — the C/A/L + N gate above decides the label.
 - **N.** A pivot needs a sound base *and* new-high ground. More than ~10% below the 52-week high
   there is no pivot, so N cannot pass; **more than ~20% below, N fails** — that is a broken chart,
   not a base under repair. A wide-and-loose or late-stage base fails on its own. A PASS also
-  requires the stock to be no more than **~5% extended past** the pivot, and extension far above the
-  50-day (roughly **>25%**) after a climax run is a **FAIL**, not a partial: there is no entry there.
+  requires the stock to be no more than **~5% extended past** the pivot. Extension far above the
+  50-day (roughly **>25%**) after a climax run puts the stock past any pivot, so **N cannot pass** —
+  but it is a **flag, not a FAIL**: N's fail rung is distance below the 52-week high, and a name
+  running away from a sound base is a PARTIAL with no entry price. Both skills execute it that way
+  (`rubric.extended()` is context for the grader; it never sets a letter on its own).
 - **A.** A company without three years of record — newly public, or freshly restructured — **cannot
   exceed PARTIAL on A**, however good the two years it has.
 - **S.** A stock **below its 200-day** fails S. A PASS wants breakout volume **>=40-50% above the
@@ -1504,9 +1508,11 @@ decision — the C/A/L + N gate above decides the label.
   so S fails whatever the volume pattern looks like. A screener DROPS such a name because it is
   choosing among thousands; a single-ticker grade cannot drop the name it was asked about, so it
   grades it with S failed and says why. Same judgement, different place to put it.
-- **L.** PASS needs clear outperformance **and** the #1 or #2 name in a strong group. Outperforming
-  but mid-pack, or leading a group that itself lags, is PARTIAL. **In line with the benchmark is a
-  FAIL** — matching the index is not leadership.
+- **L.** PASS needs clear outperformance **and** a rank in the **top half of its group**. Ranking
+  in the bottom half, or leading a group that itself lags, is PARTIAL. O'Neil's *buy the #1 or #2
+  name* is the ideal to aim at, not the pass bar: `rubric.cap_l` caps at PARTIAL only once the rank
+  passes half the group, and grading to a #1-2 bar would cost half a point on most names both
+  skills pass. **In line with the benchmark is a FAIL** — matching the index is not leadership.
 - **I.** A high ownership *level* alone is a **PARTIAL**. A PASS needs the trend verified as
   **rising**, with quality funds adding and room left to add. Funds distributing is a FAIL.
 - **M.** **4-5 or more distribution days** in a ~25-session window, narrowing leadership, or an
@@ -1746,14 +1752,20 @@ drift that silently changes a grade.
   stock at a proper pivot, no more than ~5% extended past it. PARTIAL = at or near new-high ground
   but with no valid pivot to buy (base incomplete, or already extended beyond it). FAIL = no new
   driver, more than ~10% below the 52-week high (a lower high is not a pivot), or a wide-and-loose
-  / late-stage base. Extension far above the 50-day (roughly >25%) after a climax run is a FAIL,
-  not a partial — there is no entry there.
+  / late-stage base. Extension far above the 50-day (roughly >25%) after a climax run puts the
+  stock past any pivot, so N cannot PASS — but it is a FLAG on the row, not a FAIL. N's fail rung
+  is distance below the 52-week high; a name running away from a sound base is a PARTIAL with no
+  entry price. `ceiling()` therefore caps N from the 52-week-high distance alone, and
+  `score_row()` carries "more than 25% above the 50-day EMA" in `flags`, never in `drop_reasons`.
 - **S — supply & demand:** PASS = breakout volume >=40-50% above the 50-day average, manageable
   float, buybacks, low debt. PARTIAL = institutional-grade liquidity and a constructive trend but
   no demand surge. FAIL = heavy distribution, dilution, illiquidity, or below the 200-day.
 - **L — leader not laggard:** PASS = clearly outperforming the benchmark over the window **and**
-  the #1 or #2 name in a strong group. PARTIAL = outperforming but mid-pack within its own group,
-  or leading a group that itself lags. FAIL = in line with or behind the benchmark.
+  ranked in the **top half of its group**. PARTIAL = ranked in the bottom half, or leading a group
+  that itself lags. FAIL = in line with or behind the benchmark. O'Neil's *buy the #1 or #2 name*
+  is the ideal, not the pass bar: `ceiling()` and `rubric.cap_l` both cap at PARTIAL only once the
+  sector rank passes half the group, so grading L to a #1-2 bar would under-score almost every
+  name this skill reports.
 - **I — institutional sponsorship:** PASS = ownership **rising** over recent quarters with
   quality funds adding, and not so over-owned that new sponsorship is impossible. PARTIAL =
   adequate ownership whose trend you could not verify, or flat sponsorship. FAIL = thin, neglected,
@@ -7538,7 +7550,7 @@ const DEFAULT_GLOSSARY = [
   {term:"A", def:"Annual earnings - multi-year EPS growth with a high return on equity."},
   {term:"N", def:"New - a new product / management / industry condition AND a breakout to new highs from a sound base."},
   {term:"S", def:"Supply & demand - a volume surge on the breakout, a manageable float, buybacks."},
-  {term:"L", def:"Leader, not laggard - high relative strength; the #1 or #2 name in a strong group."},
+  {term:"L", def:"Leader, not laggard - high relative strength and a top-half rank in its group. O'Neil's ideal is the #1 or #2 name; the graded pass bar is the top half."},
   {term:"I", def:"Institutional sponsorship - increasing ownership by high-quality funds."},
   {term:"M", def:"Market direction - the general market must be in a confirmed uptrend (shown in the banner at the top)."},
   {term:"P / ~ / X", def:"Letter grades - pass (1.0), partial (0.5), fail (0). Seven letters, so a scorecard totals out of 7."},
@@ -7630,6 +7642,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Two CLASSES of shared file, and conflating them is a trap this checker fell into itself.
@@ -7675,6 +7688,22 @@ def sha256(path):
 
 
 # --------------------------------------------------------------------------- layer 1: bytes
+def load_from_source(path, name):
+    """Compile a module from its SOURCE TEXT, never through the import system.
+
+    __pycache__ can and does lie here. Restoring a file with `cp` rewrites the bytes but can leave
+    a .pyc that Python still considers valid, so an ordinary import runs the PREVIOUS edit: this
+    checker spent a while reporting a maths divergence between two byte-identical functions because
+    our copy was running a stale tol=0.5 while the file on disk said 0.9. A parity checker that can
+    be fooled by bytecode would also MISS real drift whenever the stale .pyc happened to agree.
+    """
+    src = io.open(path, encoding="utf-8").read()
+    mod = types.ModuleType(name)
+    mod.__file__ = path
+    exec(compile(src, path, "exec"), mod.__dict__)
+    return mod
+
+
 def check_shared_bytes(grader):
     """VERBATIM files must match byte for byte; SUBSTANCE files must match in substance.
 
@@ -7741,18 +7770,10 @@ def check_shared_substance(grader):
     # while reporting a maths divergence between two byte-identical functions because our copy was
     # running a stale tol=0.5 while the file on disk said 0.9. A parity checker that can be fooled
     # by bytecode would also MISS real drift whenever the stale .pyc happened to agree.
-    import types as _types
-
-    def load(path, name):
-        src = io.open(path, encoding="utf-8").read()
-        mod = _types.ModuleType(name)
-        mod.__file__ = path
-        exec(compile(src, path, "exec"), mod.__dict__)
-        return mod
-
     try:
-        ours = load(os.path.join(ROOT, "scripts", "relative_strength.py"), "rs_ours")
-        theirs = load(os.path.join(grader, "scripts", "relative_strength.py"), "rs_theirs")
+        ours = load_from_source(os.path.join(ROOT, "scripts", "relative_strength.py"), "rs_ours")
+        theirs = load_from_source(os.path.join(grader, "scripts", "relative_strength.py"),
+                                  "rs_theirs")
     except Exception as e:
         probs.append("could not import both relative_strength copies: %s" % e)
         return {"name": "shared substance (rungs verbatim, maths identical)",
@@ -7917,39 +7938,90 @@ def check_tickers(harness, n, seed):
 
 # ------------------------------------------------------------------------- layer 3: the rungs
 def check_rungs(grader):
-    """Parse the shared methodology's N rung and check our ceiling implements it.
+    """Parse the shared methodology's rungs and check our code actually implements them.
 
-    N is the rung most easily reworded into a different grade, and it is the one that actually
-    drifted: the canonical text says more than ~10% below the high means N CANNOT PASS and more
-    than ~20% below means N FAILS, which is a partial band in between. A copy that lists ">10%
-    below" under FAIL grades a name 15% off its high half a point lower than the sister does.
+    This is the layer that catches a PROSE-ONLY drift: a reworded threshold sails past a byte
+    check on a substance file (the copies legitimately differ) and past the 100-ticker layer
+    (both sides run the same code), yet it is exactly what silently changes a grade, because a
+    human reading the rung grades to the words and the screener grades to `rubric.py`.
+
+    Three rungs are pinned, each for a reason it earned:
+
+    N's band. The canonical text says more than ~10% below the high means N CANNOT PASS and more
+      than ~20% below means N FAILS, a partial band in between. A copy that lists ">10% below"
+      under FAIL grades a name 15% off its high half a point lower than the sister does.
+    N's extension case and L's pass bar. Both were prose/code splits, found by this checker and
+      resolved in favour of the code: extension >25% above the 50-day is a FLAG that denies a
+      PASS, never a FAIL (`cap_n` bounds N from the 52-week-high distance alone), and L's pass
+      bar is a TOP-HALF rank, not the #1-2 name (`cap_l` caps at partial only past half the
+      group). Both directions are asserted - the prose must state the code's rule AND must not
+      restate the old one - so restoring either wording fails here instead of quietly costing
+      half a point on every graded name.
+    A's two legs. "EPS up each of 3 years at >=25% AND ROE >=17%" - grading the EPS leg alone is
+      an over-grade the sister would not make, because it checks both on the one ticker it is
+      looking at. annual_eps.py must refuse to pass a name whose ROE it cannot verify.
     """
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import sector_screen as ss
 
     src = io.open(os.path.join(grader, "references", "canslim-methodology.md"),
                   encoding="utf-8").read()
-    rung = re.search(r"\*\*N\.\*\*(.+?)(?=\n- \*\*|\n\n)", src, re.S)
-    text = " ".join((rung.group(1) if rung else "").split())
-    says_partial_band = bool(re.search(r"10%.{0,80}cannot pass", text)) and \
-        bool(re.search(r"20%.{0,40}fails?", text))
+
+    def rung(letter):
+        m = re.search(r"\*\*%s\.\*\*(.+?)(?=\n- \*\*|\n\n)" % letter, src, re.S)
+        return " ".join((m.group(1) if m else "").split())
+
+    text, l_text = rung("N"), rung("L")
+    # Every prose assertion is a PAIR: what the canonical copy must now say, and the superseded
+    # wording it must no longer say. A one-sided check would pass on a rung that says both.
+    prose = {
+        "N_partial_band": bool(re.search(r"10%.{0,80}cannot pass", text)) and
+                          bool(re.search(r"20%.{0,40}fails?", text)),
+        "N_extension_is_a_flag": bool(re.search(r"50-day.{0,160}flag, not a FAIL", text)),
+        "N_extension_not_called_fail": not re.search(r"50-day[^.]{0,120}is a \*\*FAIL\*\*", text),
+        "L_pass_is_top_half": bool(re.search(r"PASS needs.{0,60}top half", l_text)),
+        "L_pass_is_not_number_one_or_two": not re.search(r"PASS needs[^.]{0,80}#1 or #2", l_text),
+    }
+    bad_prose = sorted(k for k, v in prose.items() if not v)
 
     cfg = dict(ss.DEFAULTS)
     band = cfg["pivot_band"]
 
-    def n_for(off_high):
-        row = {"symbol": "X:Y", "ticker": "Y", "off_high_pct": off_high, "rel_volume_10d": 1.2,
-               "sector_rank_overall": 1, "sector_count": 20}
-        ss.ceiling(row, cfg, {})
-        return row["ceiling_caps"]["N"] if "ceiling_caps" in row else None
+    def cap_for(letter, **row):
+        r = {"symbol": "X:Y", "ticker": "Y", "off_high_pct": -1.0, "rel_volume_10d": 1.2,
+             "sector_rank_overall": 1, "sector_count": 20}
+        r.update(row)
+        ss.ceiling(r, cfg, {})
+        return r["ceiling_caps"][letter] if "ceiling_caps" in r else None
 
     probes = [(-(band / 2.0), "pass"), (-(band + 5), "partial"), (-(2 * band + 5), "fail")]
-    got = [(off, want, n_for(off)) for off, want in probes]
+    got = [(off, want, cap_for("N", off_high_pct=off)) for off, want in probes]
     mism = [g for g in got if g[1] != g[2]]
 
-    # A has TWO legs - "EPS up each of 3 years at >=25% AND ROE >=17%" - and grading the EPS leg
-    # alone is an over-grade the sister would not make, because it checks both on the one ticker
-    # it is looking at. annual_eps.py must refuse to pass a name whose ROE it cannot verify.
+    # L: the rank leg against the screener's ceiling, the RS leg against the shared rubric. They
+    # are split because a laggard never reaches `ceiling()` - `score_row` DROPS it first - so the
+    # screener's ceiling has no RS branch to probe, while the grader, which cannot drop the one
+    # ticker it was asked about, reaches cap_l's fail directly.
+    rubric = load_from_source(os.path.join(ROOT, "scripts", "rubric.py"), "rubric_rungs")
+    l_probes = [(1, 20, "pass"), (10, 20, "pass"), (11, 20, "partial"), (20, 20, "partial")]
+    l_got = [(r, t, want, cap_for("L", sector_rank_overall=r, sector_count=t))
+             for r, t, want in l_probes]
+    l_got.append(("rs<=0", "-", "fail", rubric.cap_l(-1.0, 1, 20)[0]))
+    l_mism = [g for g in l_got if g[2] != g[3]]
+
+    # N's extension case: >25% above the 50-day must NOT move the letter. Same row twice, the
+    # second one far extended; the cap has to come out identical, and the run-up has to surface
+    # as a flag instead.
+    ext_row = {"symbol": "X:Y", "ticker": "Y", "close": 100.0, "price_52_week_high": 100.0,
+               "EMA50": 60.0, "EMA200": 50.0, "relative_volume_10d_calc": 1.2,
+               "average_volume_10d_calc": 1e6, "Perf.6M": 80.0}
+    scored = ss.score_row(dict(ext_row), "Perf.6M", 10.0, cfg)
+    ss.ceiling(scored, cfg, {})
+    ext_ok = (scored["ceiling_caps"]["N"] == "pass"
+              and rubric.extended(scored["vs_ema50_pct"])
+              and any("50-day" in f for f in scored["flags"])
+              and not any("50-day" in d for d in scored["drop_reasons"]))
+
     import annual_eps as ae
     import datetime as _dt
     ends = ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]
@@ -7961,11 +8033,15 @@ def check_rungs(grader):
                for r, want in roe_probes]
     roe_mism = [g for g in roe_got if g[1] != g[2]]
 
-    ok = (not mism) and says_partial_band and (not roe_mism)
-    return {"name": "rungs: methodology prose vs our code (N band, A's two legs)", "ok": ok,
-            "detail": {"canonical_has_partial_band": says_partial_band,
-                       "canonical_text": text[:240],
+    ok = not (mism or bad_prose or l_mism or roe_mism) and ext_ok
+    return {"name": "rungs: methodology prose vs our code (N band + extension, L's bar, A's legs)",
+            "ok": ok,
+            "detail": {"prose_assertions_failed": bad_prose,
+                       "canonical_N": text[:240], "canonical_L": l_text[:240],
                        "N_probes": [{"off_high": o, "expected": w, "ceiling": c} for o, w, c in got],
+                       "N_extension_leaves_the_letter_alone": ext_ok,
+                       "L_probes": [{"rank": r, "of": t, "expected": w, "got": c}
+                                    for r, t, w, c in l_got],
                        "A_roe_probes": [{"roe": r, "expected": w, "got": c} for r, w, c in roe_got]}}
 
 
@@ -9924,6 +10000,59 @@ def check_docs_have_no_dead_scale():
         s = io.open(os.path.join(ROOT, f), encoding="utf-8").read()
         for bad in ("/70", "out of 70"):
             assert bad not in s, "%s mentions %r" % (f, bad)
+
+
+def check_the_prose_grades_the_same_way_the_code_does():
+    """Two rungs once said one thing in prose and another in code, and prose is what a human
+    grader reads. Both were resolved in favour of the code, and both directions are pinned here
+    so restoring either wording fails a test instead of quietly moving a grade.
+
+      L. The prose demanded the #1 or #2 name in a strong group; `cap_l` caps at PARTIAL only
+         once the rank passes HALF the group. Grading to the prose costs half a point on nearly
+         every name this skill reports - #3 of 20 is a comfortable pass in code and a partial in
+         the old words.
+      N. The prose called extension >25% above the 50-day a FAIL; the code raises a flag and
+         leaves the letter to the 52-week-high distance. Grading to the prose fails N outright
+         on a name that is merely running ahead of a sound base, which is a PARTIAL with no
+         entry price, not a broken chart.
+
+    This runs without a can-slim-grader checkout, so it guards the rungs even when the
+    cross-repo parity layer is skipped. The methodology file is shared, so a green result here
+    is also a statement about the sister's copy.
+    """
+    md = io.open(os.path.join(ROOT, "references", "canslim-methodology.md"),
+                 encoding="utf-8").read()
+
+    def rung(letter):
+        m = re.search(r"\*\*%s\.\*\*(.+?)(?=\n- \*\*|\n\n)" % letter, md, re.S)
+        assert m, "no %s rung in the shared methodology - the extractor is stale" % letter
+        return " ".join(m.group(1).split())
+
+    n_text, l_text = rung("N"), rung("L")
+    assert re.search(r"PASS needs.{0,60}top half", l_text), \
+        "L's rung no longer states the top-half pass bar the code implements"
+    assert not re.search(r"PASS needs[^.]{0,80}#1 or #2", l_text), \
+        "L's rung is back to demanding the #1 or #2 name, which cap_l does not"
+    assert re.search(r"50-day.{0,160}flag, not a FAIL", n_text), \
+        "N's rung no longer says the 50-day extension is a flag rather than a FAIL"
+    assert not re.search(r"50-day[^.]{0,120}is a \*\*FAIL\*\*", n_text), \
+        "N's rung is back to calling the 50-day extension a FAIL, which cap_n never returns"
+
+    # ...and the code still behaves the way the prose now describes.
+    for rank, want in ((1, "pass"), (10, "pass"), (11, "partial"), (20, "partial")):
+        out = {"symbol": "X:Y", "off_high_pct": -1.0, "rel_volume_10d": 1.2,
+               "sector_rank_overall": rank, "sector_count": 20}
+        ss.ceiling(out, CFG, {})
+        assert out["ceiling_caps"]["L"] == want, (rank, out["ceiling_caps"]["L"])
+
+    ext = ss.score_row(row(close=100.0, price_52_week_high=100.0, EMA50=60.0, EMA200=50.0),
+                       "Perf.6M", 10.0, CFG)
+    ss.ceiling(ext, CFG, {})
+    assert ext["vs_ema50_pct"] > 25.0
+    assert ext["ceiling_caps"]["N"] == "pass", "extension must not move N's cap"
+    assert any("50-day" in f for f in ext["flags"]), "the run-up must still be reported"
+    assert not any("50-day" in d for d in ext["drop_reasons"]), \
+        "extension is context, never a disqualification"
 
 
 def check_every_script_compiles():

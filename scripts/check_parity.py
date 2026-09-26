@@ -47,6 +47,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Two CLASSES of shared file, and conflating them is a trap this checker fell into itself.
@@ -92,6 +93,22 @@ def sha256(path):
 
 
 # --------------------------------------------------------------------------- layer 1: bytes
+def load_from_source(path, name):
+    """Compile a module from its SOURCE TEXT, never through the import system.
+
+    __pycache__ can and does lie here. Restoring a file with `cp` rewrites the bytes but can leave
+    a .pyc that Python still considers valid, so an ordinary import runs the PREVIOUS edit: this
+    checker spent a while reporting a maths divergence between two byte-identical functions because
+    our copy was running a stale tol=0.5 while the file on disk said 0.9. A parity checker that can
+    be fooled by bytecode would also MISS real drift whenever the stale .pyc happened to agree.
+    """
+    src = io.open(path, encoding="utf-8").read()
+    mod = types.ModuleType(name)
+    mod.__file__ = path
+    exec(compile(src, path, "exec"), mod.__dict__)
+    return mod
+
+
 def check_shared_bytes(grader):
     """VERBATIM files must match byte for byte; SUBSTANCE files must match in substance.
 
@@ -158,18 +175,10 @@ def check_shared_substance(grader):
     # while reporting a maths divergence between two byte-identical functions because our copy was
     # running a stale tol=0.5 while the file on disk said 0.9. A parity checker that can be fooled
     # by bytecode would also MISS real drift whenever the stale .pyc happened to agree.
-    import types as _types
-
-    def load(path, name):
-        src = io.open(path, encoding="utf-8").read()
-        mod = _types.ModuleType(name)
-        mod.__file__ = path
-        exec(compile(src, path, "exec"), mod.__dict__)
-        return mod
-
     try:
-        ours = load(os.path.join(ROOT, "scripts", "relative_strength.py"), "rs_ours")
-        theirs = load(os.path.join(grader, "scripts", "relative_strength.py"), "rs_theirs")
+        ours = load_from_source(os.path.join(ROOT, "scripts", "relative_strength.py"), "rs_ours")
+        theirs = load_from_source(os.path.join(grader, "scripts", "relative_strength.py"),
+                                  "rs_theirs")
     except Exception as e:
         probs.append("could not import both relative_strength copies: %s" % e)
         return {"name": "shared substance (rungs verbatim, maths identical)",
@@ -334,39 +343,90 @@ def check_tickers(harness, n, seed):
 
 # ------------------------------------------------------------------------- layer 3: the rungs
 def check_rungs(grader):
-    """Parse the shared methodology's N rung and check our ceiling implements it.
+    """Parse the shared methodology's rungs and check our code actually implements them.
 
-    N is the rung most easily reworded into a different grade, and it is the one that actually
-    drifted: the canonical text says more than ~10% below the high means N CANNOT PASS and more
-    than ~20% below means N FAILS, which is a partial band in between. A copy that lists ">10%
-    below" under FAIL grades a name 15% off its high half a point lower than the sister does.
+    This is the layer that catches a PROSE-ONLY drift: a reworded threshold sails past a byte
+    check on a substance file (the copies legitimately differ) and past the 100-ticker layer
+    (both sides run the same code), yet it is exactly what silently changes a grade, because a
+    human reading the rung grades to the words and the screener grades to `rubric.py`.
+
+    Three rungs are pinned, each for a reason it earned:
+
+    N's band. The canonical text says more than ~10% below the high means N CANNOT PASS and more
+      than ~20% below means N FAILS, a partial band in between. A copy that lists ">10% below"
+      under FAIL grades a name 15% off its high half a point lower than the sister does.
+    N's extension case and L's pass bar. Both were prose/code splits, found by this checker and
+      resolved in favour of the code: extension >25% above the 50-day is a FLAG that denies a
+      PASS, never a FAIL (`cap_n` bounds N from the 52-week-high distance alone), and L's pass
+      bar is a TOP-HALF rank, not the #1-2 name (`cap_l` caps at partial only past half the
+      group). Both directions are asserted - the prose must state the code's rule AND must not
+      restate the old one - so restoring either wording fails here instead of quietly costing
+      half a point on every graded name.
+    A's two legs. "EPS up each of 3 years at >=25% AND ROE >=17%" - grading the EPS leg alone is
+      an over-grade the sister would not make, because it checks both on the one ticker it is
+      looking at. annual_eps.py must refuse to pass a name whose ROE it cannot verify.
     """
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import sector_screen as ss
 
     src = io.open(os.path.join(grader, "references", "canslim-methodology.md"),
                   encoding="utf-8").read()
-    rung = re.search(r"\*\*N\.\*\*(.+?)(?=\n- \*\*|\n\n)", src, re.S)
-    text = " ".join((rung.group(1) if rung else "").split())
-    says_partial_band = bool(re.search(r"10%.{0,80}cannot pass", text)) and \
-        bool(re.search(r"20%.{0,40}fails?", text))
+
+    def rung(letter):
+        m = re.search(r"\*\*%s\.\*\*(.+?)(?=\n- \*\*|\n\n)" % letter, src, re.S)
+        return " ".join((m.group(1) if m else "").split())
+
+    text, l_text = rung("N"), rung("L")
+    # Every prose assertion is a PAIR: what the canonical copy must now say, and the superseded
+    # wording it must no longer say. A one-sided check would pass on a rung that says both.
+    prose = {
+        "N_partial_band": bool(re.search(r"10%.{0,80}cannot pass", text)) and
+                          bool(re.search(r"20%.{0,40}fails?", text)),
+        "N_extension_is_a_flag": bool(re.search(r"50-day.{0,160}flag, not a FAIL", text)),
+        "N_extension_not_called_fail": not re.search(r"50-day[^.]{0,120}is a \*\*FAIL\*\*", text),
+        "L_pass_is_top_half": bool(re.search(r"PASS needs.{0,60}top half", l_text)),
+        "L_pass_is_not_number_one_or_two": not re.search(r"PASS needs[^.]{0,80}#1 or #2", l_text),
+    }
+    bad_prose = sorted(k for k, v in prose.items() if not v)
 
     cfg = dict(ss.DEFAULTS)
     band = cfg["pivot_band"]
 
-    def n_for(off_high):
-        row = {"symbol": "X:Y", "ticker": "Y", "off_high_pct": off_high, "rel_volume_10d": 1.2,
-               "sector_rank_overall": 1, "sector_count": 20}
-        ss.ceiling(row, cfg, {})
-        return row["ceiling_caps"]["N"] if "ceiling_caps" in row else None
+    def cap_for(letter, **row):
+        r = {"symbol": "X:Y", "ticker": "Y", "off_high_pct": -1.0, "rel_volume_10d": 1.2,
+             "sector_rank_overall": 1, "sector_count": 20}
+        r.update(row)
+        ss.ceiling(r, cfg, {})
+        return r["ceiling_caps"][letter] if "ceiling_caps" in r else None
 
     probes = [(-(band / 2.0), "pass"), (-(band + 5), "partial"), (-(2 * band + 5), "fail")]
-    got = [(off, want, n_for(off)) for off, want in probes]
+    got = [(off, want, cap_for("N", off_high_pct=off)) for off, want in probes]
     mism = [g for g in got if g[1] != g[2]]
 
-    # A has TWO legs - "EPS up each of 3 years at >=25% AND ROE >=17%" - and grading the EPS leg
-    # alone is an over-grade the sister would not make, because it checks both on the one ticker
-    # it is looking at. annual_eps.py must refuse to pass a name whose ROE it cannot verify.
+    # L: the rank leg against the screener's ceiling, the RS leg against the shared rubric. They
+    # are split because a laggard never reaches `ceiling()` - `score_row` DROPS it first - so the
+    # screener's ceiling has no RS branch to probe, while the grader, which cannot drop the one
+    # ticker it was asked about, reaches cap_l's fail directly.
+    rubric = load_from_source(os.path.join(ROOT, "scripts", "rubric.py"), "rubric_rungs")
+    l_probes = [(1, 20, "pass"), (10, 20, "pass"), (11, 20, "partial"), (20, 20, "partial")]
+    l_got = [(r, t, want, cap_for("L", sector_rank_overall=r, sector_count=t))
+             for r, t, want in l_probes]
+    l_got.append(("rs<=0", "-", "fail", rubric.cap_l(-1.0, 1, 20)[0]))
+    l_mism = [g for g in l_got if g[2] != g[3]]
+
+    # N's extension case: >25% above the 50-day must NOT move the letter. Same row twice, the
+    # second one far extended; the cap has to come out identical, and the run-up has to surface
+    # as a flag instead.
+    ext_row = {"symbol": "X:Y", "ticker": "Y", "close": 100.0, "price_52_week_high": 100.0,
+               "EMA50": 60.0, "EMA200": 50.0, "relative_volume_10d_calc": 1.2,
+               "average_volume_10d_calc": 1e6, "Perf.6M": 80.0}
+    scored = ss.score_row(dict(ext_row), "Perf.6M", 10.0, cfg)
+    ss.ceiling(scored, cfg, {})
+    ext_ok = (scored["ceiling_caps"]["N"] == "pass"
+              and rubric.extended(scored["vs_ema50_pct"])
+              and any("50-day" in f for f in scored["flags"])
+              and not any("50-day" in d for d in scored["drop_reasons"]))
+
     import annual_eps as ae
     import datetime as _dt
     ends = ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]
@@ -378,11 +438,15 @@ def check_rungs(grader):
                for r, want in roe_probes]
     roe_mism = [g for g in roe_got if g[1] != g[2]]
 
-    ok = (not mism) and says_partial_band and (not roe_mism)
-    return {"name": "rungs: methodology prose vs our code (N band, A's two legs)", "ok": ok,
-            "detail": {"canonical_has_partial_band": says_partial_band,
-                       "canonical_text": text[:240],
+    ok = not (mism or bad_prose or l_mism or roe_mism) and ext_ok
+    return {"name": "rungs: methodology prose vs our code (N band + extension, L's bar, A's legs)",
+            "ok": ok,
+            "detail": {"prose_assertions_failed": bad_prose,
+                       "canonical_N": text[:240], "canonical_L": l_text[:240],
                        "N_probes": [{"off_high": o, "expected": w, "ceiling": c} for o, w, c in got],
+                       "N_extension_leaves_the_letter_alone": ext_ok,
+                       "L_probes": [{"rank": r, "of": t, "expected": w, "got": c}
+                                    for r, t, w, c in l_got],
                        "A_roe_probes": [{"roe": r, "expected": w, "got": c} for r, w, c in roe_got]}}
 
 

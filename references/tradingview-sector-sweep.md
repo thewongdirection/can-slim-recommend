@@ -188,14 +188,20 @@ drift that silently changes a grade.
   stock at a proper pivot, no more than ~5% extended past it. PARTIAL = at or near new-high ground
   but with no valid pivot to buy (base incomplete, or already extended beyond it). FAIL = no new
   driver, more than ~10% below the 52-week high (a lower high is not a pivot), or a wide-and-loose
-  / late-stage base. Extension far above the 50-day (roughly >25%) after a climax run is a FAIL,
-  not a partial — there is no entry there.
+  / late-stage base. Extension far above the 50-day (roughly >25%) after a climax run puts the
+  stock past any pivot, so N cannot PASS — but it is a FLAG on the row, not a FAIL. N's fail rung
+  is distance below the 52-week high; a name running away from a sound base is a PARTIAL with no
+  entry price. `ceiling()` therefore caps N from the 52-week-high distance alone, and
+  `score_row()` carries "more than 25% above the 50-day EMA" in `flags`, never in `drop_reasons`.
 - **S — supply & demand:** PASS = breakout volume >=40-50% above the 50-day average, manageable
   float, buybacks, low debt. PARTIAL = institutional-grade liquidity and a constructive trend but
   no demand surge. FAIL = heavy distribution, dilution, illiquidity, or below the 200-day.
 - **L — leader not laggard:** PASS = clearly outperforming the benchmark over the window **and**
-  the #1 or #2 name in a strong group. PARTIAL = outperforming but mid-pack within its own group,
-  or leading a group that itself lags. FAIL = in line with or behind the benchmark.
+  ranked in the **top half of its group**. PARTIAL = ranked in the bottom half, or leading a group
+  that itself lags. FAIL = in line with or behind the benchmark. O'Neil's *buy the #1 or #2 name*
+  is the ideal, not the pass bar: `ceiling()` and `rubric.cap_l` both cap at PARTIAL only once the
+  sector rank passes half the group, so grading L to a #1-2 bar would under-score almost every
+  name this skill reports.
 - **I — institutional sponsorship:** PASS = ownership **rising** over recent quarters with
   quality funds adding, and not so over-owned that new sponsorship is impossible. PARTIAL =
   adequate ownership whose trend you could not verify, or flat sponsorship. FAIL = thin, neglected,

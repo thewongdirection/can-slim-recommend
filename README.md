@@ -140,8 +140,9 @@ critical ideas:
     out to **new highs from a sound price base** — the key entry trigger.
   - **S — Supply & demand** — a big volume surge on the breakout, a manageable share float,
     buybacks, low debt.
-  - **L — Leader, not laggard** — high relative price strength; the #1 or #2 name in a strong
-    industry group, not the cheap also-ran.
+  - **L — Leader, not laggard** — high relative price strength and a top-half rank in a strong
+    industry group, not the cheap also-ran. (O'Neil's ideal is the #1 or #2 name; the bar this
+    skill actually grades to is the top half — see `references/canslim-methodology.md`.)
   - **I — Institutional sponsorship** — increasing ownership by high-quality funds.
   - **M — Market direction** — the general market must be in a confirmed uptrend.
 - **"M" gates everything.** Roughly three of four stocks follow the general market, so the

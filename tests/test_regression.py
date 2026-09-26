@@ -1902,6 +1902,59 @@ def check_docs_have_no_dead_scale():
             assert bad not in s, "%s mentions %r" % (f, bad)
 
 
+def check_the_prose_grades_the_same_way_the_code_does():
+    """Two rungs once said one thing in prose and another in code, and prose is what a human
+    grader reads. Both were resolved in favour of the code, and both directions are pinned here
+    so restoring either wording fails a test instead of quietly moving a grade.
+
+      L. The prose demanded the #1 or #2 name in a strong group; `cap_l` caps at PARTIAL only
+         once the rank passes HALF the group. Grading to the prose costs half a point on nearly
+         every name this skill reports - #3 of 20 is a comfortable pass in code and a partial in
+         the old words.
+      N. The prose called extension >25% above the 50-day a FAIL; the code raises a flag and
+         leaves the letter to the 52-week-high distance. Grading to the prose fails N outright
+         on a name that is merely running ahead of a sound base, which is a PARTIAL with no
+         entry price, not a broken chart.
+
+    This runs without a can-slim-grader checkout, so it guards the rungs even when the
+    cross-repo parity layer is skipped. The methodology file is shared, so a green result here
+    is also a statement about the sister's copy.
+    """
+    md = io.open(os.path.join(ROOT, "references", "canslim-methodology.md"),
+                 encoding="utf-8").read()
+
+    def rung(letter):
+        m = re.search(r"\*\*%s\.\*\*(.+?)(?=\n- \*\*|\n\n)" % letter, md, re.S)
+        assert m, "no %s rung in the shared methodology - the extractor is stale" % letter
+        return " ".join(m.group(1).split())
+
+    n_text, l_text = rung("N"), rung("L")
+    assert re.search(r"PASS needs.{0,60}top half", l_text), \
+        "L's rung no longer states the top-half pass bar the code implements"
+    assert not re.search(r"PASS needs[^.]{0,80}#1 or #2", l_text), \
+        "L's rung is back to demanding the #1 or #2 name, which cap_l does not"
+    assert re.search(r"50-day.{0,160}flag, not a FAIL", n_text), \
+        "N's rung no longer says the 50-day extension is a flag rather than a FAIL"
+    assert not re.search(r"50-day[^.]{0,120}is a \*\*FAIL\*\*", n_text), \
+        "N's rung is back to calling the 50-day extension a FAIL, which cap_n never returns"
+
+    # ...and the code still behaves the way the prose now describes.
+    for rank, want in ((1, "pass"), (10, "pass"), (11, "partial"), (20, "partial")):
+        out = {"symbol": "X:Y", "off_high_pct": -1.0, "rel_volume_10d": 1.2,
+               "sector_rank_overall": rank, "sector_count": 20}
+        ss.ceiling(out, CFG, {})
+        assert out["ceiling_caps"]["L"] == want, (rank, out["ceiling_caps"]["L"])
+
+    ext = ss.score_row(row(close=100.0, price_52_week_high=100.0, EMA50=60.0, EMA200=50.0),
+                       "Perf.6M", 10.0, CFG)
+    ss.ceiling(ext, CFG, {})
+    assert ext["vs_ema50_pct"] > 25.0
+    assert ext["ceiling_caps"]["N"] == "pass", "extension must not move N's cap"
+    assert any("50-day" in f for f in ext["flags"]), "the run-up must still be reported"
+    assert not any("50-day" in d for d in ext["drop_reasons"]), \
+        "extension is context, never a disqualification"
+
+
 def check_every_script_compiles():
     import py_compile
     d = os.path.join(ROOT, "scripts")
