@@ -34,6 +34,7 @@ FILES = [
     ("references/tradingview-sector-sweep.md","md",  "The primary data guide: verified call shapes, sector taxonomy, triage filters, list construction."),
     ("references/ibkr-data-guide.md",        "md",   "The fallback data path plus the shared fundamental-source ladder."),
     ("scripts/check_for_updates.py",         "python", "Step 0: is this copy current? Compares the checkout against its remote, separates code (effective this run) from instructions (effective next run), and fails open when it cannot check."),
+    ("scripts/rubric.py",                    "python", "The shared thresholds as code - pivot band, N's fail line at twice it, the price and liquidity floors, S's volume bands, L's laggard test, the pass/partial/fail weights and the score bands. Shared VERBATIM with can-slim-grader: sector_screen.py imports it rather than restating the numbers, because restating them is how '10% below the high' came to mean two different things in the two skills."),
     ("scripts/sector_screen.py",             "python", "Sector-sweep arithmetic and CAN SLIM triage over the screener rows."),
     ("scripts/relative_strength.py",         "python", "RS proxy, % off the 52-week high, base depth/length, breakout volume, from OHLCV bars."),
     ("scripts/market_session.py",            "python", "Step 1: is a trading session in progress? S is graded from relative volume, which mid-session is today's volume SO FAR - a partial sum. Waits out a short gap, and on a long one says so immediately rather than blocking for hours."),

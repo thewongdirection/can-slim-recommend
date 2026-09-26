@@ -51,26 +51,32 @@ import statistics
 import sys
 
 # CAN SLIM hard filters (methodology defaults; override on the command line).
+# The shared rubric, verbatim from can-slim-grader (see parity-manifest.json). Importing it
+# rather than restating its numbers is the point: a threshold now lives in exactly one file in
+# each repo, and scripts/check_parity.py hashes that file across both. Restating them here is how
+# "10% below the high" came to mean two different things in the two skills.
+import rubric
+
 DEFAULTS = {
     "top": 10,              # members kept per sector - "the top 10 performers in each sector"
     "fallback": 5,          # names surfaced for a sector that produced no qualifier
-    "min_price": 15.0,      # no cheap stock; the method's price floor
-    "min_dollar_vol": 20e6, # average daily $ volume - institutions need liquidity (S)
+    "min_price": rubric.MIN_PRICE,        # shared: the method's price floor
+    "min_dollar_vol": rubric.MIN_DOLLAR_VOL,  # shared: institutions need liquidity (S)
     "min_market_cap": 1e9,  # skip microcaps the method's sponsorship test can't clear
-    "max_off_high": 25.0,   # % below the 52-week high beyond which there is no new-high ground
-    "min_rs": 0.0,          # must beat the benchmark over the window (L: leader not laggard)
-    "threshold": 4.5,       # the recommendation cut, out of 7 - the ceiling is measured against it
+    "max_off_high": rubric.TRIAGE_DROP_PCT,   # shared: triage stops considering the name
+    "min_rs": rubric.MIN_RS,              # shared: beat the benchmark, or it is a laggard (L)
+    "threshold": rubric.QUALIFY_THRESHOLD,    # shared: the recommendation cut, out of 7
     "m_grade": "partial",   # M is graded ONCE market-wide, before any name; it bounds every row
     "i_grade": "partial",   # I is routinely unavailable, which caps every row - say so, never guess
-    "pivot_band": 10.0,     # % below the 52-week high beyond which there is no pivot, so N <= partial
-    "thin_vol": 0.8,
+    "pivot_band": rubric.PIVOT_BAND_PCT,  # shared: beyond this there is no pivot, so N <= partial
+    "thin_vol": rubric.THIN_VOL,          # shared: below this, volume is drying up -> S fails
     # Fraction of a sweep that must read below `partial_session_rv` before the run is treated as
     # INTRADAY and relative volume is discarded - see detect_partial_session().
     "partial_session_frac": 0.6,
     "partial_session_rv": 0.5,        # relative volume under this is drying up, not accumulating, so S = fail
 }
 
-WEIGHT = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
+WEIGHT = rubric.WEIGHT          # shared, so the arithmetic cannot diverge either
 
 VOL_KEYS = ("average_volume_10d_calc", "average_volume_90d_calc", "average_volume_30d_calc",
             "average_volume_60d_calc", "volume")

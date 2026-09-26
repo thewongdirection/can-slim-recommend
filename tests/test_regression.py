@@ -661,6 +661,27 @@ def check_gzip_is_undone_before_parsing():
     assert ic.maybe_gunzip(raw) == raw          # not compressed: passed through untouched
 
 
+def check_sector_screen_derives_its_thresholds_from_the_shared_rubric():
+    """scripts/rubric.py is shared VERBATIM with can-slim-grader, so every threshold it owns must
+    reach sector_screen.py by import, never by being typed again.
+
+    Restating them is exactly how the pair drifted: the same "10% below the 52-week high" meant
+    N<=partial in one skill and N=fail in the other, and nothing failed until a human read both
+    files side by side. A second copy inside THIS repo is the same hazard one level down."""
+    import rubric
+    assert ss.WEIGHT is rubric.WEIGHT, "the scoring weights must BE the shared ones, not a copy"
+    for key, shared in (("min_price", rubric.MIN_PRICE),
+                        ("min_dollar_vol", rubric.MIN_DOLLAR_VOL),
+                        ("max_off_high", rubric.TRIAGE_DROP_PCT),
+                        ("min_rs", rubric.MIN_RS),
+                        ("threshold", rubric.QUALIFY_THRESHOLD),
+                        ("pivot_band", rubric.PIVOT_BAND_PCT),
+                        ("thin_vol", rubric.THIN_VOL)):
+        assert ss.DEFAULTS[key] == shared, (key, ss.DEFAULTS[key], shared)
+    # N's fail line is twice the pivot band in both repos; the sister states it outright.
+    assert rubric.N_FAIL_PCT == 2 * rubric.PIVOT_BAND_PCT, (rubric.N_FAIL_PCT, rubric.PIVOT_BAND_PCT)
+
+
 def check_parity_with_the_sister_skill(tmp):
     """Run scripts/check_parity.py against a can-slim-grader checkout - 100 RANDOM tickers plus
     the exhaustive arithmetic sweep - and fail if the two skills would grade the same evidence

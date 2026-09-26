@@ -49,7 +49,20 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SHARED = ["references/canslim-methodology.md", "scripts/relative_strength.py"]
+# Two CLASSES of shared file, and conflating them is a trap this checker fell into itself.
+#
+# VERBATIM: no local extensions, so byte-identity is the contract and a diff is drift.
+# SUBSTANCE: the sister's SKILL.md says outright that these are "no longer byte-identical, and
+#   that is expected - port the CHANGE, not the file", because each side carries its own
+#   additions (this repo: a "Modern refinements" methodology section, and `--asof` point-in-time
+#   truncation in relative_strength.py). Demanding byte-identity here does not detect drift, it
+#   MANUFACTURES it: the only way to satisfy the check is to copy one side over the other and
+#   delete the extension. That is exactly what happened - commit 6e281fb wholesale-copied both
+#   files and destroyed both extensions to make this layer go green. So substance files are
+#   checked for shared SUBSTANCE (the rungs, and the maths), never for equal bytes.
+VERBATIM = ["scripts/rubric.py"]
+SUBSTANCE = ["references/canslim-methodology.md", "scripts/relative_strength.py"]
+SHARED = VERBATIM + SUBSTANCE
 GRADES = ("pass", "partial", "fail")
 LETTERS = "CANSLIM"
 
@@ -80,11 +93,10 @@ def sha256(path):
 
 # --------------------------------------------------------------------------- layer 1: bytes
 def check_shared_bytes(grader):
-    """Compare each shared file across the two checkouts AND against the manifest hash.
+    """VERBATIM files must match byte for byte; SUBSTANCE files must match in substance.
 
-    Three-way, because two-way cannot say WHO moved: a file that differs from the sister but
-    matches the manifest means the sister changed it and owes us a port; one that matches the
-    sister but not the manifest means both moved and the manifest is stale.
+    For a substance file a byte diff is reported as INFORMATIONAL, with what each side adds, so
+    drift is visible without the check pressuring anyone into deleting an extension to silence it.
     """
     man = {}
     mp = os.path.join(grader, "parity-manifest.json")
@@ -95,19 +107,98 @@ def check_shared_bytes(grader):
         a, b = os.path.join(ROOT, rel), os.path.join(grader, rel)
         ha = sha256(a) if os.path.exists(a) else None
         hb = sha256(b) if os.path.exists(b) else None
-        hm = man.get(rel)
-        if ha == hb:
-            verdict = "identical"
-        elif hm and hb == hm:
-            verdict = "DIFFERS - the sister matches the manifest, so this copy is the one adrift"
-        elif hm and ha == hm:
-            verdict = "DIFFERS - this copy matches the manifest, so the sister moved and owes a port"
+        same = ha is not None and ha == hb
+        if rel in VERBATIM:
+            verdict = "identical" if same else (
+                "DRIFT - this file carries no extensions, so the bytes must match")
+            if not same:
+                bad += 1
         else:
-            verdict = "DIFFERS - and neither copy matches the manifest; both moved"
-        if ha != hb:
-            bad += 1
-        rows.append({"file": rel, "ours": ha, "theirs": hb, "manifest": hm, "verdict": verdict})
-    return {"name": "shared bytes", "ok": bad == 0, "detail": rows}
+            verdict = ("identical" if same else
+                       "differs (EXPECTED - substance file; each side keeps its own extensions). "
+                       "Substance is checked by the rungs and maths layers, not here.")
+        rows.append({"file": rel, "class": "verbatim" if rel in VERBATIM else "substance",
+                     "ours": ha, "theirs": hb, "manifest": man.get(rel), "verdict": verdict})
+    return {"name": "shared files (verbatim byte-equal; substance may extend)",
+            "ok": bad == 0, "detail": rows}
+
+
+def check_shared_substance(grader):
+    """The two SUBSTANCE files must agree where it counts, extensions notwithstanding.
+
+    methodology: every canonical rung paragraph must appear verbatim in our copy. Ours may add
+      sections; it may not reword a threshold, which is the drift that changes a grade.
+    relative_strength: both modules are imported and run over the same bars, and every computed
+      number must match. This is the layer that would have caught the ret_over divergence the
+      manifest described - the same series giving a 12-month RS on one side and None on the other.
+    """
+    probs = []
+
+    ours_md = io.open(os.path.join(ROOT, "references", "canslim-methodology.md"),
+                      encoding="utf-8").read()
+    theirs_md = io.open(os.path.join(grader, "references", "canslim-methodology.md"),
+                        encoding="utf-8").read()
+    rungs = re.findall(r"^- \*\*[CANSLIM]\.\*\*.+?(?=\n- \*\*|\n\n)", theirs_md, re.S | re.M)
+    missing = []
+    for r in rungs:
+        norm = " ".join(r.split())
+        if norm not in " ".join(ours_md.split()):
+            missing.append(norm[:110])
+    if not rungs:
+        probs.append("could not find any rung paragraphs in the canonical methodology - the "
+                     "extractor is stale, so this layer is not actually checking anything")
+    if missing:
+        probs.append({"reworded_or_missing_rungs": missing})
+
+    # relative_strength: run both implementations over the same synthetic series.
+    #
+    # Compiled from the SOURCE TEXT, never through the import system, because __pycache__ can and
+    # does lie here. Restoring a file with `cp` rewrites the bytes but can leave a .pyc that
+    # Python still considers valid, so exec_module runs the PREVIOUS edit: this checker spent a
+    # while reporting a maths divergence between two byte-identical functions because our copy was
+    # running a stale tol=0.5 while the file on disk said 0.9. A parity checker that can be fooled
+    # by bytecode would also MISS real drift whenever the stale .pyc happened to agree.
+    import types as _types
+
+    def load(path, name):
+        src = io.open(path, encoding="utf-8").read()
+        mod = _types.ModuleType(name)
+        mod.__file__ = path
+        exec(compile(src, path, "exec"), mod.__dict__)
+        return mod
+
+    try:
+        ours = load(os.path.join(ROOT, "scripts", "relative_strength.py"), "rs_ours")
+        theirs = load(os.path.join(grader, "scripts", "relative_strength.py"), "rs_theirs")
+    except Exception as e:
+        probs.append("could not import both relative_strength copies: %s" % e)
+        return {"name": "shared substance (rungs verbatim, maths identical)",
+                "ok": False, "detail": probs}
+
+    rng = random.Random(20260926)
+    mism = []
+    for case in range(60):
+        n = rng.choice((40, 130, 251, 252, 300))
+        px = [100.0]
+        for _ in range(n - 1):
+            px.append(max(1.0, px[-1] * (1 + rng.uniform(-0.05, 0.05))))
+        bars = [[i, p, p * 1.01, p * 0.99, p, 1000 + i] for i, p in enumerate(px)]
+        bench = [[i, 100, 101, 99, 100 + i * 0.05, 1000] for i in range(n)]
+        d = {"benchmark": {"daily": bench}, "candidates": [{"symbol": "X:Y", "daily": bars}]}
+        ra = ours.analyze(json.loads(json.dumps(d)))["candidates"][0]
+        rb = theirs.analyze(json.loads(json.dumps(d)))["candidates"][0]
+        for k in ("rs_blended", "pct_off_52w_high", "breakout_vol_vs_avg"):
+            va, vb = ra.get(k), rb.get(k)
+            if (va is None) != (vb is None) or (va is not None and abs(va - vb) > 1e-9):
+                mism.append({"case": case, "bars": n, "field": k, "ours": va, "theirs": vb})
+        if ra.get("rs_relative_return") != rb.get("rs_relative_return"):
+            mism.append({"case": case, "bars": n, "field": "rs_relative_return",
+                         "ours": ra.get("rs_relative_return"), "theirs": rb.get("rs_relative_return")})
+    if mism:
+        probs.append({"relative_strength_disagreements": mism[:10],
+                      "total": len(mism)})
+    return {"name": "shared substance (rungs verbatim, maths identical)",
+            "ok": not probs, "checked": 60, "detail": probs}
 
 
 # ------------------------------------------------------------------- layers 2 & 4: arithmetic
@@ -314,7 +405,7 @@ def main():
         return 2
 
     seed = a.seed if a.seed is not None else random.randrange(1 << 30)
-    layers = [check_shared_bytes(grader)]
+    layers = [check_shared_bytes(grader), check_shared_substance(grader)]
     try:
         harness = build_harness(grader)
         layers.append(check_arithmetic(harness))

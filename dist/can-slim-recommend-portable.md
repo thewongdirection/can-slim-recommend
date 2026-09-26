@@ -1499,7 +1499,11 @@ decision — the C/A/L + N gate above decides the label.
 - **A.** A company without three years of record — newly public, or freshly restructured — **cannot
   exceed PARTIAL on A**, however good the two years it has.
 - **S.** A stock **below its 200-day** fails S. A PASS wants breakout volume **>=40-50% above the
-  50-day average**, not merely healthy liquidity.
+  50-day average**, not merely healthy liquidity. The method's **price and liquidity floors land on
+  S**: under ~$15 (Nasdaq; ~$20 NYSE) or under ~$20M a day, a stock is not institutionally ownable,
+  so S fails whatever the volume pattern looks like. A screener DROPS such a name because it is
+  choosing among thousands; a single-ticker grade cannot drop the name it was asked about, so it
+  grades it with S failed and says why. Same judgement, different place to put it.
 - **L.** PASS needs clear outperformance **and** the #1 or #2 name in a strong group. Outperforming
   but mid-pack, or leading a group that itself lags, is PARTIAL. **In line with the benchmark is a
   FAIL** — matching the index is not leadership.
@@ -1511,6 +1515,39 @@ decision — the C/A/L + N gate above decides the label.
 
 Per-skill scoring detail (what counts as partial for each letter, and the verdict definitions)
 lives in each skill's own data guide, not here.
+
+<!-- THIS SKILL'S OWN EXTENSION. Everything above is shared VERBATIM with can-slim-grader; the
+     section below is screener-only and deliberately NOT in the sister's copy. The sister's
+     SKILL.md is explicit that these two files are "no longer byte-identical, and that is
+     expected - port the CHANGE, not the file", because copying either side wholesale deletes
+     the other's work. Commit 6e281fb did exactly that and lost this section; it is restored
+     here, and scripts/check_parity.py now checks shared SUBSTANCE (the rungs verbatim, the maths
+     identical) instead of demanding equal bytes, so keeping this cannot fail the build. -->
+
+## Modern refinements & professional practice (beyond the 1988 book)
+CAN SLIM's core is durable, but apply it with current, professionally-informed judgment — and
+refresh the specifics with web research each run rather than from memory:
+- **Why it works (factor evidence):** the edge is the *momentum* factor (Jegadeesh-Titman;
+  6-12 mo cross-sectional relative strength) combined with *quality* (profitability/ROE — Fama-
+  French RMW, AQR "quality-minus-junk"). A genuine leader is a momentum+quality name, not a
+  low-quality junk rip — down-weight L/S when the strength is purely speculative.
+- **Market structure O'Neil didn't have:** passive/ETF flows, index add/deletes and quarterly
+  rebalances, and dealer options positioning (gamma, 0DTE, max-pain) can extend or reverse moves
+  fast; mega-cap concentration means the index (M) can mask narrow leadership — check breadth
+  (advance/decline, % of stocks above their 50-day), not just the index level.
+- **Macro & event overlay:** Fed path, CPI/jobs prints, earnings-season dispersion, and
+  commodity/geopolitical shocks reprice whole sectors intraday — reflect them in the M score and
+  in stop width.
+- **Volatility regime & sizing:** in high-VIX / under-pressure tapes, cut size, tighten stops
+  toward 3-5%, demand cleaner bases, and require a follow-through day before buying breakouts.
+- **Valuation-sanity overlay (the value-investor lens):** CAN SLIM ignores P/E on purpose, but a
+  professional still flags a leader discounting implausible growth (extreme EV/Sales or P/E vs. its
+  own history and peers) as elevated risk — never *reject* on valuation alone, but note it.
+- **Data hygiene:** prefer as-reported / GAAP-reconciled figures; treat heavily-adjusted non-GAAP,
+  one-time gains, and buyback-inflated EPS skeptically (that is the C/A quality check).
+
+Keep every pick's written reason in CAN SLIM terms; use these refinements to grade more accurately
+and to frame risk, not to smuggle in off-method rationale.
 ```
 
 
@@ -2513,6 +2550,172 @@ if __name__ == "__main__":
 ```
 
 
+## `scripts/rubric.py`
+
+The shared thresholds as code - pivot band, N's fail line at twice it, the price and liquidity floors, S's volume bands, L's laggard test, the pass/partial/fail weights and the score bands. Shared VERBATIM with can-slim-grader: sector_screen.py imports it rather than restating the numbers, because restating them is how '10% below the high' came to mean two different things in the two skills.
+
+```python
+#!/usr/bin/env python3
+"""
+rubric.py - the CAN SLIM letter thresholds, as code, so the pair can be tested for agreement.
+
+WHY THIS EXISTS. `can-slim-grader` and `can-slim-recommend` are one methodology aimed at two
+questions, and for years the only thing keeping their rules in step was prose in two repos. Prose
+drifts silently: a September-2026 comparison found the shared methodology carrying DIFFERENT score
+bands on each side (3-4 watch here, 3.5-4.0 there), which is the same file disagreeing with itself
+about whether a 3.0 is a watch or a pass. This module is the executable statement of the shared
+thresholds, and `tests/test_rubric_parity.py` runs 100 real tickers through it and through the
+sister's own `sector_screen.py` to prove they still agree.
+
+WHAT THIS IS NOT. It does not grade C or A - those need a filings pull, not a screener row - and it
+does not replace the judgement in the letters' `read`. It pins the parts that are arithmetic: the
+thresholds, the weights, the bands.
+
+THE TWO SKILLS ARE NOT SUPPOSED TO PRODUCE THE SAME NUMBER, and that is the subtlety this module
+exists to keep straight. `can-slim-recommend` computes a CEILING - the best a name could score once
+C and A are pulled - to decide what is worth grading. `can-slim-grader` computes the ACTUAL grade.
+A ceiling is optimistic by construction. What must match is the THRESHOLDS applied to the same
+input, which is exactly what `cap_*` below returns and what the parity test compares.
+
+Pure standard library.
+"""
+
+WEIGHT = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
+
+# Shared thresholds. Every number here is quoted in references/canslim-methodology.md and is
+# mirrored by can-slim-recommend/scripts/sector_screen.py's DEFAULTS.
+PIVOT_BAND_PCT = 10.0     # beyond this below the 52-week high there is no pivot, so N <= partial
+N_FAIL_PCT = 20.0         # beyond this, N fails outright - a lower high with overhead supply
+                          # (= 2 x PIVOT_BAND_PCT; the sister derives it that way)
+TRIAGE_DROP_PCT = 25.0    # a screener stops considering a name at all (triage only, NOT a letter)
+EXTENDED_VS_EMA50_PCT = 25.0  # further above the 50-day than this is extended, past any pivot
+THIN_VOL = 0.8            # relative volume under this is drying up under the price -> S fails
+MIN_RS = 0.0              # RS must beat the benchmark at all, or the name is a laggard -> L fails
+# The method's price and liquidity floors. A screener DROPS a name that misses these, because it is
+# choosing among thousands. A single-ticker grade cannot drop the name someone asked about, so the
+# same rule lands on S instead: below these a stock is not institutionally ownable, which is exactly
+# what S measures. Same judgement, different place to put it - see canslim-methodology.md.
+MIN_PRICE = 15.0          # Nasdaq floor; the methodology prefers NYSE >=20 and $30+ bases
+MIN_DOLLAR_VOL = 20e6     # institutions need to be able to get in and out
+
+# Rough read of the total. A summary, never the decision: the C/A/L + N gate decides the label.
+BANDS = ((6.0, "leader in a strong tape"), (4.5, "qualifies, buyable when N gives a pivot"),
+         (3.5, "watch - needs the market or a letter to improve"), (0.0, "pass on it"))
+QUALIFY_THRESHOLD = 4.5   # the screener's recommendation cut, out of 7
+
+
+def pct_off_high(close, high52):
+    """Percent below the 52-week high, negative below it. None when either input is missing."""
+    if close is None or high52 in (None, 0):
+        return None
+    return (close - high52) / high52 * 100.0
+
+
+def pct_vs(close, level):
+    if close is None or level in (None, 0):
+        return None
+    return (close - level) / level * 100.0
+
+
+def cap_n(off_high_pct):
+    """N's ceiling from distance below the 52-week high alone.
+
+    Within the pivot band a pivot is possible, so N stays open. Past it there is no pivot, so N
+    cannot exceed partial. Past twice it the chart is broken, not repairing, and N fails.
+    """
+    if off_high_pct is None:
+        return "pass", "off-high unknown - N not bounded by price position"
+    if off_high_pct < -N_FAIL_PCT:
+        return "fail", ("%.0f%% below the 52-week high - no new-high ground at all"
+                        % abs(off_high_pct))
+    if off_high_pct < -PIVOT_BAND_PCT:
+        return "partial", "%.0f%% below the 52-week high, so there is no pivot" % abs(off_high_pct)
+    return "pass", "within the pivot band of the 52-week high"
+
+
+def cap_s(rel_volume, vs_ema200_pct=None, close=None, dollar_vol=None):
+    """S's ceiling: institutional ownability first, then the accumulation footprint.
+
+    Price and liquidity come first because they are disqualifying rather than merely weak - a $4
+    stock on $2M a day cannot be accumulated by a fund at all, so no volume pattern rescues S.
+    """
+    if close is not None and close < MIN_PRICE:
+        return "fail", ("$%.2f is under the $%.0f price floor - not institutionally ownable"
+                        % (close, MIN_PRICE))
+    if dollar_vol is not None and dollar_vol < MIN_DOLLAR_VOL:
+        return "fail", ("$%.1fM a day is too thin for institutional sponsorship"
+                        % (dollar_vol / 1e6))
+    if vs_ema200_pct is not None and vs_ema200_pct < 0:
+        return "fail", "below the 200-day - downtrend, not accumulation"
+    if rel_volume is None:
+        return "pass", "relative volume unknown - S not bounded by volume"
+    if rel_volume < THIN_VOL:
+        return "fail", "relative volume %.2fx - volume drying up under the price" % rel_volume
+    if rel_volume < 1.0:
+        return "partial", "relative volume %.2fx - under its own norm, no accumulation" % rel_volume
+    return "pass", "relative volume %.2fx - at or above its own norm" % rel_volume
+
+
+def cap_l(rs_vs_bench_pts, sector_rank=None, sector_count=None):
+    """L's ceiling. In line with the benchmark is not leadership; leading a laggard group is not
+    leadership either."""
+    if rs_vs_bench_pts is not None and rs_vs_bench_pts <= MIN_RS:
+        return "fail", "performance lags the benchmark - laggard, not leader"
+    if sector_rank and sector_count and sector_rank > sector_count / 2.0:
+        return "partial", ("sector ranks #%d of %d - leader of a laggard group"
+                           % (sector_rank, sector_count))
+    return "pass", "outperforming the benchmark"
+
+
+def extended(vs_ema50_pct):
+    """True when price is further above the 50-day than a pivot entry allows."""
+    return vs_ema50_pct is not None and vs_ema50_pct > EXTENDED_VS_EMA50_PCT
+
+
+def triage_drop(off_high_pct):
+    """A screener's own cut - distinct from N's grade, and deliberately looser."""
+    return off_high_pct is not None and off_high_pct < -TRIAGE_DROP_PCT
+
+
+def total(caps):
+    """Sum seven letters at pass 1 / partial 0.5 / fail 0, to the nearest half point."""
+    missing = [k for k in "CANSLIM" if k not in caps]
+    if missing:
+        raise ValueError("total() needs all seven letters; missing %s" % ",".join(missing))
+    return round(sum(WEIGHT[caps[k]] for k in "CANSLIM") * 2) / 2.0
+
+
+def band(score):
+    for floor, text in BANDS:
+        if score >= floor:
+            return text
+    return BANDS[-1][1]
+
+
+def score_row(row, bench_perf=None, window="Perf.6M", sector_rank=None, sector_count=None):
+    """Apply the shared thresholds to one screener-shaped row. Returns metrics + letter ceilings."""
+    close = row.get("close")
+    oh = pct_off_high(close, row.get("price_52_week_high"))
+    perf = row.get(window)
+    rs = (perf - bench_perf) if (perf is not None and bench_perf is not None) else None
+    v50, v200 = pct_vs(close, row.get("EMA50")), pct_vs(close, row.get("EMA200"))
+    avgvol = row.get("average_volume_10d_calc")
+    dollar_vol = close * avgvol if (close is not None and avgvol is not None) else None
+    n, n_why = cap_n(oh)
+    s, s_why = cap_s(row.get("relative_volume_10d_calc"), v200, close, dollar_vol)
+    l, l_why = cap_l(rs, sector_rank, sector_count)
+    return {
+        "symbol": row.get("symbol") or row.get("name"),
+        "off_high_pct": oh, "rs_vs_bench_pts": rs, "avg_dollar_volume": dollar_vol,
+        "vs_ema50_pct": v50, "vs_ema200_pct": v200,
+        "caps": {"N": n, "S": s, "L": l},
+        "why": {"N": n_why, "S": s_why, "L": l_why},
+        "extended": extended(v50),
+        "triage_drop": triage_drop(oh),
+    }
+```
+
+
 ## `scripts/sector_screen.py`
 
 Sector-sweep arithmetic and CAN SLIM triage over the screener rows.
@@ -2571,26 +2774,32 @@ import statistics
 import sys
 
 # CAN SLIM hard filters (methodology defaults; override on the command line).
+# The shared rubric, verbatim from can-slim-grader (see parity-manifest.json). Importing it
+# rather than restating its numbers is the point: a threshold now lives in exactly one file in
+# each repo, and scripts/check_parity.py hashes that file across both. Restating them here is how
+# "10% below the high" came to mean two different things in the two skills.
+import rubric
+
 DEFAULTS = {
     "top": 10,              # members kept per sector - "the top 10 performers in each sector"
     "fallback": 5,          # names surfaced for a sector that produced no qualifier
-    "min_price": 15.0,      # no cheap stock; the method's price floor
-    "min_dollar_vol": 20e6, # average daily $ volume - institutions need liquidity (S)
+    "min_price": rubric.MIN_PRICE,        # shared: the method's price floor
+    "min_dollar_vol": rubric.MIN_DOLLAR_VOL,  # shared: institutions need liquidity (S)
     "min_market_cap": 1e9,  # skip microcaps the method's sponsorship test can't clear
-    "max_off_high": 25.0,   # % below the 52-week high beyond which there is no new-high ground
-    "min_rs": 0.0,          # must beat the benchmark over the window (L: leader not laggard)
-    "threshold": 4.5,       # the recommendation cut, out of 7 - the ceiling is measured against it
+    "max_off_high": rubric.TRIAGE_DROP_PCT,   # shared: triage stops considering the name
+    "min_rs": rubric.MIN_RS,              # shared: beat the benchmark, or it is a laggard (L)
+    "threshold": rubric.QUALIFY_THRESHOLD,    # shared: the recommendation cut, out of 7
     "m_grade": "partial",   # M is graded ONCE market-wide, before any name; it bounds every row
     "i_grade": "partial",   # I is routinely unavailable, which caps every row - say so, never guess
-    "pivot_band": 10.0,     # % below the 52-week high beyond which there is no pivot, so N <= partial
-    "thin_vol": 0.8,
+    "pivot_band": rubric.PIVOT_BAND_PCT,  # shared: beyond this there is no pivot, so N <= partial
+    "thin_vol": rubric.THIN_VOL,          # shared: below this, volume is drying up -> S fails
     # Fraction of a sweep that must read below `partial_session_rv` before the run is treated as
     # INTRADAY and relative volume is discarded - see detect_partial_session().
     "partial_session_frac": 0.6,
     "partial_session_rv": 0.5,        # relative volume under this is drying up, not accumulating, so S = fail
 }
 
-WEIGHT = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
+WEIGHT = rubric.WEIGHT          # shared, so the arithmetic cannot diverge either
 
 VOL_KEYS = ("average_volume_10d_calc", "average_volume_90d_calc", "average_volume_30d_calc",
             "average_volume_60d_calc", "volume")
@@ -3203,6 +3412,25 @@ def as_row(bar):
     return bar
 
 
+def _le(t, asof):
+    """Is bar-timestamp `t` on/before the as-of cutoff? Numeric when both parse as numbers;
+    otherwise ISO-date-aware string compare - a bare YYYY-MM-DD cutoff matches by date prefix so
+    the whole as-of day is inclusive (e.g. '2023-01-31T20:00Z' <= '2023-01-31')."""
+    try:
+        return float(t) <= float(asof)
+    except (TypeError, ValueError):
+        ts, a = str(t), str(asof)
+        return (ts[:10] <= a) if len(a) <= 10 else (ts <= a)
+
+
+def truncate_asof(bars, asof):
+    """Point-in-time: keep only bars dated on/before `asof` (same units as the bar timestamp).
+    `asof=None` (the default) keeps everything - i.e. the normal 'as of now' run."""
+    if asof is None:
+        return bars
+    return [b for b in bars if b and _le(b[0], asof)]
+
+
 def normalize(bars):
     return [as_row(b) for b in (bars or []) if b]
 
@@ -3296,11 +3524,16 @@ def breakout_volume(daily, avg_window=50):
 
 
 def analyze(data):
-    bench = normalize(data.get("benchmark", {}).get("daily", []))
+    # Point-in-time runs (this skill's own extension, kept through the sister sync): every series
+    # is cut to `asof` before any maths, so a historical screen cannot see a bar that had not
+    # printed yet. normalize() runs FIRST - truncation indexes b[0], and a TradingView dict bar
+    # has no [0] until it has been turned into a row.
+    asof = data.get("asof")
+    bench = truncate_asof(normalize(data.get("benchmark", {}).get("daily", [])), asof)
     out = []
     for cand in data.get("candidates", []):
-        daily = normalize(cand.get("daily", []))
-        weekly = normalize(cand.get("weekly", []))
+        daily = truncate_asof(normalize(cand.get("daily", [])), asof)
+        weekly = truncate_asof(normalize(cand.get("weekly", [])), asof)
         rel, blend = rs_proxy(daily, bench) if bench and daily else ({}, None)
         out.append({
             "symbol": cand.get("symbol"),
@@ -3318,11 +3551,27 @@ def analyze(data):
 
 
 def main():
-    if len(sys.argv) > 1:
-        with open(sys.argv[1], "r", encoding="utf-8") as f:
+    # --asof <cutoff> for a point-in-time (historical) run. The cutoff is compared in the bar
+    # timestamps' own units; a plain YYYY-MM-DD string compares lexically and so is inclusive of
+    # that whole day. Overrides any "asof" already in the input JSON.
+    args = [a for a in sys.argv[1:]]
+    asof, path = None, None
+    i = 0
+    while i < len(args):
+        if args[i] == "--asof" and i + 1 < len(args):
+            asof = args[i + 1]
+            i += 2
+            continue
+        if not args[i].startswith("-"):
+            path = args[i]
+        i += 1
+    if path:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     else:
         data = json.load(sys.stdin)
+    if asof is not None:
+        data["asof"] = asof
     json.dump(analyze(data), sys.stdout, indent=2)
     sys.stdout.write("\n")
 
@@ -7383,7 +7632,20 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SHARED = ["references/canslim-methodology.md", "scripts/relative_strength.py"]
+# Two CLASSES of shared file, and conflating them is a trap this checker fell into itself.
+#
+# VERBATIM: no local extensions, so byte-identity is the contract and a diff is drift.
+# SUBSTANCE: the sister's SKILL.md says outright that these are "no longer byte-identical, and
+#   that is expected - port the CHANGE, not the file", because each side carries its own
+#   additions (this repo: a "Modern refinements" methodology section, and `--asof` point-in-time
+#   truncation in relative_strength.py). Demanding byte-identity here does not detect drift, it
+#   MANUFACTURES it: the only way to satisfy the check is to copy one side over the other and
+#   delete the extension. That is exactly what happened - commit 6e281fb wholesale-copied both
+#   files and destroyed both extensions to make this layer go green. So substance files are
+#   checked for shared SUBSTANCE (the rungs, and the maths), never for equal bytes.
+VERBATIM = ["scripts/rubric.py"]
+SUBSTANCE = ["references/canslim-methodology.md", "scripts/relative_strength.py"]
+SHARED = VERBATIM + SUBSTANCE
 GRADES = ("pass", "partial", "fail")
 LETTERS = "CANSLIM"
 
@@ -7414,11 +7676,10 @@ def sha256(path):
 
 # --------------------------------------------------------------------------- layer 1: bytes
 def check_shared_bytes(grader):
-    """Compare each shared file across the two checkouts AND against the manifest hash.
+    """VERBATIM files must match byte for byte; SUBSTANCE files must match in substance.
 
-    Three-way, because two-way cannot say WHO moved: a file that differs from the sister but
-    matches the manifest means the sister changed it and owes us a port; one that matches the
-    sister but not the manifest means both moved and the manifest is stale.
+    For a substance file a byte diff is reported as INFORMATIONAL, with what each side adds, so
+    drift is visible without the check pressuring anyone into deleting an extension to silence it.
     """
     man = {}
     mp = os.path.join(grader, "parity-manifest.json")
@@ -7429,19 +7690,98 @@ def check_shared_bytes(grader):
         a, b = os.path.join(ROOT, rel), os.path.join(grader, rel)
         ha = sha256(a) if os.path.exists(a) else None
         hb = sha256(b) if os.path.exists(b) else None
-        hm = man.get(rel)
-        if ha == hb:
-            verdict = "identical"
-        elif hm and hb == hm:
-            verdict = "DIFFERS - the sister matches the manifest, so this copy is the one adrift"
-        elif hm and ha == hm:
-            verdict = "DIFFERS - this copy matches the manifest, so the sister moved and owes a port"
+        same = ha is not None and ha == hb
+        if rel in VERBATIM:
+            verdict = "identical" if same else (
+                "DRIFT - this file carries no extensions, so the bytes must match")
+            if not same:
+                bad += 1
         else:
-            verdict = "DIFFERS - and neither copy matches the manifest; both moved"
-        if ha != hb:
-            bad += 1
-        rows.append({"file": rel, "ours": ha, "theirs": hb, "manifest": hm, "verdict": verdict})
-    return {"name": "shared bytes", "ok": bad == 0, "detail": rows}
+            verdict = ("identical" if same else
+                       "differs (EXPECTED - substance file; each side keeps its own extensions). "
+                       "Substance is checked by the rungs and maths layers, not here.")
+        rows.append({"file": rel, "class": "verbatim" if rel in VERBATIM else "substance",
+                     "ours": ha, "theirs": hb, "manifest": man.get(rel), "verdict": verdict})
+    return {"name": "shared files (verbatim byte-equal; substance may extend)",
+            "ok": bad == 0, "detail": rows}
+
+
+def check_shared_substance(grader):
+    """The two SUBSTANCE files must agree where it counts, extensions notwithstanding.
+
+    methodology: every canonical rung paragraph must appear verbatim in our copy. Ours may add
+      sections; it may not reword a threshold, which is the drift that changes a grade.
+    relative_strength: both modules are imported and run over the same bars, and every computed
+      number must match. This is the layer that would have caught the ret_over divergence the
+      manifest described - the same series giving a 12-month RS on one side and None on the other.
+    """
+    probs = []
+
+    ours_md = io.open(os.path.join(ROOT, "references", "canslim-methodology.md"),
+                      encoding="utf-8").read()
+    theirs_md = io.open(os.path.join(grader, "references", "canslim-methodology.md"),
+                        encoding="utf-8").read()
+    rungs = re.findall(r"^- \*\*[CANSLIM]\.\*\*.+?(?=\n- \*\*|\n\n)", theirs_md, re.S | re.M)
+    missing = []
+    for r in rungs:
+        norm = " ".join(r.split())
+        if norm not in " ".join(ours_md.split()):
+            missing.append(norm[:110])
+    if not rungs:
+        probs.append("could not find any rung paragraphs in the canonical methodology - the "
+                     "extractor is stale, so this layer is not actually checking anything")
+    if missing:
+        probs.append({"reworded_or_missing_rungs": missing})
+
+    # relative_strength: run both implementations over the same synthetic series.
+    #
+    # Compiled from the SOURCE TEXT, never through the import system, because __pycache__ can and
+    # does lie here. Restoring a file with `cp` rewrites the bytes but can leave a .pyc that
+    # Python still considers valid, so exec_module runs the PREVIOUS edit: this checker spent a
+    # while reporting a maths divergence between two byte-identical functions because our copy was
+    # running a stale tol=0.5 while the file on disk said 0.9. A parity checker that can be fooled
+    # by bytecode would also MISS real drift whenever the stale .pyc happened to agree.
+    import types as _types
+
+    def load(path, name):
+        src = io.open(path, encoding="utf-8").read()
+        mod = _types.ModuleType(name)
+        mod.__file__ = path
+        exec(compile(src, path, "exec"), mod.__dict__)
+        return mod
+
+    try:
+        ours = load(os.path.join(ROOT, "scripts", "relative_strength.py"), "rs_ours")
+        theirs = load(os.path.join(grader, "scripts", "relative_strength.py"), "rs_theirs")
+    except Exception as e:
+        probs.append("could not import both relative_strength copies: %s" % e)
+        return {"name": "shared substance (rungs verbatim, maths identical)",
+                "ok": False, "detail": probs}
+
+    rng = random.Random(20260926)
+    mism = []
+    for case in range(60):
+        n = rng.choice((40, 130, 251, 252, 300))
+        px = [100.0]
+        for _ in range(n - 1):
+            px.append(max(1.0, px[-1] * (1 + rng.uniform(-0.05, 0.05))))
+        bars = [[i, p, p * 1.01, p * 0.99, p, 1000 + i] for i, p in enumerate(px)]
+        bench = [[i, 100, 101, 99, 100 + i * 0.05, 1000] for i in range(n)]
+        d = {"benchmark": {"daily": bench}, "candidates": [{"symbol": "X:Y", "daily": bars}]}
+        ra = ours.analyze(json.loads(json.dumps(d)))["candidates"][0]
+        rb = theirs.analyze(json.loads(json.dumps(d)))["candidates"][0]
+        for k in ("rs_blended", "pct_off_52w_high", "breakout_vol_vs_avg"):
+            va, vb = ra.get(k), rb.get(k)
+            if (va is None) != (vb is None) or (va is not None and abs(va - vb) > 1e-9):
+                mism.append({"case": case, "bars": n, "field": k, "ours": va, "theirs": vb})
+        if ra.get("rs_relative_return") != rb.get("rs_relative_return"):
+            mism.append({"case": case, "bars": n, "field": "rs_relative_return",
+                         "ours": ra.get("rs_relative_return"), "theirs": rb.get("rs_relative_return")})
+    if mism:
+        probs.append({"relative_strength_disagreements": mism[:10],
+                      "total": len(mism)})
+    return {"name": "shared substance (rungs verbatim, maths identical)",
+            "ok": not probs, "checked": 60, "detail": probs}
 
 
 # ------------------------------------------------------------------- layers 2 & 4: arithmetic
@@ -7648,7 +7988,7 @@ def main():
         return 2
 
     seed = a.seed if a.seed is not None else random.randrange(1 << 30)
-    layers = [check_shared_bytes(grader)]
+    layers = [check_shared_bytes(grader), check_shared_substance(grader)]
     try:
         harness = build_harness(grader)
         layers.append(check_arithmetic(harness))
@@ -8343,6 +8683,27 @@ def check_gzip_is_undone_before_parsing():
     raw = b'<a href="/x/01mar2026-31may2026_form13f.zip">z</a>'
     assert ic.maybe_gunzip(_g.compress(raw)) == raw
     assert ic.maybe_gunzip(raw) == raw          # not compressed: passed through untouched
+
+
+def check_sector_screen_derives_its_thresholds_from_the_shared_rubric():
+    """scripts/rubric.py is shared VERBATIM with can-slim-grader, so every threshold it owns must
+    reach sector_screen.py by import, never by being typed again.
+
+    Restating them is exactly how the pair drifted: the same "10% below the 52-week high" meant
+    N<=partial in one skill and N=fail in the other, and nothing failed until a human read both
+    files side by side. A second copy inside THIS repo is the same hazard one level down."""
+    import rubric
+    assert ss.WEIGHT is rubric.WEIGHT, "the scoring weights must BE the shared ones, not a copy"
+    for key, shared in (("min_price", rubric.MIN_PRICE),
+                        ("min_dollar_vol", rubric.MIN_DOLLAR_VOL),
+                        ("max_off_high", rubric.TRIAGE_DROP_PCT),
+                        ("min_rs", rubric.MIN_RS),
+                        ("threshold", rubric.QUALIFY_THRESHOLD),
+                        ("pivot_band", rubric.PIVOT_BAND_PCT),
+                        ("thin_vol", rubric.THIN_VOL)):
+        assert ss.DEFAULTS[key] == shared, (key, ss.DEFAULTS[key], shared)
+    # N's fail line is twice the pivot band in both repos; the sister states it outright.
+    assert rubric.N_FAIL_PCT == 2 * rubric.PIVOT_BAND_PCT, (rubric.N_FAIL_PCT, rubric.PIVOT_BAND_PCT)
 
 
 def check_parity_with_the_sister_skill(tmp):

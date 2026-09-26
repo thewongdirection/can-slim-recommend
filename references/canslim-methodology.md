@@ -305,7 +305,11 @@ decision — the C/A/L + N gate above decides the label.
 - **A.** A company without three years of record — newly public, or freshly restructured — **cannot
   exceed PARTIAL on A**, however good the two years it has.
 - **S.** A stock **below its 200-day** fails S. A PASS wants breakout volume **>=40-50% above the
-  50-day average**, not merely healthy liquidity.
+  50-day average**, not merely healthy liquidity. The method's **price and liquidity floors land on
+  S**: under ~$15 (Nasdaq; ~$20 NYSE) or under ~$20M a day, a stock is not institutionally ownable,
+  so S fails whatever the volume pattern looks like. A screener DROPS such a name because it is
+  choosing among thousands; a single-ticker grade cannot drop the name it was asked about, so it
+  grades it with S failed and says why. Same judgement, different place to put it.
 - **L.** PASS needs clear outperformance **and** the #1 or #2 name in a strong group. Outperforming
   but mid-pack, or leading a group that itself lags, is PARTIAL. **In line with the benchmark is a
   FAIL** — matching the index is not leadership.
@@ -317,3 +321,36 @@ decision — the C/A/L + N gate above decides the label.
 
 Per-skill scoring detail (what counts as partial for each letter, and the verdict definitions)
 lives in each skill's own data guide, not here.
+
+<!-- THIS SKILL'S OWN EXTENSION. Everything above is shared VERBATIM with can-slim-grader; the
+     section below is screener-only and deliberately NOT in the sister's copy. The sister's
+     SKILL.md is explicit that these two files are "no longer byte-identical, and that is
+     expected - port the CHANGE, not the file", because copying either side wholesale deletes
+     the other's work. Commit 6e281fb did exactly that and lost this section; it is restored
+     here, and scripts/check_parity.py now checks shared SUBSTANCE (the rungs verbatim, the maths
+     identical) instead of demanding equal bytes, so keeping this cannot fail the build. -->
+
+## Modern refinements & professional practice (beyond the 1988 book)
+CAN SLIM's core is durable, but apply it with current, professionally-informed judgment — and
+refresh the specifics with web research each run rather than from memory:
+- **Why it works (factor evidence):** the edge is the *momentum* factor (Jegadeesh-Titman;
+  6-12 mo cross-sectional relative strength) combined with *quality* (profitability/ROE — Fama-
+  French RMW, AQR "quality-minus-junk"). A genuine leader is a momentum+quality name, not a
+  low-quality junk rip — down-weight L/S when the strength is purely speculative.
+- **Market structure O'Neil didn't have:** passive/ETF flows, index add/deletes and quarterly
+  rebalances, and dealer options positioning (gamma, 0DTE, max-pain) can extend or reverse moves
+  fast; mega-cap concentration means the index (M) can mask narrow leadership — check breadth
+  (advance/decline, % of stocks above their 50-day), not just the index level.
+- **Macro & event overlay:** Fed path, CPI/jobs prints, earnings-season dispersion, and
+  commodity/geopolitical shocks reprice whole sectors intraday — reflect them in the M score and
+  in stop width.
+- **Volatility regime & sizing:** in high-VIX / under-pressure tapes, cut size, tighten stops
+  toward 3-5%, demand cleaner bases, and require a follow-through day before buying breakouts.
+- **Valuation-sanity overlay (the value-investor lens):** CAN SLIM ignores P/E on purpose, but a
+  professional still flags a leader discounting implausible growth (extreme EV/Sales or P/E vs. its
+  own history and peers) as elevated risk — never *reject* on valuation alone, but note it.
+- **Data hygiene:** prefer as-reported / GAAP-reconciled figures; treat heavily-adjusted non-GAAP,
+  one-time gains, and buyback-inflated EPS skeptically (that is the C/A quality check).
+
+Keep every pick's written reason in CAN SLIM terms; use these refinements to grade more accurately
+and to frame risk, not to smuggle in off-method rationale.
