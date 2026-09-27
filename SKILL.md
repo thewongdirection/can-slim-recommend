@@ -602,7 +602,14 @@ survivorship-bias-free backtest** — say so, and stamp the output as a reconstr
 
 ## Delegating for deeper financials & required companion skills
 This skill screens breadth; for depth on a single name, hand off to a specialized skill rather
-than doing a shallow web dig:
+than doing a shallow web dig.
+
+**These are part of this skill's data sourcing, not optional extras.** `securities-filings-lookup`
+in particular IS the primary source for C and A — it is a rung on the data ladder, the same as a
+connector. Anyone installing this skill should install it too. So on the first run of a session,
+if a companion skill is missing, say so up front rather than at the end: name it, give its repo
+URL, say which weaker source you are using instead, and carry on. The run must not read as though
+the data came from the source it would have preferred.
 
 - **`can-slim-grader`** — **required**: it produces the per-ticker grade this skill's lists are
   built from. Its report also makes a good `reviewUrl` target for the clickable tickers.
@@ -640,6 +647,8 @@ source (the connector ladder in `tradingview-sector-sweep.md`, or web search):
 - `can-slim-grader` → **https://github.com/thewongdirection/can-slim-grader**
 - `ibkr-review-ticker` → **https://github.com/thewongdirection/ibkr-review-ticker**
 - `securities-filings-lookup` → **https://github.com/thewongdirection/securities-filings-lookup**
+  (the C/A data source — flag its absence in the report's source notes, not just in chat, because
+  the report is the artefact that gets shared and read later)
 
 (Example prompt: *"I'd normally grade each candidate with the `can-slim-grader` skill so the 4.5
 cut matches its scale, but it isn't installed. You can add it from

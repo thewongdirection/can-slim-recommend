@@ -23,6 +23,38 @@ checkout in one step. A fresh clone lands on `main` tracking `origin/main`, whic
 upstream the version check needs. For a project-scoped install, clone to
 `{your-project}/.claude/skills/can-slim-recommend` instead.
 
+### Install the companion skills too — data sourcing is a skill *set*
+
+This skill is one of a set, and two of the others are **where some of its data comes from**. It
+runs without them, but it runs on weaker sources and says so in the report, so install all three:
+
+```bash
+git clone https://github.com/thewongdirection/securities-filings-lookup.git \
+  ~/.claude/skills/securities-filings-lookup
+git clone https://github.com/thewongdirection/can-slim-grader.git \
+  ~/.claude/skills/can-slim-grader
+git clone https://github.com/thewongdirection/ibkr-review-ticker.git \
+  ~/.claude/skills/ibkr-review-ticker
+```
+
+- **`securities-filings-lookup`** — **part of this skill's data sourcing, not an optional extra.**
+  It is the **primary source for C and A**: it resolves a ticker to its CIK and returns the
+  company's own 10-K / 10-Q / 20-F straight from the regulator, so a contested EPS or sales figure
+  is settled against the filing instead of a vendor's derived field. Without it, C and A fall back
+  down the connector ladder (TradingView → Daloopa → bigdata.com → LSEG → raw SEC EDGAR → the
+  issuer's IR release → FMP last), and every affected grade is marked as sourced from a fallback.
+  It does **not** supply **I** — sponsorship runs the other way and this skill's own
+  `scripts/institutional_cache.py` aggregates it from 13F filings. See "Requirements" for why
+  pointing the filings lookup at I returns a plausible-looking wrong answer.
+- **`can-slim-grader`** — produces the per-ticker grade the recommendation lists are built from, on
+  the same scale and the same rubric. The two skills share `references/canslim-methodology.md` and
+  `scripts/rubric.py`, and `scripts/check_parity.py` checks they still agree.
+- **`ibkr-review-ticker`** — the deep single-name review, for a candidate that needs an individual
+  financial look before it earns a place on a list.
+
+If one of them is missing, the run does not fail silently: it tells you which skill is absent, and
+which weaker source it used instead.
+
 **Why not the zip.** Step 0 of every run compares this checkout against its git remote. A zip
 export has no `.git`, so there is nothing to compare and the check reports:
 
@@ -297,9 +329,13 @@ skipped, never failed), `@page` margin parsing, the dashboard's self-audit rules
   to FMP last — it is verified plan-gated, so it ranks below web search on every ladder.
 - **`can-slim-grader`** — the sister skill that grades each candidate:
   https://github.com/thewongdirection/can-slim-grader
-- **`securities-filings-lookup`** — the primary source for **C**/**A**: the company's own
-  10-K/10-Q from the regulator, so a contested EPS or sales figure is settled against the filing
-  rather than a vendor's derived field.
+- **`securities-filings-lookup`** — **part of the data-sourcing set, so install it alongside this
+  skill** (see "Install the companion skills too"). It is the primary source for **C**/**A**: the
+  company's own 10-K/10-Q from the regulator, so a contested EPS or sales figure is settled against
+  the filing rather than a vendor's derived field. It cannot supply **I** — it is keyed on the
+  ticker's OWN CIK, and an operating company that files 13Fs lists what *it* owns, not who owns it,
+  so aiming it at sponsorship returns a portfolio dressed as a shareholder base. **I** comes from
+  `scripts/institutional_cache.py` instead.
   https://github.com/thewongdirection/securities-filings-lookup
 - **`www.sec.gov` and `data.sec.gov` reachable** — needed by both the filings lookup and the
   quarterly **I** cache. Without them the skill still runs: I falls back to the volume proxy and
