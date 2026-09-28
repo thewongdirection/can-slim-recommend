@@ -185,23 +185,33 @@ research only for finalists that already survived the technical cut.
 
 **Fundamental source priority (use the highest one that's connected):**
 
-1. **Daloopa** (`daloopa:*` skills, e.g. `daloopa:tearsheet`, `daloopa:industry`, the model
+1. **SEC EDGAR / official filings, via the `securities-filings-lookup` skill** — **part of this
+   skill's data sourcing, not an optional extra**, and the **primary source for C and A**. It
+   resolves the ticker's exchange/regulator and pulls the authoritative primary statements
+   (10-K / 10-Q / 20-F / annual reports; also non-US listings — HKEX, CNINFO, TWSE, LSE, EDINET,
+   Frankfurt), so a contested EPS or sales figure is settled against the filing rather than
+   against a vendor's derived field. Anyone installing this skill should install it too:
+   https://github.com/thewongdirection/securities-filings-lookup. **If it is not installed, say
+   so** — don't silently fall back — then take C/A from the rungs below and flag those figures
+   as vendor-derived. Filings rank above the audited-vendor rungs here for the same reason the
+   Tier-2 ladder in `tradingview-sector-sweep.md` already ranks them first for C/A.
+   **Never use it for I.** It is keyed on the ticker's **own** CIK, and plenty of operating
+   companies are themselves 13F filers: NVDA's CIK carries eleven 13F-HRs, whose information
+   tables list what NVIDIA *owns*, not who owns NVIDIA. Graded as **I** that is a company's
+   portfolio dressed as its shareholder base — a plausible wrong answer, which is worse than an
+   empty one. Sponsorship is an aggregation across every filer in the quarter, which is what
+   `scripts/institutional_cache.py` is for.
+2. **Daloopa** (`daloopa:*` skills, e.g. `daloopa:tearsheet`, `daloopa:industry`, the model
    builders) — audited, model-ready quarterly & annual financials plus operating KPIs. Best
    for the exact EPS / sales / margin / ROE growth figures and the multi-year history behind
    **C** and **A**.
-2. **bigdata.com** (`bigdata-com:*`, e.g. `company-brief`, `earnings-digest`,
+3. **bigdata.com** (`bigdata-com:*`, e.g. `company-brief`, `earnings-digest`,
    `earnings-quality-screen`, `valuation-snapshot`) — latest-quarter beat / acceleration /
    guidance for **C**, an earnings-quality read that catches the "earnings up but sales flat /
    weak cash conversion" trap, and the **N** story.
-3. **LSEG** (`lseg:*`, e.g. `lseg:equity-research`) — analyst **consensus estimates** and
+4. **LSEG** (`lseg:*`, e.g. `lseg:equity-research`) — analyst **consensus estimates** and
    fundamentals: next-year EPS estimate (part of **A**), plus estimate revisions and surprise
    history (the acceleration signal in **C**).
-4. **SEC EDGAR / official filings** — the authoritative primary statements (10-K / 10-Q /
-   20-F / annual reports). Reach them via the **`securities-filings-lookup`** skill, which
-   resolves the ticker's exchange/regulator and pulls the official filing (also covers non-US
-   listings: HKEX, CNINFO, TWSE, LSE, EDINET, Frankfurt). Use for ground-truth income
-   statement / balance sheet / cash flow, and for **I** (13F institutional ownership, Form 4
-   management ownership).
 5. **Financial Modeling Prep (FMP)** — a structured fundamentals MCP (deferred; load its tools
    with `ToolSearch`). **THE LAST RUNG ON EVERY LADDER, below web search**, and the only connector
    ranked beneath generic web research. On lower-tier plans it is heavily gated *and* throttled —
@@ -225,8 +235,10 @@ research only for finalists that already survived the technical cut.
      denied, get RS from IBKR weekly/daily bars via `scripts/relative_strength.py` instead.
    - **Premium / commonly gated:** `statements` (income / growth / ratios), `analyst`
      (estimates, grades, targets), `form13F` + `insiderTrades`, `earningsTranscript`,
-     `discountedCashFlow`. When these are gated, the **C**/**A** earnings figures and **I**
-     ownership come from the official filings (rung 4) or web research (rung 6) instead.
+     `discountedCashFlow`. When these are gated, the **C**/**A** earnings figures come from the
+     official filings (rung 1) or web research (rung 6) instead, and **I** from
+     `scripts/institutional_cache.py` — never from the filings rung, which answers what a
+     company owns rather than who owns it.
    IBKR tickers vs FMP symbols line up for US names; IBKR name-search is unreliable, so resolve
    IBKR `contract_id`s by **ticker**, not company name.
 6. **General web search** — the universal fallback when the connected sources above cannot
