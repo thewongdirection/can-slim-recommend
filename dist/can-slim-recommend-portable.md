@@ -767,10 +767,11 @@ than doing a shallow web dig:
 - **`ibkr-review-ticker`** — the fullest single-stock dashboard (fundamentals vs. peers,
   valuation, options/volatility positioning, probability outlook). Invoke it for a candidate that
   needs an individual financial review before it earns a spot on either list.
-- **`securities-filings-lookup`** — **the primary source for C and A.** It resolves the ticker to
-  its CIK and returns that company's own 10-K / 10-Q / 20-F straight from the regulator, so a
-  contested EPS or sales figure is settled against the filing rather than a vendor's derived
-  field. Verified working: `python scripts/fetch_us_filings.py NVDA --forms 10-Q,10-K --limit 3`
+- **`securities-filings-lookup`** — **part of this skill's data sourcing, not an optional extra,
+  and the primary source for C and A.** Anyone installing this skill should install it too. It
+  resolves the ticker to its CIK and returns that company's own 10-K / 10-Q / 20-F straight from
+  the regulator, so a contested EPS or sales figure is settled against the filing rather than a
+  vendor's derived field. Verified working: `python scripts/fetch_us_filings.py NVDA --forms 10-Q,10-K --limit 3`
   returns real filing URLs with their periods. Reach for it whenever TradingView's financials look
   thin, a restatement has broken TTM growth, or a number is worth arguing about. It needs
   `www.sec.gov` and `data.sec.gov` reachable.
@@ -2184,23 +2185,33 @@ research only for finalists that already survived the technical cut.
 
 **Fundamental source priority (use the highest one that's connected):**
 
-1. **Daloopa** (`daloopa:*` skills, e.g. `daloopa:tearsheet`, `daloopa:industry`, the model
+1. **SEC EDGAR / official filings, via the `securities-filings-lookup` skill** — **part of this
+   skill's data sourcing, not an optional extra**, and the **primary source for C and A**. It
+   resolves the ticker's exchange/regulator and pulls the authoritative primary statements
+   (10-K / 10-Q / 20-F / annual reports; also non-US listings — HKEX, CNINFO, TWSE, LSE, EDINET,
+   Frankfurt), so a contested EPS or sales figure is settled against the filing rather than
+   against a vendor's derived field. Anyone installing this skill should install it too:
+   https://github.com/thewongdirection/securities-filings-lookup. **If it is not installed, say
+   so** — don't silently fall back — then take C/A from the rungs below and flag those figures
+   as vendor-derived. Filings rank above the audited-vendor rungs here for the same reason the
+   Tier-2 ladder in `tradingview-sector-sweep.md` already ranks them first for C/A.
+   **Never use it for I.** It is keyed on the ticker's **own** CIK, and plenty of operating
+   companies are themselves 13F filers: NVDA's CIK carries eleven 13F-HRs, whose information
+   tables list what NVIDIA *owns*, not who owns NVIDIA. Graded as **I** that is a company's
+   portfolio dressed as its shareholder base — a plausible wrong answer, which is worse than an
+   empty one. Sponsorship is an aggregation across every filer in the quarter, which is what
+   `scripts/institutional_cache.py` is for.
+2. **Daloopa** (`daloopa:*` skills, e.g. `daloopa:tearsheet`, `daloopa:industry`, the model
    builders) — audited, model-ready quarterly & annual financials plus operating KPIs. Best
    for the exact EPS / sales / margin / ROE growth figures and the multi-year history behind
    **C** and **A**.
-2. **bigdata.com** (`bigdata-com:*`, e.g. `company-brief`, `earnings-digest`,
+3. **bigdata.com** (`bigdata-com:*`, e.g. `company-brief`, `earnings-digest`,
    `earnings-quality-screen`, `valuation-snapshot`) — latest-quarter beat / acceleration /
    guidance for **C**, an earnings-quality read that catches the "earnings up but sales flat /
    weak cash conversion" trap, and the **N** story.
-3. **LSEG** (`lseg:*`, e.g. `lseg:equity-research`) — analyst **consensus estimates** and
+4. **LSEG** (`lseg:*`, e.g. `lseg:equity-research`) — analyst **consensus estimates** and
    fundamentals: next-year EPS estimate (part of **A**), plus estimate revisions and surprise
    history (the acceleration signal in **C**).
-4. **SEC EDGAR / official filings** — the authoritative primary statements (10-K / 10-Q /
-   20-F / annual reports). Reach them via the **`securities-filings-lookup`** skill, which
-   resolves the ticker's exchange/regulator and pulls the official filing (also covers non-US
-   listings: HKEX, CNINFO, TWSE, LSE, EDINET, Frankfurt). Use for ground-truth income
-   statement / balance sheet / cash flow, and for **I** (13F institutional ownership, Form 4
-   management ownership).
 5. **Financial Modeling Prep (FMP)** — a structured fundamentals MCP (deferred; load its tools
    with `ToolSearch`). **THE LAST RUNG ON EVERY LADDER, below web search**, and the only connector
    ranked beneath generic web research. On lower-tier plans it is heavily gated *and* throttled —
@@ -2224,8 +2235,10 @@ research only for finalists that already survived the technical cut.
      denied, get RS from IBKR weekly/daily bars via `scripts/relative_strength.py` instead.
    - **Premium / commonly gated:** `statements` (income / growth / ratios), `analyst`
      (estimates, grades, targets), `form13F` + `insiderTrades`, `earningsTranscript`,
-     `discountedCashFlow`. When these are gated, the **C**/**A** earnings figures and **I**
-     ownership come from the official filings (rung 4) or web research (rung 6) instead.
+     `discountedCashFlow`. When these are gated, the **C**/**A** earnings figures come from the
+     official filings (rung 1) or web research (rung 6) instead, and **I** from
+     `scripts/institutional_cache.py` — never from the filings rung, which answers what a
+     company owns rather than who owns it.
    IBKR tickers vs FMP symbols line up for US names; IBKR name-search is unreliable, so resolve
    IBKR `contract_id`s by **ticker**, not company name.
 6. **General web search** — the universal fallback when the connected sources above cannot
@@ -10061,6 +10074,165 @@ def check_every_script_compiles():
     for f in sorted(os.listdir(d)):
         if f.endswith(".py"):
             py_compile.compile(os.path.join(d, f), doraise=True)
+
+
+# ------------------------------------------------- securities-filings-lookup sourcing
+
+"""Where C/A come from, and the one place that skill must never be used.
+
+Ported from can-slim-grader, where the same two contradictions were found and fixed. Both
+repos now state this policy identically, and both pin it.
+
+The sharp half is the second one. `securities-filings-lookup` resolves ticker -> that
+company's OWN CIK, so an operating company which is itself a 13F filer returns what it OWNS
+rather than who owns it - NVDA's CIK carries eleven 13F-HRs listing Coherent, CoreWeave,
+Intel, Nebius, Nokia and Synopsys. Graded as I that is a portfolio dressed as a shareholder
+base: a plausible wrong answer, which is worse than an empty one. Sponsorship is an
+aggregation across every filer, which is what institutional_cache.py is for. The IBKR guide
+said to use the filings skill for I until this port, contradicting the sweep guide two files
+over.
+"""
+
+FILINGS = "securities-filings-lookup"
+_I_SOURCING = re.compile(r"13F|Form 4|sponsorship|institutional ownership", re.I)
+# A negation has to sit NEXT to the mention, not merely somewhere in the same sentence: in the
+# grader a sentence-wide check passed the old wording, because an unrelated "cannot" earlier in
+# the same sentence satisfied it. 48 characters either side is what makes this able to fail.
+_NEGATION = re.compile(r"\bnot\b|\bcannot\b|\bcan't\b|\bnever\b|\binstead\b|\bwrong\b", re.I)
+_NEAR = 48
+# The name-based check above is blind to a pronoun: "Also use IT for I" reintroduced the bug and
+# passed, because the claim never repeats the skill's name. Inside the rung that IS the filings
+# skill, an imperative "use ... for I" is wrong however it refers to the skill, so that block gets
+# its own rule. Descriptive prose ("Graded as I that is...") is not imperative and is left alone.
+_USE_FOR_I = re.compile(
+    r"\b(?:use|used|using|take|taken|takes|source|sourced|reach|pull|get|fetch)\b"
+    r"[^.]{0,60}?\b(?:for|at|from)\s+\*?\*?I\*?\*?(?=[\s.,:;)]|$)", re.I)
+_BEFORE = 34   # characters before the match that must carry the negation
+
+_DOCS = ("SKILL.md",
+         os.path.join("references", "ibkr-data-guide.md"),
+         os.path.join("references", "tradingview-sector-sweep.md"))
+
+
+def _doc(rel):
+    return io.open(os.path.join(ROOT, rel), encoding="utf-8").read()
+
+
+def _ladder(ibkr):
+    """Just the fundamental-source ladder. Slicing to end-of-file swallowed the numbered list
+    that follows it, whose own "1." silently overwrote rung 1 and made this pass on a broken
+    cross-reference."""
+    start = ibkr.index("**Fundamental source priority")
+    return ibkr[start:ibkr.index("**Handling gated / throttled", start)]
+
+
+def _claims(text):
+    """Claim-sized chunks. A Markdown table ROW is its own claim - table rows carry no full
+    stops, so flattening a table into one chunk would let a legitimate C/A mention sit beside
+    the I row and mask exactly the pairing these checks look for."""
+    out = []
+    for blk in re.split(r"\n\s*\n", text):
+        lines = blk.split("\n")
+        out.extend(" ".join(r.split()) for r in lines if r.lstrip().startswith("|"))
+        rest = " ".join(" ".join(l.split()) for l in lines if not l.lstrip().startswith("|"))
+        out.extend(s for s in re.split(r"(?<=[.!?])\s+", rest) if s)
+    return out
+
+
+def check_filings_lookup_is_documented_as_part_of_the_data_sourcing():
+    """A reader who never installs it grades C/A off vendor-derived fields, unwarned."""
+    s, ibkr = _doc("SKILL.md"), _doc(os.path.join("references", "ibkr-data-guide.md"))
+    for doc, rel in ((s, "SKILL.md"), (ibkr, "references/ibkr-data-guide.md")):
+        flat = " ".join(doc.split())
+        assert "part of this skill's data sourcing, not an optional extra" in flat, \
+            "%s does not call %s part of the data sourcing" % (rel, FILINGS)
+        assert re.search(r"primary source for C and A", flat), \
+            "%s does not name it primary for C/A" % rel
+    assert "https://github.com/thewongdirection/" + FILINGS in ibkr, \
+        "the IBKR guide gives no repo to install it from"
+    assert "should install it too" in " ".join(s.split()), \
+        "SKILL.md never tells the user to install it alongside this skill"
+
+
+def check_a_missing_filings_skill_is_reported_not_silently_absorbed():
+    ibkr = " ".join(_doc(os.path.join("references", "ibkr-data-guide.md")).split())
+    assert "If it is not installed, say so" in ibkr, "the IBKR guide allows a silent fallback"
+    assert "vendor-derived" in ibkr, "it never says what the substituted figures are"
+
+
+def check_filings_lookup_is_never_offered_as_a_source_for_I():
+    """The whole point of the port: it answers what a company OWNS, not who owns it."""
+    for rel in _DOCS:
+        for claim in _claims(_doc(rel)):
+            if FILINGS not in claim or not _I_SOURCING.search(claim):
+                continue
+            for m in re.finditer(re.escape(FILINGS), claim):
+                win = claim[max(0, m.start() - _NEAR):m.end() + _NEAR]
+                assert _NEGATION.search(win), \
+                    "%s names %s as an I source: %s" % (rel, FILINGS, claim[:200])
+
+
+def check_the_filings_rung_never_tells_anyone_to_source_I_from_it():
+    """Pronoun-proof version of the check above, scoped to the rung about the filings skill."""
+    rung = _ladder(_doc(os.path.join("references", "ibkr-data-guide.md")))
+    rung = " ".join(rung[:rung.index("\n2. **")].split())
+    for m in _USE_FOR_I.finditer(rung):
+        lead = rung[max(0, m.start() - _BEFORE):m.start()]
+        assert _NEGATION.search(lead) or _NEGATION.search(m.group(0)), \
+            "the filings rung tells the run to source I from it: %r" % m.group(0)
+
+
+def check_the_cik_trap_is_explained_with_its_evidence():
+    """Without the worked example this reads as a rule to be argued with rather than a finding."""
+    for rel in ("SKILL.md", os.path.join("references", "ibkr-data-guide.md"),
+                os.path.join("references", "tradingview-sector-sweep.md")):
+        flat = " ".join(_doc(rel).split())
+        assert re.search(r"(?:keyed on the ticker's|resolves ticker).{0,40}CIK", flat), \
+            "%s omits the ticker -> own-CIK mechanism" % rel
+        assert "eleven 13F-HRs" in flat, "%s omits the NVDA evidence" % rel
+        assert re.search(r"not who owns NVIDIA", flat), "%s omits the direction" % rel
+
+
+def check_I_is_sourced_by_aggregating_across_filers():
+    for rel in _DOCS:
+        flat = " ".join(_doc(rel).split())
+        assert "institutional_cache.py" in flat, \
+            "%s never points I at the 13F aggregation" % rel
+        assert re.search(r"aggregation across (?:every )?filer", flat), \
+            "%s never says I is an aggregation rather than a lookup" % rel
+
+
+def check_the_two_fundamental_ladders_agree_on_what_comes_first():
+    """They ranked the same four sources oppositely: the Tier-2 table put filings first for C/A
+    while the IBKR ladder had them 4th, below Daloopa/bigdata/LSEG. Same question, two answers."""
+    ibkr = _doc(os.path.join("references", "ibkr-data-guide.md"))
+    body = _ladder(ibkr)
+    rungs = re.findall(r"^(\d+)\. \*\*(.+?)\*\*", body, re.M)
+    assert rungs, "the fundamental ladder has moved"
+    first_n, first_name = rungs[0]
+    assert first_n == "1" and FILINGS in first_name, \
+        "the IBKR ladder no longer opens with the filings rung: %r" % (rungs[0],)
+    for n, name in rungs[1:]:
+        assert FILINGS not in name, "%s is also ranked as fallback %s" % (FILINGS, n)
+
+    sweep = _doc(os.path.join("references", "tradingview-sector-sweep.md"))
+    row = re.search(r"^\| C / A fundamentals \|.*$", sweep, re.M)
+    assert row, "the Tier-2 C/A row has moved"
+    order = row.group(0)
+    assert order.index(FILINGS) < order.index("Daloopa"), \
+        "the Tier-2 table no longer puts the filings skill first for C/A"
+
+
+def check_no_dangling_rung_number_references():
+    """Renumbering a ladder silently breaks every cross-reference into it."""
+    ibkr = _doc(os.path.join("references", "ibkr-data-guide.md"))
+    rungs = dict((n, name) for n, name
+                 in re.findall(r"^(\d+)\. \*\*(.+?)\*\*", _ladder(ibkr), re.M))
+    for n in re.findall(r"rung (\d+)", ibkr):
+        assert n in rungs, "text refers to rung %s, which the ladder does not have" % n
+    m = re.search(r"official filings \(rung (\d+)\)", ibkr)
+    assert m and FILINGS in rungs[m.group(1)], \
+        "the 'official filings (rung N)' cross-reference points at the wrong rung"
 
 
 # ---------------------------------------------------------------- runner

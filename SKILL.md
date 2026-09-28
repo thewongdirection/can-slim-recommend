@@ -609,10 +609,11 @@ than doing a shallow web dig:
 - **`ibkr-review-ticker`** — the fullest single-stock dashboard (fundamentals vs. peers,
   valuation, options/volatility positioning, probability outlook). Invoke it for a candidate that
   needs an individual financial review before it earns a spot on either list.
-- **`securities-filings-lookup`** — **the primary source for C and A.** It resolves the ticker to
-  its CIK and returns that company's own 10-K / 10-Q / 20-F straight from the regulator, so a
-  contested EPS or sales figure is settled against the filing rather than a vendor's derived
-  field. Verified working: `python scripts/fetch_us_filings.py NVDA --forms 10-Q,10-K --limit 3`
+- **`securities-filings-lookup`** — **part of this skill's data sourcing, not an optional extra,
+  and the primary source for C and A.** Anyone installing this skill should install it too. It
+  resolves the ticker to its CIK and returns that company's own 10-K / 10-Q / 20-F straight from
+  the regulator, so a contested EPS or sales figure is settled against the filing rather than a
+  vendor's derived field. Verified working: `python scripts/fetch_us_filings.py NVDA --forms 10-Q,10-K --limit 3`
   returns real filing URLs with their periods. Reach for it whenever TradingView's financials look
   thin, a restatement has broken TTM growth, or a number is worth arguing about. It needs
   `www.sec.gov` and `data.sec.gov` reachable.
