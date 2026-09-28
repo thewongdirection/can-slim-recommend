@@ -760,7 +760,14 @@ survivorship-bias-free backtest** — say so, and stamp the output as a reconstr
 
 ## Delegating for deeper financials & required companion skills
 This skill screens breadth; for depth on a single name, hand off to a specialized skill rather
-than doing a shallow web dig:
+than doing a shallow web dig.
+
+**These are part of this skill's data sourcing, not optional extras.** `securities-filings-lookup`
+in particular IS the primary source for C and A — it is a rung on the data ladder, the same as a
+connector. Anyone installing this skill should install it too. So on the first run of a session,
+if a companion skill is missing, say so up front rather than at the end: name it, give its repo
+URL, say which weaker source you are using instead, and carry on. The run must not read as though
+the data came from the source it would have preferred.
 
 - **`can-slim-grader`** — **required**: it produces the per-ticker grade this skill's lists are
   built from. Its report also makes a good `reviewUrl` target for the clickable tickers.
@@ -799,6 +806,8 @@ source (the connector ladder in `tradingview-sector-sweep.md`, or web search):
 - `can-slim-grader` → **https://github.com/thewongdirection/can-slim-grader**
 - `ibkr-review-ticker` → **https://github.com/thewongdirection/ibkr-review-ticker**
 - `securities-filings-lookup` → **https://github.com/thewongdirection/securities-filings-lookup**
+  (the C/A data source — flag its absence in the report's source notes, not just in chat, because
+  the report is the artefact that gets shared and read later)
 
 (Example prompt: *"I'd normally grade each candidate with the `can-slim-grader` skill so the 4.5
 cut matches its scale, but it isn't installed. You can add it from
@@ -894,6 +903,38 @@ That is the whole install. It works because `SKILL.md` sits at the repo root, so
 checkout in one step. A fresh clone lands on `main` tracking `origin/main`, which is exactly the
 upstream the version check needs. For a project-scoped install, clone to
 `{your-project}/.claude/skills/can-slim-recommend` instead.
+
+### Install the companion skills too — data sourcing is a skill *set*
+
+This skill is one of a set, and two of the others are **where some of its data comes from**. It
+runs without them, but it runs on weaker sources and says so in the report, so install all three:
+
+```bash
+git clone https://github.com/thewongdirection/securities-filings-lookup.git \
+  ~/.claude/skills/securities-filings-lookup
+git clone https://github.com/thewongdirection/can-slim-grader.git \
+  ~/.claude/skills/can-slim-grader
+git clone https://github.com/thewongdirection/ibkr-review-ticker.git \
+  ~/.claude/skills/ibkr-review-ticker
+```
+
+- **`securities-filings-lookup`** — **part of this skill's data sourcing, not an optional extra.**
+  It is the **primary source for C and A**: it resolves a ticker to its CIK and returns the
+  company's own 10-K / 10-Q / 20-F straight from the regulator, so a contested EPS or sales figure
+  is settled against the filing instead of a vendor's derived field. Without it, C and A fall back
+  down the connector ladder (TradingView → Daloopa → bigdata.com → LSEG → raw SEC EDGAR → the
+  issuer's IR release → FMP last), and every affected grade is marked as sourced from a fallback.
+  It does **not** supply **I** — sponsorship runs the other way and this skill's own
+  `scripts/institutional_cache.py` aggregates it from 13F filings. See "Requirements" for why
+  pointing the filings lookup at I returns a plausible-looking wrong answer.
+- **`can-slim-grader`** — produces the per-ticker grade the recommendation lists are built from, on
+  the same scale and the same rubric. The two skills share `references/canslim-methodology.md` and
+  `scripts/rubric.py`, and `scripts/check_parity.py` checks they still agree.
+- **`ibkr-review-ticker`** — the deep single-name review, for a candidate that needs an individual
+  financial look before it earns a place on a list.
+
+If one of them is missing, the run does not fail silently: it tells you which skill is absent, and
+which weaker source it used instead.
 
 **Why not the zip.** Step 0 of every run compares this checkout against its git remote. A zip
 export has no `.git`, so there is nothing to compare and the check reports:
@@ -1169,9 +1210,13 @@ skipped, never failed), `@page` margin parsing, the dashboard's self-audit rules
   to FMP last — it is verified plan-gated, so it ranks below web search on every ladder.
 - **`can-slim-grader`** — the sister skill that grades each candidate:
   https://github.com/thewongdirection/can-slim-grader
-- **`securities-filings-lookup`** — the primary source for **C**/**A**: the company's own
-  10-K/10-Q from the regulator, so a contested EPS or sales figure is settled against the filing
-  rather than a vendor's derived field.
+- **`securities-filings-lookup`** — **part of the data-sourcing set, so install it alongside this
+  skill** (see "Install the companion skills too"). It is the primary source for **C**/**A**: the
+  company's own 10-K/10-Q from the regulator, so a contested EPS or sales figure is settled against
+  the filing rather than a vendor's derived field. It cannot supply **I** — it is keyed on the
+  ticker's OWN CIK, and an operating company that files 13Fs lists what *it* owns, not who owns it,
+  so aiming it at sponsorship returns a portfolio dressed as a shareholder base. **I** comes from
+  `scripts/institutional_cache.py` instead.
   https://github.com/thewongdirection/securities-filings-lookup
 - **`www.sec.gov` and `data.sec.gov` reachable** — needed by both the filings lookup and the
   quarterly **I** cache. Without them the skill still runs: I falls back to the volume proxy and
@@ -10066,6 +10111,39 @@ def check_the_prose_grades_the_same_way_the_code_does():
     assert any("50-day" in f for f in ext["flags"]), "the run-up must still be reported"
     assert not any("50-day" in d for d in ext["drop_reasons"]), \
         "extension is context, never a disqualification"
+
+
+def check_the_companion_data_skills_are_documented_as_installs():
+    """`securities-filings-lookup` is not a nice-to-have; it is the PRIMARY source for C and A.
+
+    A reader who installs this skill alone gets a working run whose C and A quietly come off a
+    fallback rung, and nothing on the page says a better source existed. So the install
+    instructions have to name it as something to download, with its repo URL, in the place where
+    someone is actually cloning things - a mention buried in a reference file reaches the model
+    and not the person. Pinned because doc trims delete exactly this kind of paragraph: it reads
+    like an aside, and the only symptom of losing it is a quieter, worse-sourced report.
+    """
+    readme = io.open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    skill = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+
+    install = readme.split("## Install", 1)
+    assert len(install) == 2, "README has no ## Install section"
+    install = install[1].split("\n## ", 1)[0]
+    for repo in ("securities-filings-lookup", "can-slim-grader", "ibkr-review-ticker"):
+        url = "https://github.com/thewongdirection/%s" % repo
+        assert url in install, \
+            "README's Install section never tells the reader to get %s from %s" % (repo, url)
+    assert re.search(r"git clone\s+\S*securities-filings-lookup", install), \
+        "the filings lookup is named in Install but not as something to clone"
+
+    # ...and both documents have to say WHY, or the reader treats it as an optional extra.
+    for name, text in (("README", readme), ("SKILL.md", skill)):
+        assert re.search(r"(?:part of|one of).{0,60}data.{0,20}sourc", text, re.I), \
+            "%s does not say the companion skills are part of this skill's data sourcing" % name
+
+    # A missing companion must be reported, never silently swapped for a weaker rung.
+    assert "not installed" in skill and "install it" in skill.lower(), \
+        "SKILL.md no longer tells the run to prompt for a missing companion skill"
 
 
 def check_every_script_compiles():

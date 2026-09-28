@@ -1955,6 +1955,39 @@ def check_the_prose_grades_the_same_way_the_code_does():
         "extension is context, never a disqualification"
 
 
+def check_the_companion_data_skills_are_documented_as_installs():
+    """`securities-filings-lookup` is not a nice-to-have; it is the PRIMARY source for C and A.
+
+    A reader who installs this skill alone gets a working run whose C and A quietly come off a
+    fallback rung, and nothing on the page says a better source existed. So the install
+    instructions have to name it as something to download, with its repo URL, in the place where
+    someone is actually cloning things - a mention buried in a reference file reaches the model
+    and not the person. Pinned because doc trims delete exactly this kind of paragraph: it reads
+    like an aside, and the only symptom of losing it is a quieter, worse-sourced report.
+    """
+    readme = io.open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    skill = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+
+    install = readme.split("## Install", 1)
+    assert len(install) == 2, "README has no ## Install section"
+    install = install[1].split("\n## ", 1)[0]
+    for repo in ("securities-filings-lookup", "can-slim-grader", "ibkr-review-ticker"):
+        url = "https://github.com/thewongdirection/%s" % repo
+        assert url in install, \
+            "README's Install section never tells the reader to get %s from %s" % (repo, url)
+    assert re.search(r"git clone\s+\S*securities-filings-lookup", install), \
+        "the filings lookup is named in Install but not as something to clone"
+
+    # ...and both documents have to say WHY, or the reader treats it as an optional extra.
+    for name, text in (("README", readme), ("SKILL.md", skill)):
+        assert re.search(r"(?:part of|one of).{0,60}data.{0,20}sourc", text, re.I), \
+            "%s does not say the companion skills are part of this skill's data sourcing" % name
+
+    # A missing companion must be reported, never silently swapped for a weaker rung.
+    assert "not installed" in skill and "install it" in skill.lower(), \
+        "SKILL.md no longer tells the run to prompt for a missing companion skill"
+
+
 def check_every_script_compiles():
     import py_compile
     d = os.path.join(ROOT, "scripts")
