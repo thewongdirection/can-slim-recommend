@@ -2064,7 +2064,7 @@ def check_filings_lookup_is_documented_as_part_of_the_data_sourcing():
     s, ibkr = _doc("SKILL.md"), _doc(os.path.join("references", "ibkr-data-guide.md"))
     for doc, rel in ((s, "SKILL.md"), (ibkr, "references/ibkr-data-guide.md")):
         flat = " ".join(doc.split())
-        assert "part of this skill's data sourcing, not an optional extra" in flat, \
+        assert re.search(r"part of this skill's data sourcing, not (?:an )?optional extras?", flat), \
             "%s does not call %s part of the data sourcing" % (rel, FILINGS)
         assert re.search(r"primary source for C and A", flat), \
             "%s does not name it primary for C/A" % rel
