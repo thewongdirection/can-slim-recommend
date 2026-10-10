@@ -51,9 +51,11 @@ matching against the candidate list from the sweep (--universe). Names that reso
 are reported in `unresolved` rather than silently dropped, because a name missing from the cache
 must fall through to the proxy, not be graded on absent data.
 
-FAILS OPEN, ALWAYS. No network, a moved URL, a corrupt zip - none of these stop a run. The script
-says what it could not do and exits 0 with an empty cache, and `--fallback` merges in
-accumulation.py's volume proxy for every ticker 13F could not answer. Provenance is recorded per
+FAILS OPEN. No network, a moved URL, a corrupt zip - none of these stop a run. The script says what
+it could not do and exits 0 with an empty cache (or keeps an existing good build of the SAME
+quarter), and `--fallback` merges in accumulation.py's volume proxy for every ticker 13F could not
+answer. The one exception is a missing or unusable contact address: that stops immediately (exit
+2), because every request would be refused. Provenance is recorded per
 ticker in `detail[t]["source"]`, so the report can say which evidence graded each letter.
 
 Usage:
@@ -133,6 +135,10 @@ def resolve_contact(cli_contact):
         return None, "no SEC contact address configured. " + CONTACT_HELP
     if not EMAIL_RE.match(c):
         return None, "SEC contact %r is not an email address. %s" % (c, CONTACT_HELP)
+    if re.search(r"no-?reply", c, re.I):
+        # Measured above: x@users.noreply.github.com is a 403. It parses fine, so without this the
+        # first symptom is a rejected request, not a message that names the address.
+        return None, "SEC contact %r is a no-reply address, which SEC blocks. %s" % (c, CONTACT_HELP)
     return c, None
 
 MONTHS = {m: i + 1 for i, m in enumerate(
@@ -277,15 +283,24 @@ def period_end(quarter):
     m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", q)
     if m:
         y, mo, d = m.groups()
+        if int(mo) not in MONTH_NAME:       # was a KeyError, which build() does not catch
+            raise ValueError("cannot read %r as a quarter: %s is not a month" % (quarter, mo))
         return "%s-%s-%s" % (d, MONTH_NAME[int(mo)].upper(), y)
     raise ValueError("cannot read %r as a quarter (want 2026Q1 or 2026-03-31)" % quarter)
 
 
 def prior_quarter(quarter):
     """The quarter before it, in the same '2026Q1' form."""
-    m = re.match(r"^(\d{4})-?Q([1-4])$", str(quarter).strip().upper())
+    s = str(quarter).strip().upper()
+    m = re.match(r"^(\d{4})-?Q([1-4])$", s)
     if not m:
-        return None
+        # --quarter accepts an ISO date too (period_end does), and "--prior ... derived from
+        # --quarter" has to honour that: None meant NO PRIOR QUARTER, so every grade was capped at
+        # partial for want of a trend, with nothing saying the date form was why.
+        d = re.match(r"^(\d{4})-(\d{2})-\d{2}$", s)
+        if not d or not 1 <= int(d.group(2)) <= 12:
+            return None
+        m = re.match(r"^(\d{4})-?Q([1-4])$", "%sQ%d" % (d.group(1), (int(d.group(2)) - 1) // 3 + 1))
     y, q = int(m.group(1)), int(m.group(2))
     return "%dQ%d" % (y - 1, 4) if q == 1 else "%dQ%d" % (y, q - 1)
 
@@ -327,7 +342,22 @@ def _table(z, name):
     if not m:
         return []
     with z.open(m) as f:
-        return list(csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"), delimiter="\t"))
+        return list(csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"), delimiter="\t",
+                                   quoting=csv.QUOTE_NONE))
+
+
+def _filed_key(s):
+    """A FILING_DATE as a sortable ISO string, or '' if unreadable.
+
+    SEC writes it dd-MON-yyyy ("05-MAY-2026"). Compared as TEXT, "30-APR-2026" sorts AFTER
+    "05-MAY-2026" (and 2025 after 2026 across a year boundary), so the wrong restatement was kept.
+    """
+    s = (s or "").strip()
+    m = re.match(r"^(\d{1,2})-([A-Za-z]{3})-(\d{4})", s)
+    if m and m.group(2).lower() in MONTHS:
+        return "%s-%02d-%02d" % (m.group(3), MONTHS[m.group(2).lower()], int(m.group(1)))
+    m = re.match(r"^\d{4}-\d{2}-\d{2}", s)
+    return m.group(0) if m else ""
 
 
 def select_filings(z, period):
@@ -340,8 +370,9 @@ def select_filings(z, period):
         count MANAGERS rather than filings;
       * only PERIODOFREPORT == period, because one file carries late filings for many quarters;
       * only 13F-HR/13F-HR/A, because 13F-NT is a notice that reports no holdings at all;
-      * a RESTATEMENT amendment SUPERSEDES that manager's earlier filing for the period, so only
-        the latest one is kept; a NEW HOLDINGS amendment adds and is kept alongside.
+      * a RESTATEMENT amendment SUPERSEDES that manager's earlier filings for the period, so the
+        latest restatement (by parsed filing date) is kept; a NEW HOLDINGS amendment ADDS, so any
+        filed after that restatement is kept alongside it.
 
     Returns (accession -> manager CIK, stats).
     """
@@ -358,24 +389,42 @@ def select_filings(z, period):
     for a in cand:
         by_cik.setdefault((sub[a].get("CIK") or a).strip(), []).append(a)
 
+    filed = lambda a: (_filed_key(sub[a].get("FILING_DATE")), a)
     keep, superseded = {}, 0
     for cik, accs in by_cik.items():
         restatements = [a for a in accs
                         if (cov.get(a, {}).get("AMENDMENTTYPE") or "").strip().upper()
                         == "RESTATEMENT"]
         if restatements:
-            latest = max(restatements, key=lambda a: (sub[a].get("FILING_DATE") or "", a))
-            keep[latest] = cik
-            superseded += len(accs) - 1
+            latest = max(restatements, key=filed)
+            # The restatement replaces everything filed before it; whatever was filed AFTER it
+            # (a NEW HOLDINGS amendment) is new information it could not have replaced.
+            kept = [latest] + [a for a in accs if a not in restatements and filed(a) > filed(latest)]
         else:
-            for a in accs:
-                keep[a] = cik
+            kept = accs
+        for a in kept:
+            keep[a] = cik
+        superseded += len(accs) - len(kept)
     return keep, {"submissions": len(sub), "for_period": len(cand), "managers": len(by_cik),
                   "accessions_kept": len(keep), "superseded_by_restatement": superseded}
 
 
 def aggregate(zbytes, period):
-    """Aggregate one period's holdings by CUSIP. Returns ({cusip: {...}}, note).
+    """Aggregate one period's holdings by CUSIP. Returns ({cusip: {...}}, note), or (None, why).
+
+    Never raises. Only opening the archive was guarded, so a download truncated or corrupted
+    INSIDE a member (a bad CRC, a zlib error, a missing column) escaped as a traceback and exit 1:
+    no cache written and --fallback never merged, against this module's own promise to fail open.
+    A half-read aggregate is thrown away, never used.
+    """
+    try:
+        return _aggregate(zbytes, period)
+    except Exception as e:
+        return None, "13F archive unreadable partway through (%s: %s)" % (type(e).__name__, e)
+
+
+def _aggregate(zbytes, period):
+    """The aggregation itself - see aggregate() for the contract.
 
     INFOTABLE is streamed row by row: it runs to ~4 million rows and ~400MB uncompressed per
     file, so reading it whole is the difference between this working on a laptop and not. Only
@@ -404,7 +453,11 @@ def aggregate(zbytes, period):
     out = {}
     rows = kept = 0
     with z.open(info) as f:
-        for row in csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"), delimiter="\t"):
+        # QUOTE_NONE: SEC's files are tab-separated with NO quoting, so a quote is just a character.
+        # With the default, an issuer name that begins with one ('"BIG 5 SPORTING') opened a quoted
+        # field that ran on across tabs and newlines and swallowed every row after it.
+        for row in csv.DictReader(io.TextIOWrapper(f, "utf-8", errors="replace"), delimiter="\t",
+                                  quoting=csv.QUOTE_NONE):
             rows += 1
             cik = keep.get((row.get("ACCESSION_NUMBER") or "").strip())
             if cik is None:
@@ -521,20 +574,37 @@ def grade(now, prior, cfg, float_shares=None):
                        "but the trend is flat (SEC 13F)" % (h, dh, ds), m)
 
 
+def _write_atomic(path, data):
+    """Write via a temp name and rename, so a killed run never leaves a truncated file behind."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
 def get_dataset(ds, contact, timeout, cache_dir):
-    """Bytes for one dataset, from the local cache if present. Returns (bytes, where)."""
+    """Bytes for one dataset, from the local cache if present. Returns (bytes, where).
+
+    Only a real zip (it starts "PK") is accepted or cached. A proxy or error page returned with a
+    200 and a body over 1000 bytes passed the old size-only check, was saved under the data-set's
+    name, and was then served from the cache as "cached ..." on every run - "not a readable zip"
+    each time, with one HTTP call in total - until someone found and deleted the file. A bad file
+    already in the cache is refetched rather than trusted.
+    """
     if cache_dir:
         local = os.path.join(cache_dir, ds["name"])
         if os.path.exists(local) and os.path.getsize(local) > 1000:
-            return open(local, "rb").read(), "cached " + local
+            cached = open(local, "rb").read()
+            if cached[:2] == b"PK":
+                return cached, "cached " + local
     data, why = http(ds["url"], contact, timeout)
     if data is None:
         return None, "%s -> %s" % (ds["url"], why)
-    if len(data) < 1000:
-        return None, "%s returned %d bytes" % (ds["url"], len(data))
+    if len(data) < 1000 or data[:2] != b"PK":
+        return None, "%s returned %d bytes that are not a zip archive" % (ds["url"], len(data))
     if cache_dir:
-        os.makedirs(cache_dir, exist_ok=True)
-        open(os.path.join(cache_dir, ds["name"]), "wb").write(data)
+        _write_atomic(os.path.join(cache_dir, ds["name"]), data)
     return data, ds["url"]
 
 
@@ -599,6 +669,11 @@ def build(args, cfg):
             meta["notes"].append(str(e))
             continue
         ds = dataset_for_period(datasets, period)
+        if not ds and not datasets:
+            meta["notes"].append("%s %s (period %s): skipped - the list of published data sets "
+                                 "could not be read, so there is nothing to choose from" %
+                                 (label, q, period))
+            continue
         if not ds:
             meta["notes"].append(
                 "%s %s (period %s): no published data set covers it yet%s" %
@@ -659,6 +734,24 @@ def merge_fallback(meta, known, detail, path):
     meta["notes"].append("fallback filled %d ticker(s) 13F did not cover" % n)
     meta["fallback"] = {"path": path, "source": (fb.get("meta") or {}).get("source"), "filled": n}
     return n
+
+
+def _keeps_good_cache(path, meta):
+    """True when this build FAILED but `path` already holds a good build of the SAME quarter.
+
+    Overwriting it with an empty cache destroyed the right answer for want of an SEC outage. It is
+    deliberately limited to the same quarter: keeping ANY old cache would let a run grade
+    sponsorship from last quarter without saying so, which is exactly why the cache is rebuilt
+    every quarter instead of committed. A different quarter's cache is replaced, as before.
+    """
+    if meta.get("ok"):
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            old = json.load(f).get("meta") or {}
+    except (OSError, ValueError, AttributeError):
+        return False
+    return bool(old.get("ok")) and old.get("quarter") == meta.get("quarter")
 
 
 def main():
@@ -724,10 +817,13 @@ def main():
            "unresolved": unresolved[:200]}
     text = json.dumps(known if a.known_only else res, indent=2)
     if a.out:
-        os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
-        open(a.out, "w", encoding="utf-8").write(text + "\n")
-        print("%s: %d ticker(s) graded%s" % (a.out, len(known),
-              "" if meta["ok"] else " - 13F UNAVAILABLE, see meta.notes"), file=sys.stderr)
+        if _keeps_good_cache(a.out, meta):
+            print("%s: KEPT - 13F could not be read this time, and the file already holds a good "
+                  "build of %s" % (a.out, a.quarter), file=sys.stderr)
+        else:
+            _write_atomic(a.out, (text + "\n").encode("utf-8"))
+            print("%s: %d ticker(s) graded%s" % (a.out, len(known),
+                  "" if meta["ok"] else " - 13F UNAVAILABLE, see meta.notes"), file=sys.stderr)
         for nte in meta["notes"]:
             print("  " + nte, file=sys.stderr)
     else:
