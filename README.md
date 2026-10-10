@@ -10,8 +10,31 @@ It activates when you ask for stock ideas — *"recommend some stocks"*, *"what 
 
 ## Install
 
-Install it through the marketplace it is published in. The skill does not check for or apply
-updates itself — whatever installed it owns that, so updates arrive the same way the install did.
+Install it from [the-wong-marketplace](https://github.com/thewongdirection/the-wong-marketplace),
+a Claude Code plugin marketplace:
+
+```
+/plugin marketplace add thewongdirection/the-wong-marketplace
+/plugin install can-slim-recommend@the-wong-marketplace
+```
+
+Or from a shell:
+
+```bash
+claude plugin marketplace add thewongdirection/the-wong-marketplace
+claude plugin install can-slim-recommend@the-wong-marketplace
+```
+
+Installed this way the skill is namespaced by plugin, as `/can-slim-recommend:can-slim-recommend`,
+and it still activates on its own when you ask for stock ideas.
+
+**Updates come from the marketplace; the skill does not check for them itself.** This repo carries
+no plugin manifest, so every commit to `main` counts as a new version. To pick one up:
+
+```bash
+claude plugin marketplace update the-wong-marketplace
+claude plugin update can-slim-recommend@the-wong-marketplace    # restart to apply
+```
 
 To install by hand instead, `SKILL.md` sits at the repo root, so cloning the repo *as* the skill
 directory is the whole install:
@@ -27,7 +50,16 @@ instead. A hand install stays at the version you cloned until you `git pull` it.
 ### Install the companion skills too — data sourcing is a skill *set*
 
 This skill is one of a set, and two of the others are **where some of its data comes from**. It
-runs without them, but it runs on weaker sources and says so in the report, so install all three:
+runs without them, but it runs on weaker sources and says so in the report, so install all three.
+They are in the same marketplace:
+
+```
+/plugin install securities-filings-lookup@the-wong-marketplace
+/plugin install can-slim-grader@the-wong-marketplace
+/plugin install ibkr-review-ticker@the-wong-marketplace
+```
+
+Or by hand:
 
 ```bash
 git clone https://github.com/thewongdirection/securities-filings-lookup.git \
@@ -78,6 +110,12 @@ with zero tickers in it.
 
 Takes about 40 seconds and needs `www.sec.gov` reachable. Without it the skill still runs — **I**
 falls back to the volume proxy in `scripts/accumulation.py`, and every reason string says so.
+
+**Where the caches live matters after a marketplace update.** A marketplace install lives in a
+folder named for the installed version, so an update starts with an empty one. The throttle state
+is kept under that folder and simply relearns. The I-cache and the SEC caches default to a `data/`
+folder *relative to where you run the script*, so run them from somewhere stable, or pass absolute
+paths (`-o`, `--cache-dir`) to keep them across updates.
 
 A rebuild that cannot reach SEC writes an empty cache, so a stale one is never graded as current. The
 one exception is a file that already holds a good build of the **same** quarter: that is kept, and

@@ -2762,6 +2762,23 @@ def check_the_prose_grades_the_same_way_the_code_does():
         "extension is context, never a disqualification"
 
 
+def check_readme_install_uses_the_real_marketplace_commands():
+    """The install instructions name the-wong-marketplace and this plugin's exact id. They were
+    checked against the real thing - the marketplace was added, the plugin installed from it, and
+    the session reported the skill as can-slim-recommend:can-slim-recommend - so a trim that
+    drops them, or a typo in the id, would leave a reader with a command that does nothing."""
+    readme = io.open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    install = readme.split("## Install", 1)[1].split("\n## ", 1)[0]
+    for must in ("/plugin marketplace add thewongdirection/the-wong-marketplace",
+                 "/plugin install can-slim-recommend@the-wong-marketplace",
+                 "claude plugin update can-slim-recommend@the-wong-marketplace",
+                 "claude plugin marketplace update the-wong-marketplace"):
+        assert must in install, "README's Install section lost %r" % must
+    for companion in ("securities-filings-lookup", "can-slim-grader", "ibkr-review-ticker"):
+        assert "/plugin install %s@the-wong-marketplace" % companion in install, \
+            "the marketplace install line for %s is missing" % companion
+
+
 def check_the_companion_data_skills_are_documented_as_installs():
     """`securities-filings-lookup` is not a nice-to-have; it is the PRIMARY source for C and A.
 
