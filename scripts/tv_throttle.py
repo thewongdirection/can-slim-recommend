@@ -65,11 +65,13 @@ import re
 import sys
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
+import datadir
+
 # Overridable so a test can pace its own state file instead of fighting the real one - and so a
-# parallel sweep in a worktree does not share a budget with the session that spawned it.
-STATE = os.environ.get("CANSLIM_THROTTLE_STATE") or os.path.join(ROOT, "data", ".tv-throttle.json")
+# parallel sweep in a worktree does not share a budget with the session that spawned it. The
+# default is the skill's data directory (see datadir.py), NOT a folder inside the install: a
+# marketplace update installs into a fresh folder and the learned rate would start over.
+STATE = os.environ.get("CANSLIM_THROTTLE_STATE") or datadir.path(".tv-throttle.json")
 
 DEFAULTS = {
     # A FLOOR on the spacing, not the spacing itself. The actual gap is derived from the learned

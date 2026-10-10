@@ -90,7 +90,10 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
   and apply its rubric inline from the shared methodology rather than inventing a different scale.
 - **Institutional sponsorship (I)** is the one letter TradingView cannot answer. Run
   `scripts/institutional_cache.py` ONCE PER QUARTER (after each 13F deadline: mid-Feb/May/Aug/Nov)
-  to build `data/i-cache.json` from SEC Form 13F, then pass it to every run with `--known`.
+  to build the I-cache from SEC Form 13F, then pass it to every run with `--known`. Its path is
+  `python scripts/datadir.py i-cache.json` (a per-user folder, or `$CANSLIM_DATA_DIR`), the same
+  from every project and across skill updates, so build it with `-o "$(python scripts/datadir.py
+  i-cache.json)"`.
   **SEC requires a contact email in the User-Agent and returns 403 without one**, so set
   `SEC_CONTACT` once (or pass `--contact`); the script refuses up front rather than writing an
   empty cache, and a throwaway no-reply domain will not do — SEC blocklists them. It
@@ -684,10 +687,14 @@ apply the same rubric inline from the shared methodology."*)
   `can-slim-grader`. Feed it the collected bars rather than eyeballing charts.
 - `scripts/market_session.py` — step 1. Is a trading session in progress? Waits out a short gap
   and, on a long one, says so immediately instead of blocking for hours.
+- `scripts/datadir.py` — where the skill keeps files that outlive a run (the I-cache, the 13F zips,
+  the SEC answers behind **A**, the pacing state): `$CANSLIM_DATA_DIR`, else a per-user cache folder
+  independent of the install location and the working directory. `python scripts/datadir.py
+  {file}` prints a file's full path.
 - `scripts/tv_throttle.py` — step 4. Paces every TradingView call and learns the rate limit from
   the responses (`--wait` before a call, `--observe` after it).
 - `scripts/institutional_cache.py` — grades **I** from SEC Form 13F, aggregated once per quarter
-  into `data/i-cache.json`. Fails open to `scripts/accumulation.py`.
+  into the I-cache. Fails open to `scripts/accumulation.py`.
 - `scripts/accumulation.py` — the **I** fallback: institutional buying pressure read from the
   up/down volume footprint. A proxy, and its reason strings say so.
 - `scripts/annual_eps.py` — grades **A** from audited SEC XBRL annual EPS, which the connector

@@ -145,6 +145,7 @@ can-slim-recommend/
   scripts/sector_screen.py
   scripts/relative_strength.py
   scripts/market_session.py
+  scripts/datadir.py
   scripts/tv_throttle.py
   scripts/institutional_cache.py
   scripts/accumulation.py
@@ -256,7 +257,10 @@ taxonomy, the triage filters, and the grader hand-off. `references/ibkr-data-gui
   and apply its rubric inline from the shared methodology rather than inventing a different scale.
 - **Institutional sponsorship (I)** is the one letter TradingView cannot answer. Run
   `scripts/institutional_cache.py` ONCE PER QUARTER (after each 13F deadline: mid-Feb/May/Aug/Nov)
-  to build `data/i-cache.json` from SEC Form 13F, then pass it to every run with `--known`.
+  to build the I-cache from SEC Form 13F, then pass it to every run with `--known`. Its path is
+  `python scripts/datadir.py i-cache.json` (a per-user folder, or `$CANSLIM_DATA_DIR`), the same
+  from every project and across skill updates, so build it with `-o "$(python scripts/datadir.py
+  i-cache.json)"`.
   **SEC requires a contact email in the User-Agent and returns 403 without one**, so set
   `SEC_CONTACT` once (or pass `--contact`); the script refuses up front rather than writing an
   empty cache, and a throwaway no-reply domain will not do — SEC blocklists them. It
@@ -850,10 +854,14 @@ apply the same rubric inline from the shared methodology."*)
   `can-slim-grader`. Feed it the collected bars rather than eyeballing charts.
 - `scripts/market_session.py` — step 1. Is a trading session in progress? Waits out a short gap
   and, on a long one, says so immediately instead of blocking for hours.
+- `scripts/datadir.py` — where the skill keeps files that outlive a run (the I-cache, the 13F zips,
+  the SEC answers behind **A**, the pacing state): `$CANSLIM_DATA_DIR`, else a per-user cache folder
+  independent of the install location and the working directory. `python scripts/datadir.py
+  {file}` prints a file's full path.
 - `scripts/tv_throttle.py` — step 4. Paces every TradingView call and learns the rate limit from
   the responses (`--wait` before a call, `--observe` after it).
 - `scripts/institutional_cache.py` — grades **I** from SEC Form 13F, aggregated once per quarter
-  into `data/i-cache.json`. Fails open to `scripts/accumulation.py`.
+  into the I-cache. Fails open to `scripts/accumulation.py`.
 - `scripts/accumulation.py` — the **I** fallback: institutional buying pressure read from the
   up/down volume footprint. A proxy, and its reason strings say so.
 - `scripts/annual_eps.py` — grades **A** from audited SEC XBRL annual EPS, which the connector
@@ -981,7 +989,7 @@ Rebuild it once a quarter, after each 13F deadline — mid-Feb, mid-May, mid-Aug
 ```bash
 export SEC_CONTACT=you@your-domain.com      # once; or pass --contact on each run
 python scripts/institutional_cache.py --quarter 2026Q1 \
-  --sec-tickers auto -o data/i-cache.json
+  --sec-tickers auto -o "$(python scripts/datadir.py i-cache.json)"
 ```
 
 **The contact address is required, not decorative.** SEC's access policy wants a real way to
@@ -994,11 +1002,22 @@ with zero tickers in it.
 Takes about 40 seconds and needs `www.sec.gov` reachable. Without it the skill still runs — **I**
 falls back to the volume proxy in `scripts/accumulation.py`, and every reason string says so.
 
-**Where the caches live matters after a marketplace update.** A marketplace install lives in a
-folder named for the installed version, so an update starts with an empty one. The throttle state
-is kept under that folder and simply relearns. The I-cache and the SEC caches default to a `data/`
-folder *relative to where you run the script*, so run them from somewhere stable, or pass absolute
-paths (`-o`, `--cache-dir`) to keep them across updates.
+**Where the files live.** The I-cache, the 13F zips, the SEC answers behind **A** and the
+TradingView pacing state all go in one folder that does not depend on where the skill is installed
+or where you run it from, so a marketplace update (which installs into a fresh folder) does not lose
+them. It is `$CANSLIM_DATA_DIR` if you set that, otherwise a per-user cache folder:
+
+| Platform | Default |
+|---|---|
+| Linux / other | `$XDG_CACHE_HOME/can-slim-recommend`, else `~/.cache/can-slim-recommend` |
+| macOS | `~/Library/Caches/can-slim-recommend` |
+| Windows | `%LOCALAPPDATA%\can-slim-recommend` |
+
+`python scripts/datadir.py` prints the folder, and `python scripts/datadir.py i-cache.json` prints a
+file's full path inside it. An explicit `--cache-dir` or `-o` always wins, and so does
+`CANSLIM_THROTTLE_STATE` for the pacing state alone. Everything in it is rebuildable. Caches from
+before this change were in a `data/` folder relative to where you ran the scripts; they are not
+picked up automatically, so the next run rebuilds them (the I-cache takes about 40 seconds).
 
 A rebuild that cannot reach SEC writes an empty cache, so a stale one is never graded as current. The
 one exception is a file that already holds a good build of the **same** quarter: that is kept, and
@@ -1181,6 +1200,8 @@ suite fails until `dist/can-slim-recommend-portable.md` matches the sources agai
 - `scripts/market_session.py` — step 1: is a trading session in progress? S is graded from
   relative volume, which mid-session is a partial sum. Waits out a short gap and says so
   immediately on a long one.
+- `scripts/datadir.py` — where the skill keeps files that outlive a run: `$CANSLIM_DATA_DIR`, else a
+  per-user cache folder independent of the install location and the working directory.
 - `scripts/tv_throttle.py` — paces TradingView calls so a sweep never earns a block. `--wait`
   blocks the caller rather than advising it, because the connector gives no warning: a burst
   succeeds, then the screener 403s for twenty minutes with no server-side way out. The rate is
@@ -3718,6 +3739,98 @@ if __name__ == "__main__":
 ```
 
 
+## `scripts/datadir.py`
+
+Where the skill keeps files that outlive a run (the I-cache, the 13F zips, the SEC answers, the pacing state): $CANSLIM_DATA_DIR, else a per-user cache folder that depends on neither the install location nor the working directory, so the caches survive a marketplace update.
+
+```python
+#!/usr/bin/env python3
+"""
+datadir.py - where this skill keeps the files that must outlive a single run.
+
+THE PROBLEM THIS CLOSES. The caches (the quarterly I-cache, the 13F zips, the SEC XBRL answers, the
+TradingView pacing state) used to default to a `data/` folder - but a RELATIVE one for two of the
+scripts (wherever you happened to run them from) and one under the skill's own folder for the
+third. A marketplace install lives in a folder named for the installed version, so an update starts
+that folder empty; a relative path lands in whichever project the run was started in. Neither is a
+place you can rely on finding last quarter's cache.
+
+THE RULE, in order:
+  1. an explicit flag on the script (`--cache-dir`, `-o`) always wins;
+  2. $CANSLIM_DATA_DIR, if set - point it anywhere you like (use an absolute path);
+  3. a per-user cache folder that depends on neither the install location nor the working
+     directory, so it survives updates and is the same from every project:
+         Linux / other   $XDG_CACHE_HOME/can-slim-recommend   (else ~/.cache/can-slim-recommend)
+         macOS           ~/Library/Caches/can-slim-recommend
+         Windows         %LOCALAPPDATA%\\can-slim-recommend
+
+Everything kept here is REBUILDABLE (the I-cache is ~40 seconds of SEC downloads; the throttle
+state is relearned), which is why it is a cache folder and not a data folder. The one thing it must
+never be is a place a stale quarter can hide: institutional_cache.py records the quarter inside the
+cache and replaces a cache from a different one.
+
+Usage:
+  python scripts/datadir.py                  # print the folder
+  python scripts/datadir.py i-cache.json     # print the full path of a file inside it
+  python scripts/institutional_cache.py --quarter 2026Q1 -o "$(python scripts/datadir.py i-cache.json)"
+
+Pure standard library.
+"""
+import argparse
+import os
+import sys
+import tempfile
+
+ENV = "CANSLIM_DATA_DIR"
+APP = "can-slim-recommend"
+
+
+def default_dir():
+    """The per-user cache folder for this platform (see the module docstring)."""
+    home = os.path.expanduser("~")
+    if home == "~" or not os.path.isabs(home):      # no resolvable home: expanduser leaves "~" as is
+        return os.path.join(tempfile.gettempdir(), APP)
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+    elif sys.platform == "darwin":
+        base = os.path.join(home, "Library", "Caches")
+    else:
+        base = os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache")
+    return os.path.join(base, APP)
+
+
+def data_dir():
+    """The folder the skill keeps its files in. Not created here - the writers create it."""
+    chosen = (os.environ.get(ENV) or "").strip()
+    return os.path.abspath(os.path.expanduser(chosen)) if chosen else default_dir()
+
+
+def path(*parts):
+    """A file or folder inside the data dir. Refuses a name that would climb out of it."""
+    root = data_dir()
+    full = os.path.abspath(os.path.join(root, *parts))
+    if full != root and not full.startswith(root + os.sep):
+        raise ValueError("%r is not inside the data directory %s" % (os.path.join(*parts), root))
+    return full
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Print the folder this skill keeps its caches in.")
+    ap.add_argument("name", nargs="?", help="a file or folder name inside it; prints its full path")
+    a = ap.parse_args(argv)
+    try:
+        print(path(a.name) if a.name else data_dir())
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+
 ## `scripts/tv_throttle.py`
 
 Paces TradingView calls so a sweep never earns a block. --wait BLOCKS the caller rather than advising it, because the connector does not warn: a burst succeeds, then the screener 403s for 20+ minutes with no server-side remedy.
@@ -3790,11 +3903,13 @@ import re
 import sys
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
+import datadir
+
 # Overridable so a test can pace its own state file instead of fighting the real one - and so a
-# parallel sweep in a worktree does not share a budget with the session that spawned it.
-STATE = os.environ.get("CANSLIM_THROTTLE_STATE") or os.path.join(ROOT, "data", ".tv-throttle.json")
+# parallel sweep in a worktree does not share a budget with the session that spawned it. The
+# default is the skill's data directory (see datadir.py), NOT a folder inside the install: a
+# marketplace update installs into a fresh folder and the learned rate would start over.
+STATE = os.environ.get("CANSLIM_THROTTLE_STATE") or datadir.path(".tv-throttle.json")
 
 DEFAULTS = {
     # A FLOOR on the spacing, not the spacing itself. The actual gap is derived from the learned
@@ -4218,13 +4333,15 @@ answer. The one exception is a missing or unusable contact address: that stops i
 ticker in `detail[t]["source"]`, so the report can say which evidence graded each letter.
 
 Usage:
-  # once per quarter, after the 13F deadline
-  python institutional_cache.py --quarter 2026Q2 --prior 2026Q1 -o data/i-cache.json
+  # once per quarter, after the 13F deadline. The cache lives in the skill's data directory
+  # (datadir.py: $CANSLIM_DATA_DIR, else a per-user folder), so it survives updates and is the same
+  # from every project:
+  python institutional_cache.py --quarter 2026Q2 --prior 2026Q1 -o "$(python datadir.py i-cache.json)"
   # resolve tickers using the sweep's own candidate list, and fill gaps with the volume proxy
   python institutional_cache.py --quarter 2026Q2 --prior 2026Q1 \\
-      --universe sweep.json --fallback accum.json -o data/i-cache.json
+      --universe sweep.json --fallback accum.json -o "$(python datadir.py i-cache.json)"
   # then, per run:
-  python sector_screen.py sweep.json --known data/i-cache.json --md
+  python sector_screen.py sweep.json --known "$(python datadir.py i-cache.json)" --md
 
 OUTPUT: the same three-part shape accumulation.py emits - meta / known / detail - so either can
 feed `sector_screen.py --known`.
@@ -4243,6 +4360,8 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
+
+import datadir
 
 DEFAULTS = {
     "thin_holders": 20,     # fewer managers than this is a neglected name, not a sponsored one
@@ -4763,7 +4882,11 @@ def get_dataset(ds, contact, timeout, cache_dir):
     if len(data) < 1000 or data[:2] != b"PK":
         return None, "%s returned %d bytes that are not a zip archive" % (ds["url"], len(data))
     if cache_dir:
-        _write_atomic(os.path.join(cache_dir, ds["name"]), data)
+        try:
+            _write_atomic(os.path.join(cache_dir, ds["name"]), data)
+        except OSError as e:        # a read-only or full disk: the cache is an optimisation only
+            print("warning: could not cache %s (%s) - continuing without it" % (ds["name"], e),
+                  file=sys.stderr)
     return data, ds["url"]
 
 
@@ -4933,7 +5056,9 @@ def main():
     ap.add_argument("--cusip-map", metavar="FILE", help='{"67066G104": "NVDA", ...}')
     ap.add_argument("--fallback", metavar="FILE",
                     help="accumulation.py output, used for tickers 13F could not answer")
-    ap.add_argument("--cache-dir", default="data/13f", help="keep the zips (default %(default)s)")
+    ap.add_argument("--cache-dir", default=None,
+                    help="keep the zips here (default: the 13f folder of the data directory - "
+                         "see datadir.py)")
     ap.add_argument("--contact", default="",
                     help="contact email for SEC's User-Agent policy - REQUIRED. Defaults to the "
                          "SEC_CONTACT environment variable. SEC returns 403 without a real "
@@ -4965,6 +5090,8 @@ def main():
         ap.error("--quarter is required (or use --list)")
     if not a.prior:
         a.prior = prior_quarter(a.quarter)
+    if not a.cache_dir:
+        a.cache_dir = datadir.path("13f")
 
     cfg = dict(DEFAULTS, thin_holders=a.thin_holders)
     meta, known, detail, unresolved = build(a, cfg)
@@ -5304,9 +5431,9 @@ OUTPUT: the same three-part shape institutional_cache.py and accumulation.py emi
   detail  {symbol: {...}} - the EPS series, the year-on-year steps and the reason string
 
 Usage:
-  python scripts/annual_eps.py symbols.json -o data/a-grades.json
+  python scripts/annual_eps.py symbols.json -o "$(python scripts/datadir.py a-grades.json)"
   python scripts/annual_eps.py run/screen.json --contact you@your-domain.com
-  python scripts/sector_screen.py sweep.json --known data/a-grades.json --md
+  python scripts/sector_screen.py sweep.json --known "$(python scripts/datadir.py a-grades.json)" --md
 
 `symbols.json` may be a plain list of symbols, a sweep payload, or sector_screen.py's own
 output - the shape is detected. SEC requires a contact address; see --contact.
@@ -5327,6 +5454,7 @@ sys.path.insert(0, HERE)
 # Reuse the SEC User-Agent policy rather than restating it: one place decides what a usable
 # contact is, and this script inherits the 403-names-the-cause behaviour for free.
 from institutional_cache import resolve_contact, UA_TEMPLATE, CONTACT_HELP  # noqa: E402
+import datadir  # noqa: E402
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 CONCEPT_URL = "https://data.sec.gov/api/xbrl/companyconcept/CIK%s/%s/%s.json"
@@ -5410,8 +5538,11 @@ def _cached(path, fetch, pause=DEFAULTS["pause"], max_age_days=CACHE_MAX_AGE_DAY
             return stale if stale is not None else b"{}"
         body = b"{}"
     body = body or b"{}"
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    io.open(path, "wb").write(body)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        io.open(path, "wb").write(body)
+    except OSError:                 # read-only or full disk: the answer is still good for this run
+        pass
     return body
 
 
@@ -5676,8 +5807,9 @@ def main():
     ap.add_argument("--contact", default="",
                     help="contact email for SEC's User-Agent policy - REQUIRED. Defaults to the "
                          "SEC_CONTACT environment variable")
-    ap.add_argument("--cache-dir", default="data/sec-eps",
-                    help="keep SEC responses here (default %(default)s)")
+    ap.add_argument("--cache-dir", default=None,
+                    help="keep SEC responses here (default: the sec-eps folder of the data "
+                         "directory - see datadir.py)")
     ap.add_argument("--growth", type=float, default=DEFAULTS["growth"],
                     help="each year must beat this %% (default %(default)s)")
     ap.add_argument("--years", type=int, default=DEFAULTS["years"],
@@ -5706,6 +5838,8 @@ def main():
         return 2
 
     cfg = dict(DEFAULTS, growth=a.growth, years=a.years, stale_days=a.stale_days)
+    if not a.cache_dir:
+        a.cache_dir = datadir.path("sec-eps")
     roes = json.load(io.open(a.roe, encoding="utf-8")) if a.roe else {}
     res = run(symbols, a.cache_dir, contact, cfg, roes)
     text = json.dumps(res["known"] if a.known_only else res, indent=2)
@@ -8450,6 +8584,7 @@ import market_session as mses                               # noqa: E402
 import accumulation as acc                                  # noqa: E402
 import institutional_cache as ic                            # noqa: E402
 import annual_eps as aeps                                   # noqa: E402
+import datadir as dd                                        # noqa: E402
 
 W = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
 CFG = dict(ss.DEFAULTS)
@@ -10832,6 +10967,185 @@ def check_skill_documents_the_throttle():
         assert not re.search(r"--observe\s+['\"]", text), \
             "%s shows a response pasted into the command line" % doc
 
+# ---------------------------------------------------------------- the data directory
+
+class _Env(object):
+    """Set and restore environment variables, sys.platform and the cwd around a block."""
+    def __init__(self, **env):
+        self.env, self.saved = env, {}
+
+    def __enter__(self):
+        self.cwd, self.plat = os.getcwd(), sys.platform
+        for k, v in self.env.items():
+            self.saved[k] = os.environ.get(k)
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        return self
+
+    def __exit__(self, *a):
+        for k, v in self.saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        sys.platform = self.plat
+        os.chdir(self.cwd)
+
+
+def check_the_data_dir_is_stable_and_overridable(tmp):
+    """The caches defaulted to a RELATIVE data/ (wherever you ran the script) or to a folder inside
+    the install - and a marketplace install lives in a folder named for the version, so an update
+    starts it empty. The default must depend on neither the install nor the working directory."""
+    home = os.path.join(tmp, "home")
+    os.makedirs(home)
+    with _Env(**{dd.ENV: os.path.join(tmp, "mine"), "HOME": home, "USERPROFILE": home,
+                 "XDG_CACHE_HOME": None, "LOCALAPPDATA": None}):
+        assert dd.data_dir() == os.path.join(tmp, "mine"), "CANSLIM_DATA_DIR was not honoured"
+        os.environ[dd.ENV] = "~/elsewhere"
+        assert dd.data_dir() == os.path.join(home, "elsewhere"), "~ was not expanded"
+        os.environ[dd.ENV] = "   "
+        assert dd.data_dir() == dd.default_dir(), "a blank override must count as unset"
+
+        del os.environ[dd.ENV]
+        here = dd.data_dir()
+        os.chdir(tmp)
+        assert dd.data_dir() == here and os.path.isabs(here), "the default moved with the cwd"
+        assert not here.startswith(ROOT + os.sep), "the default lives inside the install: %s" % here
+
+        # the per-platform shapes
+        sys.platform = "linux"
+        os.environ["XDG_CACHE_HOME"] = os.path.join(tmp, "xdg")
+        assert dd.default_dir() == os.path.join(tmp, "xdg", "can-slim-recommend")
+        del os.environ["XDG_CACHE_HOME"]
+        assert dd.default_dir() == os.path.join(home, ".cache", "can-slim-recommend")
+        sys.platform = "darwin"
+        assert dd.default_dir() == os.path.join(home, "Library", "Caches", "can-slim-recommend")
+        sys.platform = "win32"
+        assert dd.default_dir() == os.path.join(home, "AppData", "Local", "can-slim-recommend")
+        os.environ["LOCALAPPDATA"] = os.path.join(tmp, "lad")
+        assert dd.default_dir() == os.path.join(tmp, "lad", "can-slim-recommend")
+
+        # no resolvable home: expanduser hands "~" back, and that must not become a literal folder
+        sys.platform = "linux"
+        real = os.path.expanduser
+        os.path.expanduser = lambda p: p
+        try:
+            fallback = dd.default_dir()
+        finally:
+            os.path.expanduser = real
+        assert os.path.isabs(fallback) and "~" not in fallback, fallback
+
+
+def check_datadir_path_cannot_climb_out_and_the_cli_prints_it(tmp):
+    root = os.path.join(tmp, "d")
+    with _Env(**{dd.ENV: root}):
+        assert dd.path("13f", "x.zip") == os.path.join(root, "13f", "x.zip")
+        for bad in ("../x", os.path.join("a", "..", "..", "x"), os.path.join(tmp, "elsewhere")):
+            try:
+                dd.path(bad)
+            except ValueError:
+                continue
+            raise AssertionError("%r escaped the data directory" % bad)
+    script = os.path.join(ROOT, "scripts", "datadir.py")
+    env = dict(os.environ, **{dd.ENV: root})
+    run = lambda *a: subprocess.run([sys.executable, script] + list(a), capture_output=True,
+                                    text=True, timeout=30, env=env)
+    assert run().stdout.strip() == root
+    assert run("i-cache.json").stdout.strip() == os.path.join(root, "i-cache.json")
+    bad = run("../x")
+    assert bad.returncode == 2 and "not inside" in bad.stderr, (bad.returncode, bad.stderr)
+
+
+def check_every_cache_defaults_into_the_data_dir(tmp):
+    """Three scripts used to pick their own default. Each must now land in the data directory when
+    given no flag, and an explicit flag or CANSLIM_THROTTLE_STATE must still win."""
+    root = os.path.join(tmp, "data")
+    clean = {k: v for k, v in os.environ.items() if k != "CANSLIM_THROTTLE_STATE"}
+    clean[dd.ENV] = root
+    status = lambda env: subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "tv_throttle.py"),
+                                         "--status"], capture_output=True, text=True, timeout=30, env=env).stdout
+    assert os.path.join(root, ".tv-throttle.json") in status(clean), "the pacing state ignored the data dir"
+    pinned = dict(clean, CANSLIM_THROTTLE_STATE=os.path.join(tmp, "pinned.json"))
+    assert os.path.join(tmp, "pinned.json") in status(pinned), "CANSLIM_THROTTLE_STATE no longer wins"
+
+    def quiet_main(fn, argv):
+        real_argv, real_out = sys.argv, sys.stdout
+        sys.argv, sys.stdout = ["x"] + argv, io.StringIO()
+        try:
+            return fn()
+        finally:
+            sys.argv, sys.stdout = real_argv, real_out
+
+    with _Env(**{dd.ENV: root}):
+        real = (ic.list_datasets, ic.http)
+        ic.list_datasets = lambda *a, **k: ([{"name": "01mar2026-31may2026_form13f.zip",
+                                              "start": "2026-03-01", "end": "2026-05-31",
+                                              "url": "https://www.sec.gov/x.zip"}], None)
+        ic.http = lambda *a, **k: (b"PK" + b"z" * 2000, None)
+        try:
+            quiet_main(ic.main, ["--quarter", "2026Q1", "--contact", "me@mydomain.org"])
+        finally:
+            ic.list_datasets, ic.http = real
+        assert os.path.exists(os.path.join(root, "13f", "01mar2026-31may2026_form13f.zip")), \
+            "institutional_cache ignored the data dir for its zips: %s" % os.listdir(root)
+
+        syms = os.path.join(tmp, "syms.json")
+        io.open(syms, "w", encoding="utf-8").write('["NYSE:AAA"]')
+        real_http, calls = aeps.http, []
+        def offline(*a, **k):                                     # never reach the network from a test
+            calls.append(a)
+            return b"{}", None
+        aeps.http = offline
+        try:
+            quiet_main(aeps.main, [syms, "--contact", "me@mydomain.org"])
+            assert os.path.exists(os.path.join(root, "sec-eps", "company_tickers.json")), \
+                "annual_eps ignored the data dir for its cache"
+            explicit = os.path.join(tmp, "explicit")              # an explicit flag still wins
+            quiet_main(aeps.main, [syms, "--contact", "me@mydomain.org", "--cache-dir", explicit])
+            assert os.path.exists(os.path.join(explicit, "company_tickers.json")), \
+                "--cache-dir no longer wins over the data dir"
+        finally:
+            aeps.http = real_http
+        assert calls, "the offline stand-in was never used, so the test proved nothing"
+
+
+def check_an_unwritable_cache_dir_does_not_stop_a_run(tmp):
+    """Moving the default into a home folder makes "cannot write there" a live possibility. Every
+    cache here is an optimisation, so failing to write one must cost a slower run, not a crashed
+    one. (A regular file stands in for the folder, so this holds when the tests run as root.)"""
+    blocker = os.path.join(tmp, "blocker")
+    io.open(blocker, "w").close()
+    bad = os.path.join(blocker, "sub")
+    real = ic.http
+    ic.http = lambda *a, **k: (b"PK" + b"z" * 2000, None)
+    err, real_err = io.StringIO(), sys.stderr
+    sys.stderr = err
+    try:
+        data, where = ic.get_dataset({"name": "d.zip", "url": "https://www.sec.gov/d.zip"},
+                                     "me@mydomain.org", 5, bad)
+    finally:
+        ic.http, sys.stderr = real, real_err
+    assert data and data[:2] == b"PK", (data, where)
+    assert "could not cache" in err.getvalue(), "a failed cache write must say so"
+    assert aeps._cached(os.path.join(bad, "x.json"), lambda: (b'{"ok":1}', None), pause=0) == b'{"ok":1}'
+
+
+def check_docs_point_at_the_data_dir_and_not_a_relative_data_folder():
+    """The docs showed `-o data/i-cache.json`, which lands in whatever directory the command ran
+    from. They must teach the stable location instead, and name the override."""
+    skill = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    readme = io.open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    assert "CANSLIM_DATA_DIR" in readme and "datadir.py" in readme and "datadir.py" in skill
+    relative = re.compile(r"(?:-o|--out|--known|--cache-dir)\s+['\"]?data/")
+    for rel in ["SKILL.md", "README.md"] + sorted("scripts/" + f for f in os.listdir(
+            os.path.join(ROOT, "scripts")) if f.endswith(".py")):
+        text = io.open(os.path.join(ROOT, rel), encoding="utf-8").read()
+        hit = relative.search(text)
+        assert not hit, "%s still shows a relative data/ path: %r" % (rel, hit.group(0))
+
+
 # ---------------------------------------------------------------- doc/consistency
 
 def _frontmatter_description(path):
@@ -11404,6 +11718,17 @@ def check_no_dangling_rung_number_references():
 # ---------------------------------------------------------------- runner
 
 def main():
+    # The suite must never read or write a real user's caches. Every script resolves its default
+    # folder from $CANSLIM_DATA_DIR (datadir.py), and the subprocesses the tests start inherit it.
+    sandbox = tempfile.mkdtemp(prefix="canslim-data-")
+    os.environ["CANSLIM_DATA_DIR"] = sandbox
+    try:
+        return _run_suites()
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
+def _run_suites():
     want = [a for a in sys.argv[1:] if not a.startswith("-")]
     verbose = "-v" in sys.argv
     tests = [(n, f) for n, f in sorted(globals().items())

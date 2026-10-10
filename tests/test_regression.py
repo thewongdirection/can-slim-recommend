@@ -44,6 +44,7 @@ import market_session as mses                               # noqa: E402
 import accumulation as acc                                  # noqa: E402
 import institutional_cache as ic                            # noqa: E402
 import annual_eps as aeps                                   # noqa: E402
+import datadir as dd                                        # noqa: E402
 
 W = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
 CFG = dict(ss.DEFAULTS)
@@ -2426,6 +2427,185 @@ def check_skill_documents_the_throttle():
         assert not re.search(r"--observe\s+['\"]", text), \
             "%s shows a response pasted into the command line" % doc
 
+# ---------------------------------------------------------------- the data directory
+
+class _Env(object):
+    """Set and restore environment variables, sys.platform and the cwd around a block."""
+    def __init__(self, **env):
+        self.env, self.saved = env, {}
+
+    def __enter__(self):
+        self.cwd, self.plat = os.getcwd(), sys.platform
+        for k, v in self.env.items():
+            self.saved[k] = os.environ.get(k)
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        return self
+
+    def __exit__(self, *a):
+        for k, v in self.saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        sys.platform = self.plat
+        os.chdir(self.cwd)
+
+
+def check_the_data_dir_is_stable_and_overridable(tmp):
+    """The caches defaulted to a RELATIVE data/ (wherever you ran the script) or to a folder inside
+    the install - and a marketplace install lives in a folder named for the version, so an update
+    starts it empty. The default must depend on neither the install nor the working directory."""
+    home = os.path.join(tmp, "home")
+    os.makedirs(home)
+    with _Env(**{dd.ENV: os.path.join(tmp, "mine"), "HOME": home, "USERPROFILE": home,
+                 "XDG_CACHE_HOME": None, "LOCALAPPDATA": None}):
+        assert dd.data_dir() == os.path.join(tmp, "mine"), "CANSLIM_DATA_DIR was not honoured"
+        os.environ[dd.ENV] = "~/elsewhere"
+        assert dd.data_dir() == os.path.join(home, "elsewhere"), "~ was not expanded"
+        os.environ[dd.ENV] = "   "
+        assert dd.data_dir() == dd.default_dir(), "a blank override must count as unset"
+
+        del os.environ[dd.ENV]
+        here = dd.data_dir()
+        os.chdir(tmp)
+        assert dd.data_dir() == here and os.path.isabs(here), "the default moved with the cwd"
+        assert not here.startswith(ROOT + os.sep), "the default lives inside the install: %s" % here
+
+        # the per-platform shapes
+        sys.platform = "linux"
+        os.environ["XDG_CACHE_HOME"] = os.path.join(tmp, "xdg")
+        assert dd.default_dir() == os.path.join(tmp, "xdg", "can-slim-recommend")
+        del os.environ["XDG_CACHE_HOME"]
+        assert dd.default_dir() == os.path.join(home, ".cache", "can-slim-recommend")
+        sys.platform = "darwin"
+        assert dd.default_dir() == os.path.join(home, "Library", "Caches", "can-slim-recommend")
+        sys.platform = "win32"
+        assert dd.default_dir() == os.path.join(home, "AppData", "Local", "can-slim-recommend")
+        os.environ["LOCALAPPDATA"] = os.path.join(tmp, "lad")
+        assert dd.default_dir() == os.path.join(tmp, "lad", "can-slim-recommend")
+
+        # no resolvable home: expanduser hands "~" back, and that must not become a literal folder
+        sys.platform = "linux"
+        real = os.path.expanduser
+        os.path.expanduser = lambda p: p
+        try:
+            fallback = dd.default_dir()
+        finally:
+            os.path.expanduser = real
+        assert os.path.isabs(fallback) and "~" not in fallback, fallback
+
+
+def check_datadir_path_cannot_climb_out_and_the_cli_prints_it(tmp):
+    root = os.path.join(tmp, "d")
+    with _Env(**{dd.ENV: root}):
+        assert dd.path("13f", "x.zip") == os.path.join(root, "13f", "x.zip")
+        for bad in ("../x", os.path.join("a", "..", "..", "x"), os.path.join(tmp, "elsewhere")):
+            try:
+                dd.path(bad)
+            except ValueError:
+                continue
+            raise AssertionError("%r escaped the data directory" % bad)
+    script = os.path.join(ROOT, "scripts", "datadir.py")
+    env = dict(os.environ, **{dd.ENV: root})
+    run = lambda *a: subprocess.run([sys.executable, script] + list(a), capture_output=True,
+                                    text=True, timeout=30, env=env)
+    assert run().stdout.strip() == root
+    assert run("i-cache.json").stdout.strip() == os.path.join(root, "i-cache.json")
+    bad = run("../x")
+    assert bad.returncode == 2 and "not inside" in bad.stderr, (bad.returncode, bad.stderr)
+
+
+def check_every_cache_defaults_into_the_data_dir(tmp):
+    """Three scripts used to pick their own default. Each must now land in the data directory when
+    given no flag, and an explicit flag or CANSLIM_THROTTLE_STATE must still win."""
+    root = os.path.join(tmp, "data")
+    clean = {k: v for k, v in os.environ.items() if k != "CANSLIM_THROTTLE_STATE"}
+    clean[dd.ENV] = root
+    status = lambda env: subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "tv_throttle.py"),
+                                         "--status"], capture_output=True, text=True, timeout=30, env=env).stdout
+    assert os.path.join(root, ".tv-throttle.json") in status(clean), "the pacing state ignored the data dir"
+    pinned = dict(clean, CANSLIM_THROTTLE_STATE=os.path.join(tmp, "pinned.json"))
+    assert os.path.join(tmp, "pinned.json") in status(pinned), "CANSLIM_THROTTLE_STATE no longer wins"
+
+    def quiet_main(fn, argv):
+        real_argv, real_out = sys.argv, sys.stdout
+        sys.argv, sys.stdout = ["x"] + argv, io.StringIO()
+        try:
+            return fn()
+        finally:
+            sys.argv, sys.stdout = real_argv, real_out
+
+    with _Env(**{dd.ENV: root}):
+        real = (ic.list_datasets, ic.http)
+        ic.list_datasets = lambda *a, **k: ([{"name": "01mar2026-31may2026_form13f.zip",
+                                              "start": "2026-03-01", "end": "2026-05-31",
+                                              "url": "https://www.sec.gov/x.zip"}], None)
+        ic.http = lambda *a, **k: (b"PK" + b"z" * 2000, None)
+        try:
+            quiet_main(ic.main, ["--quarter", "2026Q1", "--contact", "me@mydomain.org"])
+        finally:
+            ic.list_datasets, ic.http = real
+        assert os.path.exists(os.path.join(root, "13f", "01mar2026-31may2026_form13f.zip")), \
+            "institutional_cache ignored the data dir for its zips: %s" % os.listdir(root)
+
+        syms = os.path.join(tmp, "syms.json")
+        io.open(syms, "w", encoding="utf-8").write('["NYSE:AAA"]')
+        real_http, calls = aeps.http, []
+        def offline(*a, **k):                                     # never reach the network from a test
+            calls.append(a)
+            return b"{}", None
+        aeps.http = offline
+        try:
+            quiet_main(aeps.main, [syms, "--contact", "me@mydomain.org"])
+            assert os.path.exists(os.path.join(root, "sec-eps", "company_tickers.json")), \
+                "annual_eps ignored the data dir for its cache"
+            explicit = os.path.join(tmp, "explicit")              # an explicit flag still wins
+            quiet_main(aeps.main, [syms, "--contact", "me@mydomain.org", "--cache-dir", explicit])
+            assert os.path.exists(os.path.join(explicit, "company_tickers.json")), \
+                "--cache-dir no longer wins over the data dir"
+        finally:
+            aeps.http = real_http
+        assert calls, "the offline stand-in was never used, so the test proved nothing"
+
+
+def check_an_unwritable_cache_dir_does_not_stop_a_run(tmp):
+    """Moving the default into a home folder makes "cannot write there" a live possibility. Every
+    cache here is an optimisation, so failing to write one must cost a slower run, not a crashed
+    one. (A regular file stands in for the folder, so this holds when the tests run as root.)"""
+    blocker = os.path.join(tmp, "blocker")
+    io.open(blocker, "w").close()
+    bad = os.path.join(blocker, "sub")
+    real = ic.http
+    ic.http = lambda *a, **k: (b"PK" + b"z" * 2000, None)
+    err, real_err = io.StringIO(), sys.stderr
+    sys.stderr = err
+    try:
+        data, where = ic.get_dataset({"name": "d.zip", "url": "https://www.sec.gov/d.zip"},
+                                     "me@mydomain.org", 5, bad)
+    finally:
+        ic.http, sys.stderr = real, real_err
+    assert data and data[:2] == b"PK", (data, where)
+    assert "could not cache" in err.getvalue(), "a failed cache write must say so"
+    assert aeps._cached(os.path.join(bad, "x.json"), lambda: (b'{"ok":1}', None), pause=0) == b'{"ok":1}'
+
+
+def check_docs_point_at_the_data_dir_and_not_a_relative_data_folder():
+    """The docs showed `-o data/i-cache.json`, which lands in whatever directory the command ran
+    from. They must teach the stable location instead, and name the override."""
+    skill = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    readme = io.open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    assert "CANSLIM_DATA_DIR" in readme and "datadir.py" in readme and "datadir.py" in skill
+    relative = re.compile(r"(?:-o|--out|--known|--cache-dir)\s+['\"]?data/")
+    for rel in ["SKILL.md", "README.md"] + sorted("scripts/" + f for f in os.listdir(
+            os.path.join(ROOT, "scripts")) if f.endswith(".py")):
+        text = io.open(os.path.join(ROOT, rel), encoding="utf-8").read()
+        hit = relative.search(text)
+        assert not hit, "%s still shows a relative data/ path: %r" % (rel, hit.group(0))
+
+
 # ---------------------------------------------------------------- doc/consistency
 
 def _frontmatter_description(path):
@@ -2998,6 +3178,17 @@ def check_no_dangling_rung_number_references():
 # ---------------------------------------------------------------- runner
 
 def main():
+    # The suite must never read or write a real user's caches. Every script resolves its default
+    # folder from $CANSLIM_DATA_DIR (datadir.py), and the subprocesses the tests start inherit it.
+    sandbox = tempfile.mkdtemp(prefix="canslim-data-")
+    os.environ["CANSLIM_DATA_DIR"] = sandbox
+    try:
+        return _run_suites()
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
+def _run_suites():
     want = [a for a in sys.argv[1:] if not a.startswith("-")]
     verbose = "-v" in sys.argv
     tests = [(n, f) for n, f in sorted(globals().items())
