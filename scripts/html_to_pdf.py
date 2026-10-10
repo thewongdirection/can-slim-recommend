@@ -37,15 +37,43 @@ def css_page_size(path):
     unless told, so a landscape report (like the recommend skill's wide screening table) would
     silently clip on those engines. Returns the raw size value lowercased, or None.
     """
-    try:
-        head = open(path, encoding="utf-8", errors="replace").read(200000)
-    except OSError:
-        return None
-    m = re.search(r"@page[^{]*\{[^}]*?\bsize\s*:\s*([^;}]+)", head, re.I | re.S)
-    return m.group(1).strip().lower() if m else None
+    for body in _page_rule_bodies(path):
+        m = re.search(r"\bsize\s*:\s*([^;}]+)", body, re.I)
+        if m:
+            return m.group(1).strip().lower()
+    return None
 
 
 DEFAULT_MARGIN = "12mm"
+MAX_PAGE_RULES = 20
+
+
+def _page_rule_bodies(path):
+    """The declaration blocks of the document's first few @page rules, in order.
+
+    Found with str.find, not one regex over the file. The regex this replaces
+    (`@page[^{]*\\{[^}]*?\\bsize...`) restarted its scan at every "@page" and ran to the end of
+    the input looking for a "}" that never came, so it was quadratic: 120KB of "@page{" held the
+    PDF export for 35 seconds, twice per engine. A document is allowed a few @page rules, not
+    thousands, and an unclosed one ends the search.
+    """
+    try:
+        head = open(path, encoding="utf-8", errors="replace").read(200000)
+    except OSError:
+        return []
+    low, bodies, pos = head.lower(), [], 0
+    while len(bodies) < MAX_PAGE_RULES:
+        i = low.find("@page", pos)
+        if i < 0:
+            break
+        end = low.find("}", i)
+        if end < 0:
+            break
+        brace = low.find("{", i, end)
+        if brace >= 0:
+            bodies.append(head[brace + 1:end])
+        pos = end + 1
+    return bodies
 
 
 def css_page_margin(path, default=DEFAULT_MARGIN):
@@ -57,12 +85,11 @@ def css_page_margin(path, default=DEFAULT_MARGIN):
     both templates declare, and a multi-value rule is left to `default` rather than guessed at.
     Returns a CSS length string such as "15mm", or `default` when there is no usable rule.
     """
-    try:
-        head = open(path, encoding="utf-8", errors="replace").read(200000)
-    except OSError:
-        return default
-    m = re.search(r"@page[^{]*\{[^}]*?\bmargin\s*:\s*([^;}]+)", head, re.I | re.S)
-    if not m:
+    for body in _page_rule_bodies(path):
+        m = re.search(r"\bmargin\s*:\s*([^;}]+)", body, re.I)
+        if m:
+            break
+    else:
         return default
     val = m.group(1).strip().lower()
     # one value only, and it must be a length we can hand to another engine verbatim

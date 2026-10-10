@@ -293,6 +293,28 @@ def grade(eps_by_end, cfg, today=None, roe=None):
     return ("fail", "EPS not up each of %d years (%s)" % (cfg["years"], shown), series, steps)
 
 
+def decides(g, steps, cfg, roe):
+    """Did the filings actually DECIDE this grade - i.e. may it lower a ceiling?
+
+    The module's promise is that an absence of data can never eliminate a name, but every
+    `partial` was being handed to sector_screen.py --known, where a known partial is a real cap:
+    a marginal name with N, S and L all at partial sits at exactly the 4.5 cut, so one stray
+    A=partial put it at 4.0 and it was dropped without being graded - for lack of a CIK, or because
+    ROE was not passed in. can-slim-grader, with the TradingView figures in hand, could have
+    passed it.
+
+    A pass and a fail are decided. A partial is decided only when audited figures produced it:
+    EPS up every year but not every year at >=25%, or EPS that passes but ROE that is under the
+    bar. Too few years, a stale series, a loss year (growth undefined) and an EPS leg that passes
+    with ROE UNVERIFIED are the filings saying "I cannot tell you", and say nothing to the ceiling.
+    """
+    if g != "partial":
+        return True
+    if not steps or any(s is None for s in steps):
+        return False
+    return not (all(s >= cfg["growth"] for s in steps) and roe is None)
+
+
 def symbols_from(blob):
     """Pull a symbol list out of whichever shape was handed in.
 
@@ -321,19 +343,21 @@ def run(symbols, cache_dir, contact, cfg, roes=None):
         cik = tmap.get(tick)
         eps = annual_eps(cik, cache_dir, contact, cfg) if cik else {}
         if not eps:
-            # Record it rather than dropping it. A name missing from the output looks like a
-            # name that was never a candidate; "partial, nothing on file" is an honest
-            # ungraded letter the ceiling can still reason about.
+            # Record it in `detail` rather than dropping it: a name missing from the output looks
+            # like a name that was never a candidate. It is deliberately NOT put in `known` -
+            # nothing on file is "I cannot tell you", and a known partial would cap the ceiling.
             why = ("no CIK for this ticker in SEC's registrant list" if not cik
                    else "no annual EPS on file at SEC")
             ungraded.append("%s (%s)" % (sym, why))
-            known[sym] = {"A": "partial"}
             detail[sym] = {"grade": "partial", "cik": cik, "series": [], "steps": [],
                            "reason": "A: not graded - " + why, "source": "sec-xbrl"}
             continue
         roe = roes.get(sym, roes.get(tick))
         g, why, series, steps = grade(eps, cfg, roe=roe)
-        known[sym] = {"A": g}
+        if decides(g, steps, cfg, roe):
+            known[sym] = {"A": g}
+        else:
+            ungraded.append("%s (%s)" % (sym, why))
         detail[sym] = {"grade": g, "cik": cik, "series": series,
                        "steps": [None if s is None else round(s, 1) for s in steps],
                        "roe": roe, "reason": "A: " + why, "source": "sec-xbrl"}
@@ -343,11 +367,14 @@ def run(symbols, cache_dir, contact, cfg, roes=None):
             "measures": "audited annual diluted EPS, %d year-on-year steps at >=%.0f%%"
                         % (cfg["years"], cfg["growth"]),
             "is_proxy": False,
-            "ceiling_policy": "a fail here is EVIDENCE and may prune; partial means the filings "
-                              "could not answer, and never prunes",
+            "ceiling_policy": "a grade the audited figures decided (pass, fail, or a partial "
+                              "from real numbers) is EVIDENCE and goes in `known`; where the "
+                              "filings could not answer (no CIK, no filings, too few or stale "
+                              "years, a loss year, ROE unverified) the name is listed under "
+                              "`ungraded` and withheld from `known`, so it can never prune",
             "thresholds": {k: v for k, v in cfg.items()},
             "graded": len(known),
-            "ungraded": ungraded,
+            "ungraded": ungraded,   # the names withheld from `known`, each with its reason
         },
         "known": known,
         "detail": detail,

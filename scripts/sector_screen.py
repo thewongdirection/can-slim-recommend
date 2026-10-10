@@ -124,7 +124,7 @@ def pct_vs(close, level):
 # with a buy point and a stop, which the method never contemplates: no EPS of its own, no base,
 # and a price that tracks the conversion terms rather than the business.
 NON_COMMON = re.compile(
-    r"\b(preferred|pfd|depositary|depository|warrant|right|unit[s]?\b|notes?|debenture|"
+    r"\b(preferred|pfd|depositary|depository|warrants?|rights?|unit[s]?\b|notes?|debenture|"
     r"trust\s+preferred|convertible\s+preferred)\b", re.I)
 
 
@@ -134,8 +134,13 @@ def non_common_reason(row):
     with a slash in the ticker (HPE/PC). A dotted class like BRK.B is ordinary common stock and
     must NOT be caught here."""
     desc = str(row.get("description") or row.get("company") or "")
-    m = NON_COMMON.search(desc)
-    if m:
+    for m in NON_COMMON.finditer(desc):
+        # A keyword that OPENS the description is the issuer's own name - "Preferred Bank",
+        # "Unit Corporation" - not the instrument. Instruments are named after their issuer and
+        # then the security ("Acme Corp Warrant", "HPE 7.625% Series C Convertible Preferred").
+        # Without this a real, ordinary common stock was dropped as "not common stock".
+        if m.start() == 0 and len(desc.split()) > 1:
+            continue
         return "not common stock - %s (%s)" % (m.group(0).lower(), desc[:48])
     sym = str(row.get("symbol") or "")
     tick = sym.split(":")[-1]
@@ -322,7 +327,11 @@ def ceiling(out, cfg, known=None):
     # this is only known once every sector has been ranked.
     sr = out.get("sector_rank_overall")
     tot = out.get("sector_count") or 0
-    if sr and tot and sr > tot / 2.0:
+    # `tot > 1`: "the bottom half" needs at least two sectors to have one. With a single sector
+    # (a themed or scoped sweep) rank 1 of 1 satisfied `1 > 1/2` and every name was capped at
+    # partial as "leader of a laggard group" - a ceiling below a score it could really earn,
+    # which silently eliminates qualifiers. A ceiling may be too high; it may never be too low.
+    if sr and tot > 1 and sr > tot / 2.0:
         caps["L"] = "partial"
         why.append("L <= partial: sector ranks #%d of %d - leader of a laggard group" % (sr, tot))
     else:
@@ -354,6 +363,20 @@ def ceiling(out, cfg, known=None):
     out["ceiling_known"] = {k.upper(): str(v).lower() for k, v in known.items()}
     out["grade_required"] = total >= cfg["threshold"]
     return out
+
+
+def known_for(known, m):
+    """Everything known about one name, from BOTH spellings of its key.
+
+    The A-screen and annual_eps.py key by "NASDAQ:OKTA"; institutional_cache.py and
+    accumulation.py key by the bare "OKTA". `known.get(symbol) or known.get(ticker)` used only the
+    first non-empty entry, so a name carrying A under one key and I under the other lost one of
+    them - and a lost grade reverts to the "assume pass" ceiling or, worse, to a stale cap.
+    The exchange-qualified key is the more specific, so it wins where both grade a letter.
+    """
+    merged = dict(known.get(m["ticker"]) or {})
+    merged.update(known.get(m["symbol"]) or {})
+    return merged or None
 
 
 def normalize_sectors(blob):
@@ -435,7 +458,7 @@ def run(blob, cfg, known=None):
         for m in s["members"]:
             m["sector_count"] = len(sectors)
             if m["triage"] == "grade":
-                ceiling(m, cfg, known.get(m["symbol"]) or known.get(m["ticker"]))
+                ceiling(m, cfg, known_for(known, m))
             else:                       # already disqualified; a ceiling would only confuse
                 m["ceiling"] = None
                 m["grade_required"] = False

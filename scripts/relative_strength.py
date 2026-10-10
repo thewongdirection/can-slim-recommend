@@ -33,6 +33,8 @@ Usage:
 Pure standard library. If IBKR returns bars in a different shape, adapt the loader; the
 math below only needs ordered (close, volume) series.
 """
+import argparse
+import datetime as _dt
 import json
 import sys
 
@@ -51,15 +53,66 @@ def as_row(bar):
     return bar
 
 
-def _le(t, asof):
-    """Is bar-timestamp `t` on/before the as-of cutoff? Numeric when both parse as numbers;
-    otherwise ISO-date-aware string compare - a bare YYYY-MM-DD cutoff matches by date prefix so
-    the whole as-of day is inclusive (e.g. '2023-01-31T20:00Z' <= '2023-01-31')."""
+def _kind(x):
+    """What sort of number is this timestamp? 'ms' / 's' epoch, 'ymd' (20230131), or None."""
+    if x >= 1e11:
+        return "ms"
+    if x >= 1e8:
+        return "s"
+    if x == int(x) and 19000101 <= x <= 21001231:
+        return "ymd"
+    return None
+
+
+def _stamp(v):
+    """A bar timestamp or an as-of cutoff -> (aware UTC datetime, has_time). ValueError if unreadable.
+
+    Polygon/Massive bars carry epoch milliseconds, which is the path SKILL.md recommends for as-of
+    runs. Comparing one with a "2023-01-31" cutoff used to fall into a string compare in which
+    "1675..." sorts before "2023-..." - so EVERY bar was kept and a point-in-time run silently
+    saw the whole future. An unreadable stamp now raises instead of passing.
+    """
+    utc = _dt.timezone.utc
+    if isinstance(v, bool):
+        raise ValueError("unreadable timestamp %r" % (v,))
     try:
-        return float(t) <= float(asof)
+        x = float(v)
     except (TypeError, ValueError):
-        ts, a = str(t), str(asof)
-        return (ts[:10] <= a) if len(a) <= 10 else (ts <= a)
+        x = None
+    if x is not None:
+        k = _kind(x)
+        if k == "ymd":
+            d = str(int(x))
+            return _dt.datetime(int(d[:4]), int(d[4:6]), int(d[6:]), tzinfo=utc), False
+        if k in ("ms", "s"):
+            return _dt.datetime.fromtimestamp(x / 1000.0 if k == "ms" else x, utc), True
+        raise ValueError("unreadable timestamp %r" % (v,))
+    s = str(v).strip()
+    try:
+        has_time = len(s) > 10
+        d = _dt.datetime.fromisoformat(s.replace("Z", "+00:00").replace(" ", "T"))
+    except ValueError:
+        raise ValueError("unreadable timestamp %r" % (v,))
+    return (d if d.tzinfo else d.replace(tzinfo=utc)).astimezone(utc), has_time
+
+
+def _le(t, asof):
+    """Is bar-timestamp `t` on/before the as-of cutoff?
+
+    Same-kind numbers compare directly (any unit the caller is consistent in). Otherwise both are
+    read as UTC datetimes, and a cutoff with no time of day is inclusive of that WHOLE day -
+    e.g. '2023-01-31T20:00Z' <= '2023-01-31'.
+    """
+    try:
+        ft, fa = float(t), float(asof)
+    except (TypeError, ValueError):
+        pass
+    else:
+        if _kind(ft) == _kind(fa):
+            return ft <= fa
+    bt, _ = _stamp(t)
+    at, has_time = _stamp(asof)
+    return bt <= at if has_time else bt.date() <= at.date()
 
 
 def truncate_asof(bars, asof):
@@ -193,24 +246,23 @@ def main():
     # --asof <cutoff> for a point-in-time (historical) run. The cutoff is compared in the bar
     # timestamps' own units; a plain YYYY-MM-DD string compares lexically and so is inclusive of
     # that whole day. Overrides any "asof" already in the input JSON.
-    args = [a for a in sys.argv[1:]]
-    asof, path = None, None
-    i = 0
-    while i < len(args):
-        if args[i] == "--asof" and i + 1 < len(args):
-            asof = args[i + 1]
-            i += 2
-            continue
-        if not args[i].startswith("-"):
-            path = args[i]
-        i += 1
-    if path:
-        with open(path, "r", encoding="utf-8") as f:
+    # argparse, not a hand-rolled loop: that loop took only the two-token "--asof DATE" form, so
+    # "--asof=2023-06-01" and a trailing "--asof" with no value were IGNORED, and the run printed
+    # a perfectly normal-looking answer computed on the whole future.
+    ap = argparse.ArgumentParser(description="RS proxy, % off the 52-week high, base and breakout "
+                                             "volume from OHLCV bars.")
+    ap.add_argument("path", nargs="?", help="bars JSON (default: stdin)")
+    ap.add_argument("--asof", metavar="CUTOFF",
+                    help="point-in-time cutoff: keep only bars on/before it (YYYY-MM-DD, ISO "
+                         "timestamp, YYYYMMDD or epoch)")
+    a = ap.parse_args()
+    if a.path:
+        with open(a.path, "r", encoding="utf-8") as f:
             data = json.load(f)
     else:
         data = json.load(sys.stdin)
-    if asof is not None:
-        data["asof"] = asof
+    if a.asof is not None:
+        data["asof"] = a.asof
     json.dump(analyze(data), sys.stdout, indent=2)
     sys.stdout.write("\n")
 

@@ -48,7 +48,11 @@ Pure standard library.
 """
 import argparse
 import json
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import relative_strength as rs  # noqa: E402  (asof truncation shared with the RS script)
 
 DEFAULTS = {
     "window": 50,        # trading days of tape to read; ~10 weeks, IBD's usual U/D lookback
@@ -175,12 +179,19 @@ def grade(bars, cfg):
 
 def analyze(data, cfg, strict=False):
     known, detail = {}, {}
+    asof = data.get("asof")
     for cand in data.get("candidates") or []:
         sym = cand.get("symbol") or ""
         tick = sym.split(":")[-1] if sym else ""
         if not tick:
             continue
-        g, cap, why, m = grade(cand.get("daily") or [], cfg)
+        daily = cand.get("daily") or []
+        if asof is not None:
+            # The docstring says this takes the same JSON as relative_strength.py, which cuts every
+            # series to `asof`. This did not, so a point-in-time run graded I on bars that had not
+            # printed yet while RS beside it was correctly truncated.
+            daily = rs.truncate_asof(rs.normalize(daily), asof)
+        g, cap, why, m = grade(daily, cfg)
         if strict:
             cap = g                      # let a proxy fail prune; see the module docstring
         known[tick] = {"I": cap}

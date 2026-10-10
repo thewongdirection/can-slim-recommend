@@ -333,7 +333,7 @@
     .reason{font-size:13px;line-height:1.45;max-width:none}
     .sc{width:19px;margin-right:1px}
     .sc .mk{width:18px;height:18px;font-size:11px}
-    .hint,th .arrow{display:none}
+    .hint,.legend span.hint,th .arrow{display:none}
     a{color:var(--accent);text-decoration:none}
     .modal{display:none !important}
     /* A4, landscape: the pick tables are ~10 columns wide and portrait clips them. 15mm of
@@ -470,14 +470,34 @@
     <div class="modal-bar">
       <span class="t" id="modalTitle"></span>
       <span class="acts">
-        <a id="modalOpen" target="_blank" rel="noopener">Open in new tab</a>
+        <a id="modalOpen" target="_blank" rel="noopener noreferrer">Open in new tab</a>
         <button id="modalClose" type="button">Close &times;</button>
       </span>
     </div>
-    <iframe id="modalFrame" title="per-ticker CAN SLIM report"></iframe>
+    <iframe id="modalFrame" title="per-ticker CAN SLIM report" sandbox="allow-scripts allow-popups"></iframe>
   </div>
 </div>
 
+<script>
+/* RENDER GUARD. The self-audit below is the LAST thing the page runs, so any script error before
+   it (a pick with no symbol, a CONFIG string containing the text that ends a script block) stops
+   the page with no audit at all - and "no banner" used to read as "clean". This block is separate
+   from the main script on purpose: a syntax error there stops the whole of that script from
+   running, but still fires this window "error" event. build_report.py also requires the
+   data-rendered mark the main script sets on its last line. */
+window.addEventListener("error", function(e){
+  var el = document.getElementById("checks"); if (!el) return;
+  var box = document.createElement("div"); box.className = "callout bad";
+  var b = document.createElement("b");
+  b.textContent = "\u26A0 Report checks failed (1) - do not ship this report:";
+  var ul = document.createElement("ul"), li = document.createElement("li");
+  li.textContent = "The page stopped rendering, so the self-audit never ran: " +
+    ((e && e.message) || "script error") + ". Look for a CONFIG entry that is missing a required " +
+    "field, or a string containing the closing-script-tag text (write < as \\u003c in CONFIG strings).";
+  ul.appendChild(li); box.appendChild(b); box.appendChild(ul);
+  el.innerHTML = ""; el.appendChild(box);
+});
+</script>
 <script>
 /* ============================ FILL THIS PER RUN ============================ */
 const CONFIG = {
@@ -660,9 +680,23 @@ const CONFIG = {
 
 const $ = (id)=>document.getElementById(id);
 const esc = (s)=> (s==null?"":String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+/* A URL from CONFIG is only ever http(s) or relative. esc() protects the attribute, not the
+   scheme: href="javascript:..." and an iframe src of the same kind run in this page's origin.
+   Whitespace and control characters are stripped before the test because browsers ignore them
+   inside a scheme ("java<tab>script:" is still javascript:). Returns "" for anything else. */
+const safeUrl = (u)=>{
+  const t = String(u==null?"":u).trim();
+  const flat = t.replace(/[\u0000-\u0020]/g, "");
+  return (/^https?:\/\//i.test(flat) || !/^[a-z][a-z0-9+.\-]*:/i.test(flat)) ? t : "";
+};
 const rsClass = (v)=> /^[-\u2212]/.test(String(v).trim()) ? "neg" : "pos";
 // parse a messy numeric string ("+51","-14%","1,188",">1,220 breakout","~178 pivot") -> number|NaN
 const num = (s)=>{ if(s==null) return NaN; const m=String(s).replace(/,/g,'').match(/-?\d+(\.\d+)?/); return m?parseFloat(m[0]):NaN; };
+/* A buy point is a price. SKILL.md tells the run to write "None now" plus the condition that would
+   create an entry ("None now - needs a handle above 150.20") for a strong name with no valid pivot,
+   and num() reads the FIRST number anywhere in a string - so that report was audited as "buy point
+   150.20 with N FAIL" and refused. Only a string that STARTS with a price (allowing ~ > < = $) is one. */
+const priceOf = (s)=> /^\s*[~><=$\u2248\u2265]*\s*\d/.test(String(s==null?"":s)) ? num(s) : NaN;
 
 /* ---- grading: pass/partial/fail per letter; total = C+A+N+S+L+I + M, out of 7 ----
    Identical rubric and arithmetic to the sister skill can-slim-grader, so a 4.5 here and a
@@ -912,8 +946,8 @@ function verdictChip(p){
 
 function rowHtml(p, i, opts){
   opts = opts||{};
-  const tk = p.reviewUrl
-    ? '<a class="sym" data-review="'+esc(p.reviewUrl)+'" data-sym="'+esc(p.symbol)+'">'+esc(p.symbol)+'</a>'
+  const tk = safeUrl(p.reviewUrl)
+    ? '<a class="sym" data-review="'+esc(safeUrl(p.reviewUrl))+'" data-sym="'+esc(p.symbol)+'">'+esc(p.symbol)+'</a>'
     : '<span class="sym">'+esc(p.symbol)+'</span>';
   let badge = "";
   if (opts.markTop && topSet.has(p.symbol)) badge = '<span class="badge" title="also in the overall top '+TOPN+'">TOP '+TOPN+'</span>';
@@ -1004,9 +1038,9 @@ $("scoreLegend").innerHTML =
   let t = "Both lists contain ONLY names that scored "+fmtScore(THRESHOLD)+"/7 or better. "+
           "A name graded below the cut is not listed as a recommendation.";
   if (sw.mustGrade && sw.graded)
-    t += " Coverage: every one of the "+sw.mustGrade+" triage survivors that could still reach "+
-         fmtScore(THRESHOLD)+"/7 was graded ("+sw.graded+" graded in total)"+
-         (sw.eliminatedByCeiling? "; the other "+sw.eliminatedByCeiling+" were eliminated without "+
+    t += " Coverage: every one of the "+esc(sw.mustGrade)+" triage survivors that could still reach "+
+         fmtScore(THRESHOLD)+"/7 was graded ("+esc(sw.graded)+" graded in total)"+
+         (sw.eliminatedByCeiling? "; the other "+esc(sw.eliminatedByCeiling)+" were eliminated without "+
           "a grade because their best reachable score was below the cut" : "")+".";
   const el = $("gradeScopeNote"); if (el) el.innerHTML = '<div class="callout">&#9432; '+t+'</div>';
 })();
@@ -1081,10 +1115,13 @@ function noQualifierReasons(){
       "hard filters before grading (below the price floor, too thin, more than 25% below the 52-week high, " +
       "lagging SPY, or under the 200-day).");
   }
-  if (sw.triaged && sw.graded && sw.triaged > sw.graded){
-    R.push((sw.triaged - sw.graded) + " further names cleared triage but were never graded in this run - they are " +
+  // Names the ceiling eliminated were not "not reached": arithmetic proved they could not get
+  // there, and the coverage note says so. Only the remainder is genuinely ungraded.
+  const unreached = sw.triaged - sw.graded - (Number(sw.eliminatedByCeiling)||0);
+  if (sw.triaged && sw.graded && unreached > 0){
+    R.push(unreached + " further names cleared triage but were never graded in this run - they are " +
       "absent from both lists because they were not reached, not because they failed. Coverage is " +
-      sw.graded + " of " + sw.triaged + ".");
+      sw.graded + " of " + (sw.triaged - (Number(sw.eliminatedByCeiling)||0)) + " that could still reach the cut.");
   } else if (!sw.triaged && sw.screened && sw.graded && sw.screened > sw.graded){
     R.push((sw.screened - sw.graded) + " of the " + sw.screened + " top performers pulled never reached grading - " +
       "dropped on the hard filters (below the price floor, too thin, more than 25% below the 52-week high, " +
@@ -1153,7 +1190,7 @@ if (topEmpty){
       '<td><b>'+esc(r.sector)+'</b></td>'+
       '<td class="num">'+esc(r.medianPerf)+'</td>'+
       '<td class="num">'+esc(r.survivors)+(r.considered?' / '+esc(r.considered):'')+'</td>'+
-      '<td class="num">'+q+'</td>'+
+      '<td class="num">'+esc(q)+'</td>'+
       '<td class="grp">'+esc(r.leaders||'')+'</td>'+
       '<td class="grp">'+esc(r.note||'')+'</td>'+
     '</tr>';
@@ -1188,7 +1225,7 @@ if (topEmpty){
     const body = r.top5.map((t,i)=>{
       const ok = String(t.triage||'').toLowerCase()==='grade';
       return '<div class="fbrow">'+
-        '<span class="n">'+(t.sectorRank||i+1)+'</span>'+
+        '<span class="n">'+esc(t.sectorRank||i+1)+'</span>'+
         '<span class="sym">'+esc(t.ticker||t.symbol)+'</span>'+
         '<span class="co" title="'+esc(t.company||'')+'">'+esc(t.company||'')+'</span>'+
         '<span class="num">'+esc(t.perf)+'</span>'+
@@ -1244,7 +1281,7 @@ function markPath(shape, cxIn, cyIn, r){
 }
 
 function buildLeadMap(){
-  const pts = allPicks.map(p=>({sym:p.symbol, x:p._rs, y:Math.abs(p._off), vk:verdictKey(p)}))
+  const pts = allPicks.map(p=>({sym:String(p.symbol==null?"":p.symbol), x:p._rs, y:Math.abs(p._off), vk:verdictKey(p)}))
                       .filter(d=> isFinite(d.x) && isFinite(d.y));
   if (pts.length < 2) return;   // nothing meaningful to plot
   $("leadmapWrap").style.display='block';
@@ -1358,6 +1395,7 @@ buildLeadMap();
 
 // ---- per-ticker report modal ----
 function openReview(url, sym){
+  url = safeUrl(url); if (!url) return;                  // defence in depth: never load a script URL
   $("modalTitle").textContent = (sym?sym+" - ":"") + "CAN SLIM report";
   $("modalOpen").href = url;
   $("modalFrame").src = url;
@@ -1523,10 +1561,12 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
     });
   }
   if (!allPicks.length) errs.push("CONFIG.picks is empty - nothing was graded, so neither recommendation list can be built.");
+  // Not `swGraded &&`: a graded of 0 (the template's default) or a missing key used to skip this
+  // check, so a report with 3 picks and "FULLY GRADED 0" in its funnel passed the audit.
   const swGraded = Number((CONFIG.sweep||{}).graded);
-  if (isFinite(swGraded) && swGraded && swGraded !== allPicks.length)
-    errs.push("CONFIG.sweep.graded says "+swGraded+" names were graded but CONFIG.picks holds "+allPicks.length+
-      " - the funnel and the lists must count the same run.");
+  if (!isFinite(swGraded) || swGraded !== allPicks.length)
+    errs.push("CONFIG.sweep.graded says "+(CONFIG.sweep||{}).graded+" names were graded but CONFIG.picks holds "+
+      allPicks.length+" - fill sweep.graded so the funnel and the lists count the same run.");
   // The coverage contract: a run that graded fewer names than could still reach the cut has
   // not finished, and might be hiding a qualifier among the names it never reached.
   const swMust = Number((CONFIG.sweep||{}).mustGrade);
@@ -1534,24 +1574,39 @@ $("portfolio").innerHTML = '<b>Portfolio &amp; risk (per the method):</b> '+esc(
     errs.push("CONFIG.sweep.mustGrade says "+swMust+" survivors could still reach "+fmtScore(THRESHOLD)+
       "/7, but only "+allPicks.length+" names were graded - the run is incomplete and a qualifier may be "+
       "missing. Grade every name whose ceiling reaches the cut, or raise the cut.");
+  if (allPicks.length && !isGrade((CONFIG.market||{}).mGrade))
+    errs.push('CONFIG.market.mGrade is "'+((CONFIG.market||{}).mGrade)+
+      '", not pass/partial/fail - M scores as FAIL for every row.');
+  // sectors[].qualified is typed by hand and drives the sector table and the "no qualifier" banner;
+  // the lists are derived from picks[]. When they disagree the page contradicts itself silently.
+  (CONFIG.sectors||[]).forEach((r,i)=>{
+    if (r.qualified == null) return;
+    const derived = qualified.filter(p=>sectorKey(p)===r.sector).length;
+    if (Number(r.qualified) !== derived)
+      errs.push("CONFIG.sectors["+i+"] ("+r.sector+") says "+r.qualified+" qualified, but picks[] holds "+
+        derived+" name(s) at or above "+fmtScore(THRESHOLD)+" in that sector - the sector table and the "+
+        "lists would disagree. Fix the count or the picks' sector.");
+  });
   allPicks.forEach(p=>{
+    if (p.symbol == null || !String(p.symbol).trim()){
+      errs.push("a pick has no symbol - every graded name needs one.");
+      return;
+    }
     const sc = p.scores||{};
     LETTERS6.forEach(k=>{
       if (sc[k]==null) errs.push(p.symbol+": letter "+k+" has no grade (defaults to fail).");
       else if (!isGrade(sc[k])) errs.push(p.symbol+": letter "+k+' is "'+sc[k]+
         '", which is not pass/partial/fail - it scores as FAIL. Every letter takes exactly "pass" (1.0), "partial" (0.5) or "fail" (0); a bare number is not a grade on any scale this skill uses and silently zeroes the letter.');
     });
-    if (!isGrade((CONFIG.market||{}).mGrade))
-      errs.push('CONFIG.market.mGrade is "'+((CONFIG.market||{}).mGrade)+
-        '", not pass/partial/fail - M scores as FAIL for every row.');
-    const bp = num(p.buyPoint), hi = num(p.high52), st = num(p.stop);
+    const bp = priceOf(p.buyPoint), hi = num(p.high52), st = num(p.stop);
     if (isFinite(bp) && gradeOf(sc.N)==="fail")
       errs.push(p.symbol+": a buy point is named but N is FAIL - the method has no entry without a sound base at new-high ground.");
-    if (isFinite(bp) && isFinite(hi) && bp < hi*0.90)
+    const EPS = 1e-9;     // 104*0.9 is 93.60000000000001, so "exactly 10% below" tripped the rule
+    if (isFinite(bp) && isFinite(hi) && bp < hi*0.90 - EPS)
       errs.push(p.symbol+": buy point "+p.buyPoint+" is more than 10% below the 52-week high ("+p.high52+") - that is a lower high, not a pivot.");
     if (isFinite(bp) && isFinite(st)){
       const d = (bp-st)/bp;
-      if (d < 0.025 || d > 0.09)
+      if (d < 0.025 - EPS || d > 0.09 + EPS)
         errs.push(p.symbol+": stop "+p.stop+" is "+(d*100).toFixed(1)+"% below the buy point - the rule is 7-8% (3% when M is a correction).");
     }
     const vd = String(p.verdict||"").toUpperCase();
@@ -1606,8 +1661,14 @@ const DEFAULT_GLOSSARY = [
 })();
 $("disclaimer").textContent = CONFIG.disclaimer||'';
 if ((CONFIG.sources||[]).length){
-  $("sources").innerHTML = "Sources: " + CONFIG.sources.map(s=>'<a href="'+esc(s.url)+'">'+esc(s.label)+'</a>').join('');
+  // A source with no usable (http/https/relative) url is listed as plain text, never as a link.
+  $("sources").innerHTML = "Sources: " + CONFIG.sources.map(s=>{
+    const u = safeUrl(s.url);
+    return u ? '<a href="'+esc(u)+'" rel="noopener noreferrer">'+esc(s.label)+'</a>' : esc(s.label);
+  }).join('');
 }
+// Last line of the main script: build_report.py refuses a page that never got here.
+document.documentElement.setAttribute("data-rendered", "1");
 </script>
 </body>
 </html>

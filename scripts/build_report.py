@@ -66,15 +66,32 @@ def apply_theme(path, theme):
 RENDER_TIMEOUT = 240
 
 
-def audit(path):
-    """Render the page headlessly and read its self-audit banner.
+def script_tag_problem(path):
+    """Cheap static check that needs no browser: is every <script> closed exactly once?
 
-    Returns (ok, detail): ok is True when the report is clean OR the check could not run
-    (detail says which). ok is False only when the banner is actually present.
+    CONFIG is an object literal inside a <script> block, and the HTML parser ends that block at the
+    first closing-script-tag text it meets - including one inside a string, such as a reason pasted
+    from a web page. Everything after it is then parsed as HTML (and can run), the real script
+    dies on a syntax error, and the self-audit never executes. Returns a message, or None.
     """
+    try:
+        text = open(path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return None
+    opens = len(re.findall(r"<script\b", text, re.I))
+    closes = len(re.findall(r"</script", text, re.I))
+    if opens == closes:
+        return None
+    return ("the file has %d script tag(s) but %d closing ones - a CONFIG string almost certainly "
+            "contains the closing-script-tag text, which ends the script early. Write every < inside "
+            "CONFIG strings as \\u003c." % (opens, closes))
+
+
+def dump_dom(path):
+    """Render the page in a headless browser. Returns (dom, None), or (None, why) when it cannot."""
     exe = html_to_pdf.find_browser()
     if not exe:
-        return True, "SKIPPED - no headless browser found, so the self-audit could not be read"
+        return None, "no headless browser found"
     url = "file:///" + os.path.abspath(path).replace("\\", "/")
     for head in ("--headless=new", "--headless"):
         try:
@@ -85,14 +102,32 @@ def audit(path):
             ).stdout.decode("utf-8", "replace")
         except Exception:
             continue
-        m = re.search(r'<div id="checks"[^>]*>(.*?)(?=<div id="freshness")', out, re.S)
-        body = m.group(1) if m else ""
-        if "Report checks failed" not in body:
-            return True, "clean"
-        items = re.findall(r"<li>(.*?)</li>", body, re.S)
-        items = [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", i)).strip() for i in items]
-        return False, "\n".join("    - " + i for i in items) or "    - (banner present)"
-    return True, "SKIPPED - the browser failed to render the page, so the audit could not be read"
+        return out, None
+    return None, "the browser failed to render the page"
+
+
+def audit(path):
+    """Render the page headlessly and read its self-audit banner.
+
+    Returns (ok, detail): ok is True when the report is clean OR the check could not run
+    (detail says which). ok is False when the banner is present, and also when the page never
+    finished rendering: the audit is the last thing the page runs, so a script error before it
+    leaves NO banner, and "no banner" used to be read as "clean".
+    """
+    out, why = dump_dom(path)
+    if out is None:
+        return True, "SKIPPED - %s, so the self-audit could not be read" % why
+    m = re.search(r'<div id="checks"[^>]*>(.*?)(?=<div id="freshness")', out, re.S)
+    body = m.group(1) if m else ""
+    if "Report checks failed" not in body:
+        if not re.search(r'<html[^>]*\sdata-rendered="1"', out):
+            return False, ("    - the page stopped rendering before it finished, so its self-audit "
+                           "never ran. Open it in a browser and read the console; a pick missing "
+                           "a required field is the usual cause.")
+        return True, "clean"
+    items = re.findall(r"<li>(.*?)</li>", body, re.S)
+    items = [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", i)).strip() for i in items]
+    return False, "\n".join("    - " + i for i in items) or "    - (banner present)"
 
 
 def main():
@@ -118,7 +153,8 @@ def main():
     if a.theme and apply_theme(a.input, a.theme):
         print("theme -> %s" % a.theme)
 
-    ok, detail = audit(a.input)
+    problem = script_tag_problem(a.input)
+    ok, detail = (False, "    - " + problem) if problem else audit(a.input)
     if not ok:
         print("REFUSED: the report's self-audit is failing - do not ship it.\n" + detail,
               file=sys.stderr)
