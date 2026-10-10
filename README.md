@@ -10,8 +10,31 @@ It activates when you ask for stock ideas — *"recommend some stocks"*, *"what 
 
 ## Install
 
-Install it through the marketplace it is published in. The skill does not check for or apply
-updates itself — whatever installed it owns that, so updates arrive the same way the install did.
+Install it from [the-wong-marketplace](https://github.com/thewongdirection/the-wong-marketplace),
+a Claude Code plugin marketplace:
+
+```
+/plugin marketplace add thewongdirection/the-wong-marketplace
+/plugin install can-slim-recommend@the-wong-marketplace
+```
+
+Or from a shell:
+
+```bash
+claude plugin marketplace add thewongdirection/the-wong-marketplace
+claude plugin install can-slim-recommend@the-wong-marketplace
+```
+
+Installed this way the skill is namespaced by plugin, as `/can-slim-recommend:can-slim-recommend`,
+and it still activates on its own when you ask for stock ideas.
+
+**Updates come from the marketplace; the skill does not check for them itself.** This repo carries
+no plugin manifest, so every commit to `main` counts as a new version. To pick one up:
+
+```bash
+claude plugin marketplace update the-wong-marketplace
+claude plugin update can-slim-recommend@the-wong-marketplace    # restart to apply
+```
 
 To install by hand instead, `SKILL.md` sits at the repo root, so cloning the repo *as* the skill
 directory is the whole install:
@@ -27,7 +50,16 @@ instead. A hand install stays at the version you cloned until you `git pull` it.
 ### Install the companion skills too — data sourcing is a skill *set*
 
 This skill is one of a set, and two of the others are **where some of its data comes from**. It
-runs without them, but it runs on weaker sources and says so in the report, so install all three:
+runs without them, but it runs on weaker sources and says so in the report, so install all three.
+They are in the same marketplace:
+
+```
+/plugin install securities-filings-lookup@the-wong-marketplace
+/plugin install can-slim-grader@the-wong-marketplace
+/plugin install ibkr-review-ticker@the-wong-marketplace
+```
+
+Or by hand:
 
 ```bash
 git clone https://github.com/thewongdirection/securities-filings-lookup.git \
@@ -66,7 +98,7 @@ Rebuild it once a quarter, after each 13F deadline — mid-Feb, mid-May, mid-Aug
 ```bash
 export SEC_CONTACT=you@your-domain.com      # once; or pass --contact on each run
 python scripts/institutional_cache.py --quarter 2026Q1 \
-  --sec-tickers auto -o data/i-cache.json
+  --sec-tickers auto -o "$(python scripts/datadir.py i-cache.json)"
 ```
 
 **The contact address is required, not decorative.** SEC's access policy wants a real way to
@@ -78,6 +110,23 @@ with zero tickers in it.
 
 Takes about 40 seconds and needs `www.sec.gov` reachable. Without it the skill still runs — **I**
 falls back to the volume proxy in `scripts/accumulation.py`, and every reason string says so.
+
+**Where the files live.** The I-cache, the 13F zips, the SEC answers behind **A** and the
+TradingView pacing state all go in one folder that does not depend on where the skill is installed
+or where you run it from, so a marketplace update (which installs into a fresh folder) does not lose
+them. It is `$CANSLIM_DATA_DIR` if you set that, otherwise a per-user cache folder:
+
+| Platform | Default |
+|---|---|
+| Linux / other | `$XDG_CACHE_HOME/can-slim-recommend`, else `~/.cache/can-slim-recommend` |
+| macOS | `~/Library/Caches/can-slim-recommend` |
+| Windows | `%LOCALAPPDATA%\can-slim-recommend` |
+
+`python scripts/datadir.py` prints the folder, and `python scripts/datadir.py i-cache.json` prints a
+file's full path inside it. An explicit `--cache-dir` or `-o` always wins, and so does
+`CANSLIM_THROTTLE_STATE` for the pacing state alone. Everything in it is rebuildable. Caches from
+before this change were in a `data/` folder relative to where you ran the scripts; they are not
+picked up automatically, so the next run rebuilds them (the I-cache takes about 40 seconds).
 
 A rebuild that cannot reach SEC writes an empty cache, so a stale one is never graded as current. The
 one exception is a file that already holds a good build of the **same** quarter: that is kept, and
@@ -260,6 +309,8 @@ suite fails until `dist/can-slim-recommend-portable.md` matches the sources agai
 - `scripts/market_session.py` — step 1: is a trading session in progress? S is graded from
   relative volume, which mid-session is a partial sum. Waits out a short gap and says so
   immediately on a long one.
+- `scripts/datadir.py` — where the skill keeps files that outlive a run: `$CANSLIM_DATA_DIR`, else a
+  per-user cache folder independent of the install location and the working directory.
 - `scripts/tv_throttle.py` — paces TradingView calls so a sweep never earns a block. `--wait`
   blocks the caller rather than advising it, because the connector gives no warning: a burst
   succeeds, then the screener 403s for twenty minutes with no server-side way out. The rate is

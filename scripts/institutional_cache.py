@@ -59,13 +59,15 @@ answer. The one exception is a missing or unusable contact address: that stops i
 ticker in `detail[t]["source"]`, so the report can say which evidence graded each letter.
 
 Usage:
-  # once per quarter, after the 13F deadline
-  python institutional_cache.py --quarter 2026Q2 --prior 2026Q1 -o data/i-cache.json
+  # once per quarter, after the 13F deadline. The cache lives in the skill's data directory
+  # (datadir.py: $CANSLIM_DATA_DIR, else a per-user folder), so it survives updates and is the same
+  # from every project:
+  python institutional_cache.py --quarter 2026Q2 --prior 2026Q1 -o "$(python datadir.py i-cache.json)"
   # resolve tickers using the sweep's own candidate list, and fill gaps with the volume proxy
   python institutional_cache.py --quarter 2026Q2 --prior 2026Q1 \\
-      --universe sweep.json --fallback accum.json -o data/i-cache.json
+      --universe sweep.json --fallback accum.json -o "$(python datadir.py i-cache.json)"
   # then, per run:
-  python sector_screen.py sweep.json --known data/i-cache.json --md
+  python sector_screen.py sweep.json --known "$(python datadir.py i-cache.json)" --md
 
 OUTPUT: the same three-part shape accumulation.py emits - meta / known / detail - so either can
 feed `sector_screen.py --known`.
@@ -84,6 +86,8 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
+
+import datadir
 
 DEFAULTS = {
     "thin_holders": 20,     # fewer managers than this is a neglected name, not a sponsored one
@@ -604,7 +608,11 @@ def get_dataset(ds, contact, timeout, cache_dir):
     if len(data) < 1000 or data[:2] != b"PK":
         return None, "%s returned %d bytes that are not a zip archive" % (ds["url"], len(data))
     if cache_dir:
-        _write_atomic(os.path.join(cache_dir, ds["name"]), data)
+        try:
+            _write_atomic(os.path.join(cache_dir, ds["name"]), data)
+        except OSError as e:        # a read-only or full disk: the cache is an optimisation only
+            print("warning: could not cache %s (%s) - continuing without it" % (ds["name"], e),
+                  file=sys.stderr)
     return data, ds["url"]
 
 
@@ -774,7 +782,9 @@ def main():
     ap.add_argument("--cusip-map", metavar="FILE", help='{"67066G104": "NVDA", ...}')
     ap.add_argument("--fallback", metavar="FILE",
                     help="accumulation.py output, used for tickers 13F could not answer")
-    ap.add_argument("--cache-dir", default="data/13f", help="keep the zips (default %(default)s)")
+    ap.add_argument("--cache-dir", default=None,
+                    help="keep the zips here (default: the 13f folder of the data directory - "
+                         "see datadir.py)")
     ap.add_argument("--contact", default="",
                     help="contact email for SEC's User-Agent policy - REQUIRED. Defaults to the "
                          "SEC_CONTACT environment variable. SEC returns 403 without a real "
@@ -806,6 +816,8 @@ def main():
         ap.error("--quarter is required (or use --list)")
     if not a.prior:
         a.prior = prior_quarter(a.quarter)
+    if not a.cache_dir:
+        a.cache_dir = datadir.path("13f")
 
     cfg = dict(DEFAULTS, thin_holders=a.thin_holders)
     meta, known, detail, unresolved = build(a, cfg)

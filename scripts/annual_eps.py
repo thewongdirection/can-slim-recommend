@@ -46,9 +46,9 @@ OUTPUT: the same three-part shape institutional_cache.py and accumulation.py emi
   detail  {symbol: {...}} - the EPS series, the year-on-year steps and the reason string
 
 Usage:
-  python scripts/annual_eps.py symbols.json -o data/a-grades.json
+  python scripts/annual_eps.py symbols.json -o "$(python scripts/datadir.py a-grades.json)"
   python scripts/annual_eps.py run/screen.json --contact you@your-domain.com
-  python scripts/sector_screen.py sweep.json --known data/a-grades.json --md
+  python scripts/sector_screen.py sweep.json --known "$(python scripts/datadir.py a-grades.json)" --md
 
 `symbols.json` may be a plain list of symbols, a sweep payload, or sector_screen.py's own
 output - the shape is detected. SEC requires a contact address; see --contact.
@@ -69,6 +69,7 @@ sys.path.insert(0, HERE)
 # Reuse the SEC User-Agent policy rather than restating it: one place decides what a usable
 # contact is, and this script inherits the 403-names-the-cause behaviour for free.
 from institutional_cache import resolve_contact, UA_TEMPLATE, CONTACT_HELP  # noqa: E402
+import datadir  # noqa: E402
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 CONCEPT_URL = "https://data.sec.gov/api/xbrl/companyconcept/CIK%s/%s/%s.json"
@@ -152,8 +153,11 @@ def _cached(path, fetch, pause=DEFAULTS["pause"], max_age_days=CACHE_MAX_AGE_DAY
             return stale if stale is not None else b"{}"
         body = b"{}"
     body = body or b"{}"
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    io.open(path, "wb").write(body)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        io.open(path, "wb").write(body)
+    except OSError:                 # read-only or full disk: the answer is still good for this run
+        pass
     return body
 
 
@@ -418,8 +422,9 @@ def main():
     ap.add_argument("--contact", default="",
                     help="contact email for SEC's User-Agent policy - REQUIRED. Defaults to the "
                          "SEC_CONTACT environment variable")
-    ap.add_argument("--cache-dir", default="data/sec-eps",
-                    help="keep SEC responses here (default %(default)s)")
+    ap.add_argument("--cache-dir", default=None,
+                    help="keep SEC responses here (default: the sec-eps folder of the data "
+                         "directory - see datadir.py)")
     ap.add_argument("--growth", type=float, default=DEFAULTS["growth"],
                     help="each year must beat this %% (default %(default)s)")
     ap.add_argument("--years", type=int, default=DEFAULTS["years"],
@@ -448,6 +453,8 @@ def main():
         return 2
 
     cfg = dict(DEFAULTS, growth=a.growth, years=a.years, stale_days=a.stale_days)
+    if not a.cache_dir:
+        a.cache_dir = datadir.path("sec-eps")
     roes = json.load(io.open(a.roe, encoding="utf-8")) if a.roe else {}
     res = run(symbols, a.cache_dir, contact, cfg, roes)
     text = json.dumps(res["known"] if a.known_only else res, indent=2)
