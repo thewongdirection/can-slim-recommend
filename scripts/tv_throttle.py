@@ -44,7 +44,9 @@ unbroken run of clean calls eases it up. The spacing between calls is DERIVED fr
 Usage, around every TradingView call:
   python scripts/tv_throttle.py --wait --scope scanner      # blocks until safe, records the call
   {make the TradingView call}
-  python scripts/tv_throttle.py --observe '{the response}'  # ALWAYS: adapt to what it just said
+  python scripts/tv_throttle.py --observe - < response.txt  # ALWAYS: adapt to what it just said
+                                                            # (stdin, never the command line:
+                                                            # a response is untrusted text)
 
   python scripts/tv_throttle.py --status        # learned rate, budget, blocks, next safe time
   python scripts/tv_throttle.py --reset         # clear state (new session, or after a long idle)
@@ -98,25 +100,54 @@ DEFAULTS = {
 SCOPES = ("scanner", "ohlcv", "other")
 
 
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
+
+
 def load():
+    """Read the state file, trusting nothing in it.
+
+    A hand-edited or damaged file used to crash the throttle with an uncaught exception, and an
+    uncaught exception exits 1 - the same code as "REFUSED, the connector is blocked", which
+    SKILL.md tells the run to treat as a reason to stop the sweep. A state file that cannot be
+    understood is simply discarded: the cost is one cold start, not a halted run.
+    """
     try:
         with open(STATE, encoding="utf-8") as f:
-            s = json.load(f)
+            raw = json.load(f)
     except (OSError, ValueError):
-        s = {}
-    s.setdefault("calls", [])                 # shared: one upstream quota
-    s.setdefault("blocked", {})               # per-scope: {scope: {"n": int, "until": float}}
+        raw = {}
+    raw = raw if isinstance(raw, dict) else {}
+    s = {"calls": [t for t in raw["calls"] if _num(t)] if isinstance(raw.get("calls"), list) else [],
+         "blocked": {}}                       # per-scope: {scope: {"n": int, "until": float}}
+    for k in ("rate", "streak"):
+        if _num(raw.get(k)):
+            s[k] = raw[k]
+    old = raw.get("blocked") if isinstance(raw.get("blocked"), dict) else {}
     for k in SCOPES:
-        s["blocked"].setdefault(k, {"n": 0, "until": 0.0})
+        b = old.get(k) if isinstance(old.get(k), dict) else {}
+        s["blocked"][k] = {"n": int(b["n"]) if _num(b.get("n")) else 0,
+                           "until": float(b["until"]) if _num(b.get("until")) else 0.0}
     return s
 
 
 def save(s):
-    os.makedirs(os.path.dirname(STATE), exist_ok=True)
-    tmp = STATE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(s, f, indent=2)
-    os.replace(tmp, STATE)          # atomic, so a killed run cannot leave half a state file
+    """Persist the state atomically. Failing to persist warns and carries on: a throttle that
+    cannot write its file is degraded, not a reason to stop a sweep."""
+    # A per-process temp name: with one shared name, two concurrent callers raced on os.replace
+    # and the loser died with FileNotFoundError (exit 1, which reads as REFUSED).
+    tmp = "%s.%d.tmp" % (STATE, os.getpid())
+    try:
+        os.makedirs(os.path.dirname(STATE) or ".", exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(s, f, indent=2)
+        os.replace(tmp, STATE)      # atomic, so a killed run cannot leave half a state file
+    except OSError as e:
+        print("warning: throttle state not saved (%s) - pacing this call only" % e, file=sys.stderr)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 def prune(s, cfg, now):
@@ -242,8 +273,25 @@ def cmd_status(cfg, scope):
 # search ("2 req/sec Basic, 5 req/sec Pro") belong to tradingviewapi.com, an unrelated commercial
 # reseller. So the limit is DISCOVERED from what the endpoint says back, not read from a doc.
 RETRY_AFTER = re.compile(r"retry\s+after\s+(\d+(?:\.\d+)?)\s*s", re.I)
-RATE_WORDS = re.compile(r"rate[\s_-]?limit|too\s+many\s+requests|\b429\b", re.I)
-BLOCK_WORDS = re.compile(r"\b403\b|forbidden|blocked", re.I)
+
+
+def _status(code):
+    """A pattern for an HTTP status code that will not match the same digits inside DATA.
+
+    The response handed to --observe is whatever the connector returned, which for a healthy call
+    is a screener table or a bar series. A bare \\b403\\b matched the 403 in {"close": 403.25} (the
+    "." is a word boundary), so any price crossing $403 - or $429 - registered as a block, cooled
+    the scanner for five minutes, halved the rate, and made `--wait` refuse the sweep. A code
+    counts only with a status-ish word beside it, and never as the integer part of a decimal.
+    """
+    lead = r"(?:http|status(?:\s*code)?|code|error|returned|response)"
+    tail = r"(?!\d|[.,]\d)"               # not the integer part of 403.25 or 403,000
+    return (r"%s\W{0,6}%s%s" % (lead, code, tail)
+            + r"|(?<![\d.,])%s%s\W{0,3}(?:forbidden|too\s+many|error)" % (code, tail))
+
+
+RATE_WORDS = re.compile(r"rate[\s_-]?limit|too\s+many\s+requests|" + _status("429"), re.I)
+BLOCK_WORDS = re.compile(_status("403") + r"|\bforbidden\b|\bblocked\b", re.I)
 
 
 def observe(text, cfg, scope="scanner"):

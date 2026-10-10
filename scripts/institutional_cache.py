@@ -79,6 +79,7 @@ import re
 import sys
 import urllib.error
 import time
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -190,8 +191,10 @@ def http(url, contact, timeout, retries=6):
             if e.code == 403:
                 # Almost always the User-Agent, not the network. Say so, or this gets debugged
                 # as an egress problem.
+                # The address is withheld on purpose: this text lands in the cache's notes and
+                # stdout, and from there can be copied into a report that gets shared.
                 why = ("HTTP 403 - SEC rejected the User-Agent. " + CONTACT_HELP +
-                       " (sent: %s)" % (UA_TEMPLATE % ok))
+                       " (sent: %s)" % (UA_TEMPLATE % "[your address, withheld here]"))
             if e.code != 429:
                 return None, why
             time.sleep(wait)
@@ -223,6 +226,23 @@ def parse_dataset_name(name):
     return None
 
 
+SEC_HOST = "www.sec.gov"
+
+
+def sec_url(href):
+    """Resolve a link from the index page to an https URL on www.sec.gov, or None.
+
+    Every request carries the user's contact address in its User-Agent, so a link that leads
+    anywhere else would hand that address to a stranger. Plain string concatenation could not
+    guarantee this: "https://www.sec.gov" + "@evil.example/x" is a URL whose HOST is evil.example,
+    and an absolute "http://..." href was passed through untouched. Resolve the link properly,
+    then check the host that came out of it rather than trusting how it was written.
+    """
+    url = urllib.parse.urljoin(INDEX_URL, href)
+    p = urllib.parse.urlsplit(url)
+    return url if p.scheme == "https" and p.hostname == SEC_HOST else None
+
+
 def list_datasets(contact, timeout):
     """Read SEC's own index page for the available bulk files. Returns (list, why).
 
@@ -240,8 +260,10 @@ def list_datasets(contact, timeout):
         span = parse_dataset_name(name)
         if not span:
             continue
-        out.append({"name": name, "start": span[0], "end": span[1],
-                    "url": href if href.startswith("http") else "https://www.sec.gov" + href})
+        url = sec_url(href)
+        if not url:
+            continue
+        out.append({"name": name, "start": span[0], "end": span[1], "url": url})
     out.sort(key=lambda d: d["end"], reverse=True)
     return out, ("no *_form13f.zip links on the index page" if not out else None)
 

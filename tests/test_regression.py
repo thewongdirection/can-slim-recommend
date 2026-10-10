@@ -13,7 +13,8 @@ could plausibly break without any other signal:
     silently drops qualifiers, which is invisible in the output
   * triage must skip a check whose data is missing rather than fail it - a null column must
     never masquerade as a disqualification
-  * check_for_updates must fail OPEN and must never pull over uncommitted work
+  * the docs, the exporter and the code must keep agreeing - step numbers, source ladders,
+    the bundle's manifest - because prose drift never fails a run, it just misleads one
   * the dashboard's self-audit must actually refuse the contradictions it claims to catch
   * @page margin/size parsing must reject what it cannot hand to another engine verbatim
 
@@ -29,6 +30,7 @@ import subprocess
 import sys
 import time
 import tempfile
+import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -37,7 +39,6 @@ import sector_screen as ss                                  # noqa: E402
 import relative_strength as rs                              # noqa: E402
 import html_to_pdf as h2p                                   # noqa: E402
 import build_report as br                                   # noqa: E402
-import check_for_updates as cfu                             # noqa: E402
 import tv_throttle as thr                                   # noqa: E402
 import market_session as mses                               # noqa: E402
 import accumulation as acc                                  # noqa: E402
@@ -149,6 +150,49 @@ def check_ceiling_caps_L_in_a_bottom_half_sector():
     out["sector_rank_overall"], out["sector_count"] = 15, 20
     ss.ceiling(out, CFG)
     assert out["ceiling_caps"]["L"] == "partial"
+
+
+def check_a_single_sector_sweep_does_not_cap_L():
+    """THE invariant: a ceiling below an earnable score silently drops a qualifier. `sr > tot/2`
+    is true for rank 1 of 1, so any scoped sweep of one sector ("just tech", "AI stocks") capped
+    every name's L at partial - 'leader of a laggard group' in a group of one."""
+    for rank, count, expect in ((1, 1, "pass"), (1, 2, "pass"), (2, 2, "partial"), (15, 20, "partial")):
+        out = ss.score_row(row(), "Perf.6M", 10.0, CFG)
+        out["sector_rank_overall"], out["sector_count"] = rank, count
+        ss.ceiling(out, CFG)
+        assert out["ceiling_caps"]["L"] == expect, (rank, count, out["ceiling_caps"]["L"])
+    # ...and end to end, the figure that matters: a marginal name is still graded in a 1-sector sweep
+    marginal = row(close=85.0, price_52_week_high=100.0, relative_volume_10d_calc=0.9)
+    res = ss.run(sweep({"Energy Minerals": [marginal]}), CFG, {"NYSE:TEST": {"A": "partial"}})
+    m = res["grade_queue"][0]
+    assert m["ceiling"] >= 4.5 and m["grade_required"], (m["ceiling"], m.get("ceiling_why"))
+
+
+def check_known_grades_under_either_key_spelling_are_merged():
+    """The A-screen keys by 'NASDAQ:OKTA', institutional_cache by bare 'OKTA'. Only the first
+    non-empty entry was used, so a name carrying A under one and I under the other lost one."""
+    blob = sweep({"Energy Minerals": [row(symbol="NASDAQ:OKTA", name="OKTA")]})
+    both = ss.run(blob, CFG, {"NASDAQ:OKTA": {"A": "partial"}, "OKTA": {"I": "fail"}})
+    only_a = ss.run(blob, CFG, {"NASDAQ:OKTA": {"A": "partial"}})
+    only_i = ss.run(blob, CFG, {"OKTA": {"I": "fail"}})
+    ceil = lambda r: r["grade_queue"][0]["ceiling"]
+    assert ceil(both) < ceil(only_a) and ceil(both) < ceil(only_i), \
+        "one key's grade was ignored: both=%s A-only=%s I-only=%s" % (ceil(both), ceil(only_a), ceil(only_i))
+    # the exchange-qualified key is the more specific, so it wins where both grade a letter
+    clash = ss.run(blob, CFG, {"NASDAQ:OKTA": {"A": "pass"}, "OKTA": {"A": "fail"}})
+    assert ceil(clash) == ceil(ss.run(blob, CFG, {"NASDAQ:OKTA": {"A": "pass"}}))
+
+
+def check_a_company_named_after_a_security_word_is_still_common_stock():
+    """'Preferred Bank' (PFBC) and 'Unit Corporation' are ordinary common stock; the word opens
+    the issuer's own name. The instruments are named issuer-first, security-last."""
+    for sym, desc in (("NASDAQ:PFBC", "Preferred Bank"), ("NYSE:UNTC", "Unit Corporation")):
+        out = ss.score_row(row(symbol=sym, description=desc), "Perf.6M", 10.0, CFG)
+        assert out["triage"] == "grade", (desc, out["drop_reasons"])
+    for sym, desc in (("NYSE:APTS", "Preferred Apartment Communities Inc. 6.000% Series A Preferred Stock"),
+                      ("NASDAQ:ZZZW", "Warrants"), ("NYSE:UNT", "Unit Corporation Warrant")):
+        out = ss.score_row(row(symbol=sym, description=desc), "Perf.6M", 10.0, CFG)
+        assert out["triage"] == "drop", (desc, out["triage"])
 
 
 def check_a_real_grade_overrides_the_screener_cap_in_both_directions():
@@ -454,6 +498,88 @@ def _tape(pattern, vol=None):
         v = 1_000_000 * ((vol or [1] * len(pattern))[i])
         bars.append([i, price, price, price, round(price, 2), v])
     return bars
+
+
+def _dated_bars(kind, n=160, start="2022-10-03"):
+    """Weekday bars from `start`, stamped in the given kind; close == index so counts are visible."""
+    import datetime as D
+    d, out = D.date.fromisoformat(start), []
+    while len(out) < n:
+        if d.weekday() < 5:
+            i = len(out)
+            midnight = D.datetime(d.year, d.month, d.day, tzinfo=D.timezone.utc)
+            ms = int((midnight + D.timedelta(hours=4)).timestamp() * 1000)
+            t = {"iso": d.isoformat(), "iso_time": d.isoformat() + "T20:00:00Z", "ms": ms,
+                 "s": ms // 1000, "ymd": int(d.strftime("%Y%m%d"))}[kind]
+            out.append([t, 100 + i, 100 + i, 100 + i, 100 + i, 1_000_000])
+        d += D.timedelta(days=1)
+    return out
+
+
+def check_asof_truncates_every_timestamp_shape():
+    """Polygon/Massive bars carry epoch milliseconds - the path SKILL.md recommends for as-of runs
+    - and against a "2023-01-31" cutoff they fell into a STRING compare in which "1675..." sorts
+    before "2023-...": every bar was kept, so a point-in-time run silently saw the whole future."""
+    import datetime as D
+    expect = len([b for b in _dated_bars("iso") if b[0] <= "2023-01-31"])
+    assert 0 < expect < 160
+    for kind in ("iso", "iso_time", "ms", "s", "ymd"):
+        for cutoff in ("2023-01-31", 20230131, "2023-01-31T23:59:59Z"):
+            kept = rs.truncate_asof(_dated_bars(kind), cutoff)
+            assert len(kept) == expect, (kind, cutoff, len(kept), expect)
+    # dict-shaped bars (TradingView / Polygon) go through normalize() first
+    dicts = [{"t": b[0], "o": b[1], "h": b[2], "l": b[3], "c": b[4], "v": b[5]} for b in _dated_bars("ms")]
+    assert len(rs.truncate_asof(rs.normalize(dicts), "2023-01-31")) == expect
+    # a cutoff with a time of day is exact; a bare date is inclusive of the whole day
+    day = D.datetime(2023, 1, 31, tzinfo=D.timezone.utc)
+    noon_ms = int((day + D.timedelta(hours=12)).timestamp() * 1000)
+    assert len(rs.truncate_asof(_dated_bars("ms"), noon_ms)) == expect       # the 04:00Z bar is before noon
+    assert len(rs.truncate_asof(_dated_bars("ms"), int((day + D.timedelta(hours=3)).timestamp() * 1000))) == expect - 1
+    # silence is the bug: a timestamp that cannot be read must raise, never be kept
+    for bad in ("garbage", None, True):
+        try:
+            rs.truncate_asof([[bad, 1, 1, 1, 1, 1]], "2023-01-31")
+        except ValueError:
+            continue
+        raise AssertionError("an unreadable timestamp %r was silently kept" % (bad,))
+
+
+def check_asof_cli_takes_the_equals_form_and_refuses_a_missing_value(tmp):
+    """The hand-rolled loop took only "--asof DATE": "--asof=DATE" and a trailing "--asof" were
+    IGNORED, and the run printed a normal-looking answer computed on the whole future."""
+    bars = _dated_bars("iso", n=300)
+    for i, b in enumerate(bars):                      # rise then fall, so the cutoff changes the answer
+        px = 100 + i if i < 150 else 250 - 2 * (i - 150)
+        b[1:5] = [px, px, px, px]
+    path = os.path.join(tmp, "bars.json")
+    io.open(path, "w", encoding="utf-8").write(json.dumps(
+        {"benchmark": {"daily": bars}, "candidates": [{"symbol": "X", "daily": bars}]}))
+    run = lambda *a: subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "relative_strength.py"), path]
+                                    + list(a), capture_output=True, text=True, timeout=60)
+    full, spaced, equals = run(), run("--asof", "2023-03-01"), run("--asof=2023-03-01")
+    assert full.returncode == spaced.returncode == equals.returncode == 0, equals.stderr
+    assert spaced.stdout == equals.stdout, "--asof=DATE and --asof DATE disagree"
+    assert spaced.stdout != full.stdout, "--asof changed nothing: the cutoff was ignored"
+    assert run("--asof").returncode != 0, "a trailing --asof with no value was accepted"
+    assert run("--no-such-flag").returncode != 0, "an unknown flag was silently ignored"
+
+
+def check_accumulation_honours_asof():
+    """accumulation.py says it takes the same JSON as relative_strength.py, which cuts every series
+    to `asof`. It did not, so a point-in-time run graded I on bars that had not printed yet."""
+    bars = _dated_bars("iso", n=160)
+    for i, b in enumerate(bars):                      # a quiet first half, a violent distribution after
+        up = i % 3 != 2
+        px = 100 + i * 0.1 if i < 80 else 108 - (i - 80) * 0.6
+        b[1:5] = [px, px, px, round(px, 2)]
+        b[5] = 1_000_000 * (6 if (i >= 80 and not up and i % 2 == 0) else 1)
+    cfg = dict(acc.DEFAULTS)
+    cut = bars[79][0]
+    with_asof = acc.analyze({"asof": cut, "candidates": [{"symbol": "NYSE:X", "daily": bars}]}, cfg)
+    truncated = acc.analyze({"candidates": [{"symbol": "NYSE:X", "daily": bars[:80]}]}, cfg)
+    whole = acc.analyze({"candidates": [{"symbol": "NYSE:X", "daily": bars}]}, cfg)
+    assert with_asof["detail"]["X"]["ud_ratio"] == truncated["detail"]["X"]["ud_ratio"], "asof was ignored"
+    assert with_asof["detail"]["X"]["ud_ratio"] != whole["detail"]["X"]["ud_ratio"], "fixture does not discriminate"
 
 
 def check_up_down_volume_ignores_flat_days():
@@ -821,6 +947,36 @@ def check_A_grades_follow_the_three_year_rule():
     assert g([8.26, 5.43, 2.75, 4.01]) == "fail"
 
 
+def check_annual_eps_only_hands_the_ceiling_what_the_filings_decided(tmp):
+    """The module promises "an absence of data can never eliminate a name", but every partial was
+    written to --known, where a known partial is a real cap: a marginal name with N, S and L at
+    partial sits exactly on the 4.5 cut, so one stray A=partial (no CIK, a stale series, ROE not
+    passed in) put it at 4.0 and it was dropped without being graded."""
+    cfg = aeps.DEFAULTS
+    d = aeps.decides
+    assert d("pass", [30, 30, 30], cfg, 20.0) and d("fail", [30, -5, 30], cfg, 20.0)
+    assert d("partial", [30, 12, 30], cfg, 20.0), "EPS up but not every year >=25% is audited evidence"
+    assert d("partial", [30, 30, 30], cfg, 9.0), "ROE under the bar is evidence"
+    assert not d("partial", [], cfg, 20.0), "too few years / stale: the filings cannot tell"
+    assert not d("partial", [30, None, 30], cfg, 20.0), "a loss year makes growth undefined"
+    assert not d("partial", [30, 30, 30], cfg, None), "EPS passes but ROE unverified is not a verdict"
+
+    eps_pass = {"2022-12-31": 1.0, "2023-12-31": 1.3, "2024-12-31": 1.7, "2025-12-31": 2.2}
+    series = {"AAA": {}, "BBB": eps_pass, "CCC": {"2022-12-31": 1.0, "2023-12-31": 1.3, "2024-12-31": 1.2,
+                                                  "2025-12-31": 2.0}}
+    real = (aeps.load_tickers, aeps.annual_eps)
+    aeps.load_tickers = lambda *a, **k: {"BBB": 1, "CCC": 2}           # AAA has no CIK at all
+    aeps.annual_eps = lambda cik, *a, **k: series[{1: "BBB", 2: "CCC"}[cik]]
+    try:
+        out = aeps.run(["NYSE:AAA", "NYSE:BBB", "NYSE:CCC"], tmp, "me@example.com", cfg, roes={})
+    finally:
+        aeps.load_tickers, aeps.annual_eps = real
+    assert set(out["known"]) == {"NYSE:CCC"} and out["known"]["NYSE:CCC"] == {"A": "fail"}, out["known"]
+    withheld = " ".join(out["meta"]["ungraded"])
+    assert "AAA" in withheld and "BBB" in withheld, "withheld names must be listed with their reason"
+    assert set(out["detail"]) == {"NYSE:AAA", "NYSE:BBB", "NYSE:CCC"}, "a withheld name vanished from detail"
+
+
 def check_A_needs_both_legs_eps_growth_and_roe():
     """The rubric is "EPS up each of 3 years at >=25% AND ROE >=17%". Grading the EPS leg alone
     is an over-grade, and it is one can-slim-grader does not make - working a single ticker it
@@ -1022,6 +1178,48 @@ def check_13f_fails_open_when_it_cannot_fetch(tmp):
     assert meta["notes"], "a failure must say what it could not do"
 
 
+def check_dataset_links_must_stay_on_the_sec_host():
+    """Each request carries the user's contact address in its User-Agent, so a dataset link that
+    leaves www.sec.gov hands that address to someone else. String concatenation could not prevent
+    it: "https://www.sec.gov" + "@evil.example/x" is a URL whose host is evil.example, and an
+    absolute or protocol-relative href passed straight through."""
+    page = (b'<a href="@evil.invalid/01jan2026-31mar2026_form13f.zip">at-sign</a>'
+            b'<a href="http://evil.invalid/01apr2026-30jun2026_form13f.zip">absolute</a>'
+            b'<a href="//evil.invalid/01jul2026-30sep2026_form13f.zip">proto-relative</a>'
+            b'<a href="https://evil.invalid/01oct2025-31dec2025_form13f.zip">https</a>'
+            b'<a href="/files/dera/data/form-13f/01jan2025-31mar2025_form13f.zip">genuine</a>')
+    real = ic.http
+    ic.http = lambda *a, **k: (page, None)
+    try:
+        datasets, _ = ic.list_datasets("me@example.com", 5)
+    finally:
+        ic.http = real
+    assert datasets, "the genuine link was rejected too"
+    for d in datasets:
+        host = urllib.parse.urlsplit(d["url"])
+        assert host.scheme == "https" and host.hostname == "www.sec.gov", d["url"]
+    assert any("form-13f" in d["url"] for d in datasets), "lost the genuine link"
+
+
+def check_a_403_message_never_echoes_the_contact_address():
+    """The failure text goes into the cache's notes and stdout, and from there can be pasted into
+    a report that gets shared. It said which User-Agent was rejected - address included."""
+    import urllib.error
+    import urllib.request
+    me = "private.person@example.org"
+
+    def boom(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, None)
+    real = urllib.request.urlopen
+    urllib.request.urlopen = boom
+    try:
+        body, why = ic.http("https://www.sec.gov/x", me, 5)
+    finally:
+        urllib.request.urlopen = real
+    assert body is None and "403" in why, why
+    assert me not in why and "example.org" not in why, "the contact address leaked: %s" % why
+
+
 def check_issuer_name_matching_and_its_refusal_to_guess():
     assert ic.norm_name("NVIDIA CORPORATION") == ic.norm_name("NVIDIA Corp")
     assert ic.norm_name("Laggard Industries, Inc.") == ic.norm_name("LAGGARD INDUSTRIES INC")
@@ -1129,6 +1327,25 @@ def check_css_margin_rejects_what_it_cannot_forward(tmp):
         p = os.path.join(tmp, "b.html")
         io.open(p, "w", encoding="utf-8").write("<style>%s</style>" % css)
         assert h2p.css_page_margin(p) == want, (css, h2p.css_page_margin(p))
+
+
+def check_page_rule_parsing_stays_linear(tmp):
+    """The @page regex restarted at every "@page" and ran to the end of the input hunting for a
+    "}" that never came: 120KB of "@page{" held PDF export for 35 seconds (twice per engine). A
+    document that merely CONTAINS that text (a pasted reason, say) could stall the whole build."""
+    hostile = os.path.join(tmp, "hostile.html")
+    io.open(hostile, "w", encoding="utf-8").write("@page{" * 20000)
+    t0 = time.time()
+    assert h2p.css_page_size(hostile) is None
+    assert h2p.css_page_margin(hostile) == h2p.DEFAULT_MARGIN
+    assert time.time() - t0 < 2.0, "page-rule parsing is quadratic again (%.1fs)" % (time.time() - t0)
+
+    # ...and the real shapes still parse, including a rule that is not the first thing in the file
+    real = os.path.join(tmp, "real.html")
+    io.open(real, "w", encoding="utf-8").write(
+        "<style>body{margin:0}\n@page :first{margin:3mm}\n@page{size:A4 landscape; margin:15mm}</style>")
+    assert h2p.css_page_size(real) == "a4 landscape"
+    assert h2p.css_page_margin(real) == "3mm"      # the first rule that sets one wins
 
 
 def check_css_helpers_survive_a_missing_file():
@@ -1305,140 +1522,292 @@ def check_funnel_tile_is_addressed_by_identity_not_index():
     assert "tiles[4]" not in src
 
 
-# ---------------------------------------------------------------- check_for_updates
+# ---------------------------------------------------------------- template, in a real browser
+"""Behavioural tests for assets/dashboard_template.html.
 
-def _git(cwd, *a, **kw):
-    return subprocess.run(("git",) + a, cwd=cwd, capture_output=True, text=True,
-                          timeout=60, **kw)
+The template's bugs were behavioural - a payload that actually executed, a crashed page that the
+build gate called clean - and a string-in-the-source check cannot see either. These render the
+real template in the same headless browser build_report.audit() uses. With no browser they SKIP,
+exactly as the build gate skips its own check; they never fail for want of one.
+"""
 
-
-def _mkrepo(tmp):
-    """An origin, a working clone with the script inside it, and a second clone to push from."""
-    org = os.path.join(tmp, "origin")
-    os.makedirs(org)
-    _git(org, "init", "-q", "--bare")
-    _git(tmp, "clone", "-q", org, "work")
-    work = os.path.join(tmp, "work")
-    for k, v in (("user.email", "t@t"), ("user.name", "t")):
-        _git(work, "config", k, v)
-    os.makedirs(os.path.join(work, "scripts"))
-    os.makedirs(os.path.join(work, "assets"))
-    shutil.copy(os.path.join(ROOT, "scripts", "check_for_updates.py"),
-                os.path.join(work, "scripts"))
-    for f in ("SKILL.md", "scripts/sector_screen.py", "assets/dashboard_template.html"):
-        io.open(os.path.join(work, f), "w", encoding="utf-8").write("v1\n")
-    _git(work, "add", "-A"); _git(work, "commit", "-qm", "init")
-    br_ = _git(work, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-    _git(work, "push", "-q", "-u", "origin", br_)
-    _git(tmp, "clone", "-q", org, "other")
-    other = os.path.join(tmp, "other")
-    for k, v in (("user.email", "t@t"), ("user.name", "t")):
-        _git(other, "config", k, v)
-    return work, other
+_NO_BROWSER = "skipped: no headless browser in this environment"
+_PAYLOAD = '<img src=x onerror="document.documentElement.setAttribute(\'data-pwn\',\'1\')">'
 
 
-def _run_cfu(cwd, *args):
-    r = subprocess.run([sys.executable, os.path.join(cwd, "scripts", "check_for_updates.py")] + list(args),
-                       cwd=cwd, capture_output=True, text=True, timeout=90)
-    return r.returncode, r.stdout + r.stderr
+def _browser():
+    return bool(h2p.find_browser())
 
 
-def check_updates_reports_current(tmp):
-    work, _ = _mkrepo(tmp)
-    code, out = _run_cfu(work)
-    assert code == 0 and "Skill is current" in out, out
+def _good_cfg():
+    """A CONFIG that audits clean: three picks, one of them the documented 'None now' WATCH."""
+    scores = lambda **k: dict(dict(C="pass", A="pass", N="pass", S="partial", L="pass", I="partial"), **k)
+
+    def pick(sym, sc, verdict, bp, stop, **kw):
+        d = dict(symbol=sym, company=sym + " Corp", sector="Electronic Technology", group="Networking",
+                 sectorRank=1, price="100.0", rs="+40", offHigh="3%", high52="104.0", buyPoint=bp,
+                 stop=stop, verdict=verdict, scores=sc, reason="C pass, new high out of a sound base.")
+        d.update(kw)
+        return d
+    return {
+        "title": "T", "generatedAt": "2026-10-10", "dataDate": "2026-10-09 close", "dataSource": "x",
+        "freshness": {"attemptedAt": "2026-10-10 12:00 UTC", "allFresh": True, "failures": []},
+        "dataProvenance": "TradingView for everything",
+        "sourceMap": [{"item": "Sector sweep", "source": "TradingView", "pulled": "2026-10-10",
+                       "asOf": "2026-10-09 close", "status": "fresh"}],
+        "sweep": {"windowLabel": "6m", "benchmark": "SPY +5%", "sectorsScanned": 2, "perSector": 10,
+                  "screened": 20, "triaged": 3, "graded": 3, "mustGrade": 3, "eliminatedByCeiling": 0},
+        "market": {"verdict": "Uptrend", "tone": "up", "mGrade": "partial",
+                   "distributionDays": "2", "implication": "ok"},
+        "gradeThreshold": 4.5, "topCount": 10,
+        "picks": [
+            pick("AAA", scores(), "BUY-RANGE", "100.0", "92.5"),
+            pick("BBB", scores(N="partial"), "WATCH", "None now - needs a handle above 150.20", "",
+                 sector="Health Technology"),
+            pick("CCC", scores(C="fail", A="fail", N="fail", S="fail", L="fail", I="fail"), "AVOID",
+                 "", "", sector="Health Technology")],
+        "sectors": [
+            {"rank": 1, "sector": "Electronic Technology", "medianPerf": "+30%", "survivors": 1,
+             "considered": 10, "qualified": 1},
+            {"rank": 2, "sector": "Health Technology", "medianPerf": "+20%", "survivors": 2,
+             "considered": 10, "qualified": 1}],
+        "disclaimer": "d", "portfolioNote": "p", "sources": [], "glossary": []}
 
 
-def check_updates_separates_code_from_instructions(tmp):
-    """The distinction the whole feature rests on: code updates land now, instruction updates
-    land next run, and the report must not merge them."""
-    work, other = _mkrepo(tmp)
-    for f in ("SKILL.md", "scripts/sector_screen.py"):
-        io.open(os.path.join(other, f), "w", encoding="utf-8").write("v2\n")
-    _git(other, "add", "-A"); _git(other, "commit", "-qm", "bump"); _git(other, "push", "-q")
-    code, out = _run_cfu(work)
-    assert code == 0 and "OUT OF DATE" in out, out
-    live = out.index("THIS RUN WILL USE THE NEW VERSION")
-    ctx = out.index("ALREADY LOADED")
-    assert out.index("scripts/sector_screen.py") > live
-    assert out.index("SKILL.md", ctx) > ctx
-    assert io.open(os.path.join(work, "SKILL.md")).read().strip() == "v1"   # report-only: no pull
+def _fill(tmp, cfg, name="r.html", raw_json=None):
+    """The real template with its CONFIG replaced. `<` is written as <, as SKILL.md instructs."""
+    tpl = io.open(os.path.join(ROOT, "assets", "dashboard_template.html"), encoding="utf-8").read()
+    js = raw_json if raw_json is not None else json.dumps(cfg).replace("<", "\\u003c")
+    out, n = re.subn(r"const CONFIG = \{.*?\n\};\n", lambda m: "const CONFIG = " + js + ";\n",
+                     tpl, count=1, flags=re.S)
+    assert n == 1, "could not locate the CONFIG block"
+    path = os.path.join(tmp, name)
+    io.open(path, "w", encoding="utf-8").write(out)
+    return path
 
 
-def check_updates_refuses_to_pull_over_uncommitted_work(tmp):
-    work, other = _mkrepo(tmp)
-    io.open(os.path.join(other, "SKILL.md"), "w", encoding="utf-8").write("v2\n")
-    _git(other, "commit", "-qam", "bump"); _git(other, "push", "-q")
-    mine = os.path.join(work, "scripts", "sector_screen.py")
-    io.open(mine, "w", encoding="utf-8").write("MY UNCOMMITTED WORK\n")
-    code, out = _run_cfu(work, "--update")
-    assert code == 1, out
-    assert "refused" in out
-    assert io.open(mine).read() == "MY UNCOMMITTED WORK\n", "local work was clobbered"
-    assert io.open(os.path.join(work, "SKILL.md")).read().strip() == "v1"
+def _rendered(dom):
+    """The dumped DOM without <script>/<style> text. The dump includes the page's own source, so
+    a check for "javascript:" or a message string would otherwise match the template's code."""
+    return re.sub(r"<(script|style)\b.*?</\1>", "", dom, flags=re.S | re.I)
 
 
-def check_updates_fast_forwards_a_clean_tree(tmp):
-    work, other = _mkrepo(tmp)
-    io.open(os.path.join(other, "scripts", "sector_screen.py"), "w", encoding="utf-8").write("v2\n")
-    _git(other, "commit", "-qam", "bump"); _git(other, "push", "-q")
-    code, out = _run_cfu(work, "--update")
-    assert code == 0 and "fast-forwarded" in out, out
-    assert io.open(os.path.join(work, "scripts", "sector_screen.py")).read().strip() == "v2"
-    assert out.count("fast-forwarded") == 1, "the update message is duplicated"
-    code2, out2 = _run_cfu(work, "--update")                 # idempotent
-    assert code2 == 0 and "nothing to update" in out2
+def _audit_lines(tmp, cfg, **kw):
+    ok, detail = br.audit(_fill(tmp, cfg, **kw))
+    return ok, [l.strip("- ").strip() for l in detail.splitlines() if l.strip()]
 
 
-def check_updates_ahead_does_not_claim_incoming_code(tmp):
-    """An 'ahead' branch must not list its own unpushed edits under a heading promising new
-    upstream code - that was a real bug."""
-    work, _ = _mkrepo(tmp)
-    io.open(os.path.join(work, "scripts", "sector_screen.py"), "w", encoding="utf-8").write("v9\n")
-    _git(work, "commit", "-qam", "local only")
-    code, out = _run_cfu(work)
-    assert code == 0 and "ahead of the remote" in out, out
-    assert "THIS RUN WILL USE THE NEW VERSION" not in out
-    assert "ALREADY LOADED" not in out
+def check_the_template_test_harness_starts_from_a_clean_report(tmp):
+    """Every other template test mutates this config, so it has to audit clean to begin with."""
+    if not _browser():
+        return _NO_BROWSER
+    ok, lines = _audit_lines(tmp, _good_cfg())
+    assert ok and lines == ["clean"], lines
 
 
-def check_updates_reports_diverged_without_touching_anything(tmp):
-    work, other = _mkrepo(tmp)
-    io.open(os.path.join(other, "SKILL.md"), "w", encoding="utf-8").write("remote\n")
-    _git(other, "commit", "-qam", "r"); _git(other, "push", "-q")
-    io.open(os.path.join(work, "scripts", "sector_screen.py"), "w", encoding="utf-8").write("local\n")
-    _git(work, "commit", "-qam", "l")
-    code, out = _run_cfu(work, "--update")
-    assert code == 0 and "DIVERGED" in out, out
-    assert io.open(os.path.join(work, "scripts", "sector_screen.py")).read().strip() == "local"
+def _poison(o, key=None):
+    """Every string a CONFIG can carry becomes a script-injection attempt, except the grades."""
+    keep = {"C", "A", "N", "S", "L", "I", "mGrade", "status"}
+    count_fields = {"mustGrade", "graded", "eliminatedByCeiling", "qualified", "sectorRank", "rank",
+                    "survivors", "considered", "sectorsScanned", "screened", "triaged", "perSector"}
+    if isinstance(o, dict):
+        return {k: _poison(v, k) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_poison(v, key) for v in o]
+    if isinstance(o, str) and key not in keep:
+        return _PAYLOAD
+    if isinstance(o, (int, float)) and not isinstance(o, bool) and key in count_fields:
+        return _PAYLOAD
+    return o
 
 
-def check_updates_fails_open_when_it_cannot_check(tmp):
-    """No git checkout, no upstream, unreachable remote - each must exit 0 so the run continues."""
-    plain = os.path.join(tmp, "plain", "scripts")
-    os.makedirs(plain)
-    shutil.copy(os.path.join(ROOT, "scripts", "check_for_updates.py"), plain)
-    code, out = _run_cfu(os.path.dirname(plain))
-    assert code == 0 and "not a git checkout" in out, out
+def check_no_config_field_can_inject_markup(tmp):
+    """esc() covers the innerHTML path, but five interpolations skipped it (the sweep counts, a
+    sector's qualified count, a fallback row's sectorRank) - an <img onerror> there ran. Poison
+    EVERY string and count field and check nothing executed and nothing was created."""
+    if not _browser():
+        return _NO_BROWSER
+    cfg = _poison(_good_cfg())
+    cfg["sectors"][0]["top5"] = [{"sectorRank": _PAYLOAD, "ticker": _PAYLOAD, "company": _PAYLOAD,
+                                  "perf": _PAYLOAD, "rs": _PAYLOAD, "note": _PAYLOAD}]
+    cfg["sectors"][0]["qualified"] = 0                  # so the fallback rows render
+    cfg["rationale"] = [{"symbol": _PAYLOAD, "company": _PAYLOAD, "text": _PAYLOAD}]
+    cfg["watch"] = [{"symbol": _PAYLOAD, "company": _PAYLOAD, "sector": _PAYLOAD, "note": _PAYLOAD}]
+    cfg["glossary"] = [{"term": _PAYLOAD, "def": _PAYLOAD}]
+    cfg["sources"] = [{"label": _PAYLOAD, "url": "https://example.com/a"}]
+    dom, why = br.dump_dom(_fill(tmp, cfg))
+    assert dom, why
+    assert not re.search(r"<html[^>]*data-pwn", dom), "injected markup executed"
+    assert not re.search(r"<img[^>]+src=\"?x\"?", _rendered(dom)), \
+        "injected <img> reached the DOM as an element"
+    assert 'data-rendered="1"' in dom, "the page did not finish rendering under hostile input"
 
-    nested = os.path.join(tmp, "b")          # a second repo, clear of the one made above
-    os.makedirs(nested, exist_ok=True)
-    work, _ = _mkrepo(nested)
-    _git(work, "checkout", "-q", "-b", "untracked-branch")
-    code, out = _run_cfu(work)
-    assert code == 0 and "no upstream" in out, out
 
-    _git(work, "checkout", "-q", "-")
-    _git(work, "remote", "set-url", "origin", "https://nonexistent.invalid/x.git")
-    code, out = _run_cfu(work, "--timeout", "8")
-    assert code == 0 and "unreachable" in out, out
+def check_script_urls_are_never_rendered_as_links(tmp):
+    """esc() protects an attribute, not its scheme: href="javascript:..." and an iframe src of the
+    same kind execute in the page's own origin. Only http(s) and relative URLs may become links."""
+    if not _browser():
+        return _NO_BROWSER
+    cfg = _good_cfg()
+    cfg["picks"][0]["reviewUrl"] = "javascript:parent.document.documentElement.setAttribute('data-pwn','1')"
+    cfg["picks"][1]["reviewUrl"] = "java\tscript:alert(1)"           # browsers ignore the tab
+    cfg["picks"][2]["reviewUrl"] = "reviews/CCC-canslim.html"        # a legitimate relative one
+    cfg["sources"] = [{"label": "bad", "url": "JaVaScRiPt:alert(1)"},
+                      {"label": "data", "url": "data:text/html,<b>x"},
+                      {"label": "good", "url": "https://example.com/filing"}]
+    dom, why = br.dump_dom(_fill(tmp, cfg))
+    assert dom, why
+    page = _rendered(dom)
+    flat = re.sub(r"[\s\x00-\x20]", "", page.lower())
+    assert 'href="javascript:' not in flat and 'data-review="javascript:' not in flat \
+        and 'href="data:' not in flat, "a script URL was rendered"
+    assert not re.search(r'(?:href|data-review)="[^"]*script:', flat), "a script URL was rendered"
+    assert 'data-review="reviews/CCC-canslim.html"' in page, "a legitimate relative reviewUrl was dropped"
+    assert 'href="https://example.com/filing"' in page, "a legitimate https source link was dropped"
+    assert re.search(r'<iframe[^>]*sandbox="allow-scripts allow-popups"', page), \
+        "the review iframe is not sandboxed"
+    assert "allow-same-origin" not in page, "the sandbox must not grant same-origin"
 
 
-def check_updates_status_and_header_sets_agree():
-    src = io.open(os.path.join(ROOT, "scripts", "check_for_updates.py"), encoding="utf-8").read()
-    produced = set(re.findall(r'out\["status"\]\s*=\s*"([a-z-]+)"', src))
-    block = src[src.index("head = {"):src.index('}.get(v["status"]')]
-    assert not (produced - set(re.findall(r'"([a-z-]+)":', block))), "a status has no header"
+def check_a_crashed_page_is_never_reported_clean(tmp):
+    """The self-audit is the LAST thing the page runs, so any earlier script error leaves no banner
+    - and build_report read 'no banner' as 'clean'. It must now require the page to have finished,
+    and the static check must catch the one injection that kills the script before it starts."""
+    if not _browser():
+        return _NO_BROWSER
+    cfg = _good_cfg()
+    cfg["sectors"] = [None]                                  # makes the sector table throw
+    ok, lines = _audit_lines(tmp, cfg, name="crash.html")
+    assert not ok, "a page that threw before its audit ran was reported clean: %s" % lines
+    assert any("stopped rendering" in l or "Report checks failed" in l or "never ran" in l
+               for l in lines), lines
+
+
+def check_a_closing_script_tag_in_config_is_refused(tmp):
+    """A CONFIG string containing the closing-script-tag text ends the script early; everything
+    after it is parsed as HTML (and can run) and the real script dies, so no audit ever executes.
+    Reasons are pasted from web pages, so this is reachable. Caught without a browser too."""
+    cfg = _good_cfg()
+    # silent on purpose: alert() would park a headless browser on a dialog until it times out
+    cfg["picks"][0]["reason"] = "ok </script><img src=x onerror=document.title=1> trailing"
+    raw = json.dumps(cfg)                                    # deliberately NOT escaped
+    path = _fill(tmp, cfg, name="inject.html", raw_json=raw)
+    problem = br.script_tag_problem(path)
+    assert problem and "closing" in problem, "the static check missed an injected closing script tag"
+    clean = _fill(tmp, _good_cfg(), name="clean.html")
+    assert br.script_tag_problem(clean) is None, "the static check flagged a clean report"
+    if _browser():
+        ok, lines = br.audit(path)
+        assert not ok, "the browser path reported an injected report clean: %s" % lines
+
+
+def check_a_pick_without_a_symbol_is_flagged_not_fatal(tmp):
+    """d.sym.length threw inside the scatter map for any pick with no symbol (or a 'ticker' key),
+    killing the glossary, the sources table and the audit with it."""
+    if not _browser():
+        return _NO_BROWSER
+    cfg = _good_cfg()
+    del cfg["picks"][1]["symbol"]
+    ok, lines = _audit_lines(tmp, cfg)
+    assert not ok and any("no symbol" in l for l in lines), lines
+
+
+def check_none_now_is_a_legitimate_buy_point(tmp):
+    """SKILL.md prescribes 'None now' plus the condition for a strong name with no valid pivot.
+    num() read the first number anywhere in the string, so 'None now - needs a handle above
+    150.20' was audited as a buy point of 150.20 and refused the report that followed the docs."""
+    if not _browser():
+        return _NO_BROWSER
+    cfg = _good_cfg()
+    cfg["picks"][1]["scores"]["N"] = "fail"                  # the WATCH name now has N failing
+    cfg["picks"][1]["buyPoint"] = "None now; re-base 30 pct off high"
+    ok, lines = _audit_lines(tmp, cfg)
+    assert ok, lines
+    cfg["picks"][1]["buyPoint"] = "178.40"                   # ...but a real price with N fail is still refused
+    ok, lines = _audit_lines(tmp, cfg)
+    assert not ok and any("N is FAIL" in l for l in lines), lines
+
+
+def check_sweep_graded_must_match_the_picks_even_when_zero_or_absent(tmp):
+    if not _browser():
+        return _NO_BROWSER
+    for label, edit in (("zero", lambda c: c["sweep"].update(graded=0)),
+                        ("absent", lambda c: c["sweep"].pop("graded"))):
+        cfg = _good_cfg()
+        edit(cfg)
+        ok, lines = _audit_lines(tmp, cfg)
+        assert not ok and any("sweep.graded" in l for l in lines), (label, lines)
+
+
+def check_exact_boundaries_are_not_flagged_by_float_noise(tmp):
+    """104 * 0.9 is 93.60000000000001 in floating point, so a buy point exactly 10% below the
+    high was called 'more than 10% below'. The same drift hit a stop at exactly 9%."""
+    if not _browser():
+        return _NO_BROWSER
+    cfg = _good_cfg()
+    cfg["picks"][0].update(high52="104", buyPoint="93.6", stop="85.2")      # 10.0% and 8.97% / 9.0%
+    ok, lines = _audit_lines(tmp, cfg)
+    assert ok, lines
+    cfg["picks"][0].update(buyPoint="93.5")                                # genuinely past 10%
+    ok, lines = _audit_lines(tmp, cfg)
+    assert not ok and any("more than 10% below" in l for l in lines), lines
+
+
+def check_sector_qualified_counts_must_agree_with_the_picks(tmp):
+    if not _browser():
+        return _NO_BROWSER
+    cfg = _good_cfg()
+    cfg["sectors"][1]["qualified"] = 0                       # but BBB (Health) scores 5/7
+    ok, lines = _audit_lines(tmp, cfg)
+    assert not ok and any("qualified" in l and "Health Technology" in l for l in lines), lines
+
+
+def check_an_invalid_market_grade_is_reported_once(tmp):
+    if not _browser():
+        return _NO_BROWSER
+    cfg = _good_cfg()
+    cfg["market"]["mGrade"] = "maybe"
+    ok, lines = _audit_lines(tmp, cfg)
+    assert not ok and sum("mGrade" in l for l in lines) == 1, lines
+
+
+def check_the_empty_state_does_not_call_ceiling_eliminated_names_unreached(tmp):
+    """The empty list said '5 further names ... were never graded ... not reached' while the note
+    above it said those same 5 were eliminated by the ceiling: it fired on every normal run."""
+    if not _browser():
+        return _NO_BROWSER
+    cfg = _good_cfg()
+    for p in cfg["picks"]:
+        p["scores"] = {k: "fail" for k in "CANSLI"}
+        p["verdict"], p["buyPoint"], p["stop"] = "AVOID", "", ""
+    cfg["sweep"].update(triaged=8, graded=3, mustGrade=3, eliminatedByCeiling=5)
+    for sec in cfg["sectors"]:
+        sec["qualified"] = 0
+    dom, why = br.dump_dom(_fill(tmp, cfg))
+    assert dom, why
+    text = re.sub(r"<[^>]+>", " ", _rendered(dom))
+    assert "never graded in this run" not in text, "ceiling-eliminated names were called unreached"
+    cfg["sweep"].update(eliminatedByCeiling=2)               # 3 genuinely ungraded survivors
+    dom, _ = br.dump_dom(_fill(tmp, cfg, name="r2.html"))
+    assert "3 further names cleared triage but were never graded" in re.sub(r"<[^>]+>", " ", _rendered(dom))
+
+
+def check_skill_tells_the_run_how_to_write_config_strings():
+    """The template and build_report defend against a closing-script-tag in a CONFIG string, but
+    the author is the first line of defence and has to be told what to do."""
+    flat = " ".join(io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read().split())
+    assert "write every `<` in a CONFIG string as `\\u003c`" in flat, \
+        "SKILL.md no longer says how to write < inside CONFIG strings"
+    assert "`reviewUrl` and `sources[].url` must be `http(s)` or relative" in flat
+
+
+def check_the_sort_hint_is_hidden_in_print():
+    """`.hint` was meant to vanish on paper, but `.legend span{display:inline-flex}` out-ranks it,
+    so 'Click a column header to sort' printed into the PDF."""
+    src = io.open(os.path.join(ROOT, "assets", "dashboard_template.html"), encoding="utf-8").read()
+    printed = src[src.index("@media print"):]
+    assert ".legend span.hint" in printed.split("}", 5)[0] + printed[:3000], \
+        "the print stylesheet no longer hides the on-screen hint at a specificity that wins"
 
 
 # ---------------------------------------------------------------- export_portable
@@ -1461,12 +1830,41 @@ def check_export_bundles_every_script(tmp):
         if f.endswith(".py") and f != "export_portable.py":
             assert "scripts/" + f in names, "%s missing from the bundle" % f
     md = io.open(os.path.join(tmp, "can-slim-recommend-portable.md"), encoding="utf-8").read()
-    assert "check_for_updates.py" in md
+    # The manifest tells a reader which files to recreate. It was typed by hand and listed 10 of
+    # the bundle's files - rubric.py among the missing, which sector_screen.py imports - so a skill
+    # rebuilt from it alone could not start. It is generated from FILES now; hold it to that.
+    m = re.search(r"^```\ncan-slim-recommend/\n(.*?)^```", md, re.M | re.S)
+    assert m, "the bundle has no file manifest"
+    listed = {l.strip() for l in m.group(1).splitlines() if l.strip()}
+    shipped = names - {"PORTABLE-README.md"}
+    assert listed == shipped, ("manifest and bundle disagree: only in manifest %s, only in bundle %s"
+                               % (sorted(listed - shipped), sorted(shipped - listed)))
     # Every fenced block must close - an unbalanced fence silently swallows the rest of the file.
     # Counted per fence WIDTH: the exporter widens a fence when the file it wraps contains
     # backticks, and a plain "```" count would see the opening of a ````-fence as a match.
     for fence in set(re.findall(r"^(`{3,})", md, re.M)):
         assert md.count("\n" + fence) % 2 == 0, "unbalanced %d-backtick fence" % len(fence)
+
+
+def check_the_committed_bundle_matches_the_sources(tmp):
+    """dist/can-slim-recommend-portable.md is committed so there is a stable link to hand someone,
+    and it inlines every other file in the repo - this suite included. It is generated, never
+    edited, so any change to a source file leaves it stale until the exporter is re-run, and a
+    stale bundle keeps teaching whatever the sources no longer say (it would go on shipping a
+    removed script and the instructions to run it). Nothing else would notice.
+
+    Fix a failure here with `python scripts/export_portable.py`, then commit dist/.
+    """
+    exporter = os.path.join(ROOT, "scripts", "export_portable.py")
+    committed = os.path.join(ROOT, "dist", "can-slim-recommend-portable.md")
+    if not (os.path.exists(exporter) and os.path.exists(committed)):
+        return "skipped: no exporter or committed bundle in this copy"
+    out = subprocess.run([sys.executable, exporter, tmp], capture_output=True, text=True, timeout=180)
+    assert out.returncode == 0, out.stderr
+    fresh = io.open(os.path.join(tmp, "can-slim-recommend-portable.md"), encoding="utf-8").read()
+    assert fresh == io.open(committed, encoding="utf-8").read(), (
+        "dist/can-slim-recommend-portable.md is stale - run `python scripts/export_portable.py` "
+        "and commit the result")
 
 
 # ---------------------------------------------------------------- tv_throttle
@@ -1656,6 +2054,58 @@ def check_a_block_resets_the_clean_call_streak(tmp):
     assert "learned rate           : 6/min" in st, "one clean call re-raised a halved rate: %s" % st
 
 
+def check_data_that_looks_like_a_status_code_is_not_a_block(tmp):
+    """The response given to --observe is usually DATA. A bare \\b403\\b matched the 403 in
+    {"close": 403.25}, so any price crossing $403 or $429 cooled the scanner for five minutes,
+    halved the rate and made --wait REFUSE the sweep - which SKILL.md says to stop on."""
+    for payload in ('{"rows":[{"s":"AAPL","close":403.25}]}', '{"c":429.17}', '{"Perf.6M":403.0}',
+                    '{"close":403,"volume":429}', 'status: 403.25'):
+        _, rc, out = _thr(tmp, "--observe", payload)
+        assert rc == 0 and out.strip().splitlines()[-1].startswith("ok"), (payload, rc, out)
+        assert "blocked" not in out and "rate-limited" not in out, (payload, out)
+    _, _, st = _thr(tmp, "--status")
+    assert "BLOCKED" not in st.upper().replace("NOT BLOCKED", ""), st
+    # ...while the genuine articles are still recognised
+    for payload, verdict in (("HTTPStatusError: 403 Forbidden", "blocked"), ("HTTP 429 Too Many Requests", "rate-limited"),
+                             ("Error 403", "blocked"), ("status code 429", "rate-limited")):
+        _, rc, out = _thr(tmp, "--observe", payload)
+        assert rc == 2 and out.strip().splitlines()[-1].startswith(verdict), (payload, rc, out)
+
+
+def check_a_damaged_state_file_is_discarded_not_fatal(tmp):
+    """An uncaught exception exits 1 - the code for "REFUSED, the connector is blocked", which
+    SKILL.md tells the run to stop on. A state file that is a list, or holds a string where a
+    number belongs, raised AttributeError/TypeError/ValueError and ended sweeps that nothing was
+    wrong with."""
+    state = os.path.join(tmp, "t.json")
+    for junk in ("[]", '{"calls":["x"]}', '{"rate":"fast"}', '{"blocked":{"scanner":"x"}}',
+                 '{"blocked":{"scanner":{"until":"soon","n":null}}}', "not json at all", '{"calls":[1e999]}'):
+        io.open(state, "w", encoding="utf-8").write(junk)
+        _, rc, out = _thr(tmp, "--observe", '{"success":true}')
+        assert rc == 0, (junk, rc, out)
+        _, rc, out = _thr(tmp, "--status")
+        assert rc == 0, (junk, rc, out)
+
+
+def check_the_throttle_survives_where_it_cannot_write(tmp):
+    """A bare filename made os.makedirs('') raise; an unwritable directory raised too. Not being
+    able to remember the pace degrades the throttle - it must not end the run (exit 1)."""
+    script = os.path.join(ROOT, "scripts", "tv_throttle.py")
+    env = dict(os.environ, CANSLIM_THROTTLE_STATE="bare-name.json")
+    r = subprocess.run([sys.executable, script, "--observe", '{"success":true}'], cwd=tmp,
+                       capture_output=True, text=True, timeout=60, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert os.path.exists(os.path.join(tmp, "bare-name.json")), "a bare filename was not written"
+
+    env = dict(os.environ, CANSLIM_THROTTLE_STATE=os.path.join(tmp, "no", "such", "dir", "x.json"))
+    blocker = os.path.join(tmp, "no")
+    io.open(blocker, "w").close()                 # a FILE where the directory should be: makedirs fails
+    r = subprocess.run([sys.executable, script, "--observe", '{"success":true}'], cwd=tmp,
+                       capture_output=True, text=True, timeout=60, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "not saved" in r.stderr, "a failed save must say so, not stay silent: %r" % r.stderr
+
+
 def check_preferred_and_warrant_rows_are_not_graded():
     """A live sweep returned NYSE:HPE/PC - HPE's 7.625% Series C Mandatory Convertible Preferred -
     ranked SEVENTH on 6-month performance, next to HPE itself. Graded as a candidate it would put
@@ -1707,6 +2157,13 @@ def check_skill_documents_the_throttle():
     flow = s[s.index("tv_throttle.py --wait"):]
     flow = flow[:flow.index("```")]
     assert "--scope" in flow, "the --wait/--observe flow itself must pass --scope: %r" % flow
+    # The response is remote text. Pasted into a quoted shell argument, "Macy's" breaks the command
+    # and a hostile response is injection - so the documented flow reads it from stdin.
+    assert "--observe -" in flow, "the documented flow must hand the response over on stdin: %r" % flow
+    for doc in ("SKILL.md", os.path.join("scripts", "tv_throttle.py")):
+        text = io.open(os.path.join(ROOT, doc), encoding="utf-8").read()
+        assert not re.search(r"--observe\s+['\"]", text), \
+            "%s shows a response pasted into the command line" % doc
 
 # ---------------------------------------------------------------- doc/consistency
 
@@ -1785,20 +2242,44 @@ def check_no_reference_points_at_a_workflow_step_that_moved():
     """Inserting a step renumbers every later one, and the cross-references elsewhere do not
     follow. Inserting the market-session check as step 1 left SKILL.md pointing at "step 4a" (now
     5a), "Step 7" (now 8), and build_report.py calling itself "the entry point for step 7" - each
-    silently sending a reader to the wrong instruction.
+    silently sending a reader to the wrong instruction. "step-7 entry point" survived that, in
+    SKILL.md and the exporter, because the pattern only matched "step 7" with a space.
+
+    A reference qualified by a file - "`tradingview-sector-sweep.md` Step 4" - points into THAT
+    file's numbering, which is its own ("## Step 4"), not SKILL.md's. The first version checked
+    every reference against SKILL.md and so passed those only by coincidence (SKILL.md also had a
+    step 4); it broke the day SKILL.md lost its step 0 while the sweep guide kept its own.
     """
     skill = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
-    # the headings that actually exist, e.g. {"0","1","2","5a",...}
+    # the headings that actually exist, e.g. {"1","2","5a",...}
     steps = set(re.findall(r"^###\s+([0-9]+[a-z]?)\s+—", skill, re.M))
     assert len(steps) >= 8, "could not read the workflow headings: %s" % sorted(steps)
     targets = [os.path.join(ROOT, "SKILL.md"), os.path.join(ROOT, "scripts", "build_report.py")]
+    exporter = os.path.join(ROOT, "scripts", "export_portable.py")
+    if os.path.exists(exporter):             # a portable copy ships this suite, not the exporter
+        targets.append(exporter)
+    qualified = re.compile(r"([\w/-]+\.md)`?\s+[Ss]tep[\s-]+([0-9]+[a-z]?)\b")
     bad = []
     for path in targets:
+        name = os.path.basename(path)
         text = io.open(path, encoding="utf-8").read()
-        for m in re.finditer(r"\b[Ss]tep\s+([0-9]+[a-z]?)\b", text):
+        for m in qualified.finditer(text):
+            if os.path.basename(m.group(1)) == "SKILL.md":
+                theirs = steps
+            else:
+                doc = os.path.join(ROOT, "references", os.path.basename(m.group(1)))
+                if not os.path.exists(doc):
+                    bad.append("%s: %s is not a file under references/" % (name, m.group(1)))
+                    continue
+                theirs = set(re.findall(r"^##\s+Step\s+([0-9]+[a-z]?)\s+—",
+                                        io.open(doc, encoding="utf-8").read(), re.M))
+            if m.group(2) not in theirs:
+                bad.append("%s: '%s step %s' (that file's steps are %s)"
+                           % (name, m.group(1), m.group(2), sorted(theirs)))
+        # whatever is left refers to SKILL.md's own workflow
+        for m in re.finditer(r"\b[Ss]tep[\s-]+([0-9]+[a-z]?)\b", qualified.sub("", text)):
             if m.group(1) not in steps:
-                bad.append("%s: 'step %s' (headings are %s)"
-                           % (os.path.basename(path), m.group(1), sorted(steps)))
+                bad.append("%s: 'step %s' (headings are %s)" % (name, m.group(1), sorted(steps)))
     assert not bad, "cross-reference to a workflow step that does not exist: %s" % bad[:4]
 
 
@@ -1841,6 +2322,44 @@ def check_a_long_wait_is_never_sat_through_silently():
     assert "short wait" in mses.render(near_bell)
 
 
+def check_eastern_time_is_exact_without_a_tz_database():
+    """Without tzdata (stock Windows Python, slim containers) ZoneInfo raises, and the module fell
+    back to the MACHINE clock labelled ET: a container on UTC at 16:30 (12:30 ET, session open)
+    read as "after-close, S gradeable", and S was graded on a partial session with no warning.
+    The fallback now computes ET from UTC with the US DST rule, and must agree with the database."""
+    import datetime as D
+    utc = D.timezone.utc
+    for parts, want_hour in (((2026, 7, 1, 16, 0), 12), ((2026, 1, 15, 16, 0), 11),
+                             ((2026, 3, 8, 6, 59), 1), ((2026, 3, 8, 7, 0), 3),       # spring forward
+                             ((2026, 11, 1, 5, 59), 1), ((2026, 11, 1, 6, 0), 1)):    # fall back
+        got = mses.et_from_utc(D.datetime(*parts, tzinfo=utc))
+        assert got.hour == want_hour, (parts, got)
+    try:
+        from zoneinfo import ZoneInfo
+        real = ZoneInfo("America/New_York")
+    except Exception:
+        real = None
+    if real is not None:                       # agree with the database, boundaries included
+        t = D.datetime(2024, 1, 1, tzinfo=utc)
+        while t.year < 2032:
+            assert mses.et_from_utc(t).replace(tzinfo=None) == t.astimezone(real).replace(tzinfo=None), t
+            t += D.timedelta(minutes=97)
+        for y in range(2024, 2032):
+            for m, d in ((3, 8), (3, 14), (11, 1), (11, 7)):
+                for h in range(0, 24):
+                    t = D.datetime(y, m, d, h, 30, tzinfo=utc)
+                    assert mses.et_from_utc(t).replace(tzinfo=None) == t.astimezone(real).replace(tzinfo=None), t
+    # ...and the failure that mattered: no database, container clock on UTC, session open
+    v = mses.classify(mses.et_from_utc(D.datetime(2026, 9, 22, 16, 30, tzinfo=utc)))     # Tue 12:30 ET
+    assert v["state"] == "open" and v["s_gradeable"] is False, v
+    saved = mses.ET
+    mses.ET = None
+    try:
+        assert mses.now_et().utcoffset() in (D.timedelta(hours=-4), D.timedelta(hours=-5))
+    finally:
+        mses.ET = saved
+
+
 def check_confirming_the_market_open_actually_holds_the_run(tmp):
     """--confirm-open exists to override the clock, which cannot see an early close. The first
     version overrode the STATE but kept the premarket dict's wait_seconds=0, so `--wait` slept for
@@ -1862,11 +2381,38 @@ def check_skill_documents_the_market_session_check():
     assert "Never block silently for hours" in s, "SKILL.md omits the wait policy"
 
 
-def check_skill_documents_step_zero():
+def check_skill_documents_the_fresh_data_policy():
+    """These standing rules once sat under a '### 0' heading about checking for skill updates, so
+    removing that step could have taken them along - and nothing else pins the prose. They govern
+    every step, so they live in their own section ahead of the numbered workflow."""
     s = io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
-    assert "### 0 — Check this copy of the skill is current" in s
-    assert "check_for_updates.py" in s
-    assert "does NOT take effect this run" in s.replace("**", "")
+    for must in ("## Fresh data, every run", "ALWAYS ATTEMPT FRESH DATA",
+                 "### When a fresh pull fails", "### Always date the data"):
+        assert must in s, "SKILL.md lost %r" % must
+    assert s.index("## Fresh data, every run") < s.index("## Workflow"), \
+        "the fresh-data rules must be read before the first numbered step, not buried inside one"
+
+
+def check_the_self_update_machinery_stays_removed():
+    """Updating is the installer's job now (a marketplace), not the skill's. What fails badly is
+    half of the feature coming back: a doc telling the run to execute a script that no longer
+    exists, or to log a 'skill version' failure nothing can produce. Neither errors anywhere - the
+    run just chases an instruction that cannot be followed."""
+    gone = os.path.join(ROOT, "scripts", "check_for_updates.py")
+    assert not os.path.exists(gone), "scripts/check_for_updates.py is back"
+    needles = ("check_for_" + "updates", "skill " + "version", "--" + "update",
+               "fast" + "-forward", "git " + "fetch")
+    for top in ("SKILL.md", "README.md", "references", "scripts", "assets", ".gitignore"):
+        path = os.path.join(ROOT, top)
+        files = [path] if os.path.isfile(path) else [
+            os.path.join(d, f) for d, _, fs in os.walk(path) for f in fs
+            if f.endswith((".md", ".py", ".html"))]
+        for f in files:
+            text = io.open(f, encoding="utf-8").read().lower()
+            for n in needles:
+                assert n not in text, "%s still mentions %r" % (os.path.relpath(f, ROOT), n)
+    assert not re.search(r"^###\s+0\s+—", io.open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read(), re.M), \
+        "SKILL.md has a step 0 again - the workflow starts at step 1"
 
 
 def check_fmp_is_last_on_every_source_ladder():
@@ -1986,6 +2532,22 @@ def check_the_companion_data_skills_are_documented_as_installs():
     # A missing companion must be reported, never silently swapped for a weaker rung.
     assert "not installed" in skill and "install it" in skill.lower(), \
         "SKILL.md no longer tells the run to prompt for a missing companion skill"
+
+
+def check_every_script_is_listed_in_the_docs():
+    """README's Contents and SKILL.md's 'Files in this skill' are the only map of what ships.
+    Seven scripts were missing from SKILL.md's and three from README's, and nothing noticed -
+    an unlisted script is one a reader (or a model loading SKILL.md cold) never learns exists.
+    The exporter is exempt from SKILL.md: it is packaging, not part of a run."""
+    docs = {name: io.open(os.path.join(ROOT, name), encoding="utf-8").read()
+            for name in ("README.md", "SKILL.md")}
+    for f in sorted(os.listdir(os.path.join(ROOT, "scripts"))):
+        if not f.endswith(".py"):
+            continue
+        for name, text in docs.items():
+            if name == "SKILL.md" and f == "export_portable.py":
+                continue
+            assert "scripts/" + f in text, "%s does not list scripts/%s" % (name, f)
 
 
 def check_every_script_compiles():

@@ -12,7 +12,7 @@ The skill normally lives as a directory that Claude Code loads on its own. Other
 
   can-slim-recommend.zip           the raw directory, for a host that can take a folder
                                    (Gemini Gems / Custom GPT file uploads, another Claude Code
-                                   install, a git checkout).
+                                   install).
 
 Both are regenerated from the working tree, so re-run this after changing the skill rather than
 hand-editing the bundle - a stale bundle is worse than none.
@@ -33,7 +33,6 @@ FILES = [
     ("references/canslim-methodology.md",    "md",   "The distilled CAN SLIM rule set - the seven criteria, thresholds, base patterns, buy/sell rules."),
     ("references/tradingview-sector-sweep.md","md",  "The primary data guide: verified call shapes, sector taxonomy, triage filters, list construction."),
     ("references/ibkr-data-guide.md",        "md",   "The fallback data path plus the shared fundamental-source ladder."),
-    ("scripts/check_for_updates.py",         "python", "Step 0: is this copy current? Compares the checkout against its remote, separates code (effective this run) from instructions (effective next run), and fails open when it cannot check."),
     ("scripts/rubric.py",                    "python", "The shared thresholds as code - pivot band, N's fail line at twice it, the price and liquidity floors, S's volume bands, L's laggard test, the pass/partial/fail weights and the score bands. Shared VERBATIM with can-slim-grader: sector_screen.py imports it rather than restating the numbers, because restating them is how '10% below the high' came to mean two different things in the two skills."),
     ("scripts/sector_screen.py",             "python", "Sector-sweep arithmetic and CAN SLIM triage over the screener rows."),
     ("scripts/relative_strength.py",         "python", "RS proxy, % off the 52-week high, base depth/length, breakout volume, from OHLCV bars."),
@@ -42,7 +41,7 @@ FILES = [
     ("scripts/institutional_cache.py",       "python", "Grades I (institutional sponsorship) from SEC Form 13F, aggregated once per quarter and cached. 13F is filed by manager, not by issuer, so this is the aggregation that makes 'who owns it' answerable at all. Fails open to the volume proxy."),
     ("scripts/accumulation.py",              "python", "The I fallback: reads institutional buying pressure from the up/down volume footprint when 13F ownership is unavailable. A proxy, and every reason string says so."),
     ("scripts/annual_eps.py",                "python", "Grades A (annual earnings growth) from SEC XBRL, because the connector cannot: TradingView returns 8 quarters whatever period is asked for, which is two fiscal years against the three the rubric tests. Unlike the I proxy these are audited figures, so a fail here is evidence and may prune."),
-    ("scripts/build_report.py",              "python", "The step-7 entry point: produces the PDF (default), the HTML, or both, and refuses to emit a report that is failing its own self-audit."),
+    ("scripts/build_report.py",              "python", "The step-8 entry point: produces the PDF (default), the HTML, or both, and refuses to emit a report that is failing its own self-audit."),
     ("scripts/html_to_pdf.py",               "python", "The PDF engine chain behind it; reads page size and margin from the document's @page rule."),
     ("assets/dashboard_template.html",       "html", "The report template. Fill its CONFIG object and it renders itself, audits itself, and refuses to ship a self-contradicting report."),
     ("scripts/check_parity.py",               "python", "Proves this skill and can-slim-grader still grade the same way: shared-file hashes attributed three ways, both dashboards' REAL scoring code run over all 2187 possible scorecards, 100 random tickers with messy authored input, and the shared methodology's N rung checked against what the ceiling implements. The sister's own parity script hashes files in its own tree and says outright that it cannot catch a reworded threshold - this is that gap."),
@@ -187,20 +186,21 @@ correspondingly-titled sections below:
 
 ```
 can-slim-recommend/
-  SKILL.md
-  README.md
-  references/canslim-methodology.md
-  references/tradingview-sector-sweep.md
-  references/ibkr-data-guide.md
-  scripts/sector_screen.py
-  scripts/relative_strength.py
-  scripts/build_report.py
-  scripts/html_to_pdf.py
-  assets/dashboard_template.html
+@@MANIFEST@@
 ```
 
 ---
 """
+
+
+def preamble():
+    """PREAMBLE with its file manifest taken from FILES.
+
+    The manifest used to be typed out by hand and listed 10 of the bundle's files. It left out
+    rubric.py, which sector_screen.py imports, so a skill rebuilt from the manifest alone could
+    not start. Generating it from the same list that builds the bundle means it cannot drift.
+    """
+    return PREAMBLE.replace("@@MANIFEST@@", "\n".join("  " + rel for rel, _, _ in FILES))
 
 
 def fence_for(text):
@@ -220,7 +220,8 @@ def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "dist")
     os.makedirs(outdir, exist_ok=True)
 
-    parts = [PREAMBLE]
+    intro = preamble()
+    parts = [intro]
     missing = []
     for rel, lang, blurb in FILES:
         path = os.path.join(ROOT, rel)
@@ -242,7 +243,7 @@ def main():
             p = os.path.join(ROOT, rel)
             if os.path.exists(p):
                 z.write(p, os.path.join("can-slim-recommend", rel))
-        z.writestr("can-slim-recommend/PORTABLE-README.md", PREAMBLE)
+        z.writestr("can-slim-recommend/PORTABLE-README.md", intro)
 
     for p in (md_path, zip_path):
         print("%8.1f KB  %s" % (os.path.getsize(p) / 1024.0, p))

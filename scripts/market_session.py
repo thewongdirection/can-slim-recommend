@@ -56,7 +56,7 @@ import time
 try:
     from zoneinfo import ZoneInfo
     ET = ZoneInfo("America/New_York")
-except Exception:                      # pragma: no cover - ancient python
+except Exception:                      # no zoneinfo, or no tz database (Windows, slim containers)
     ET = None
 
 OPEN_H, OPEN_M = 9, 30
@@ -68,10 +68,32 @@ SETTLE_MIN = 30
 MAX_AUTO_WAIT = 45 * 60
 
 
+def _nth_sunday(year, month, n):
+    first = datetime.date(year, month, 1)
+    return first + datetime.timedelta(days=(6 - first.weekday()) % 7, weeks=n - 1)
+
+
+def et_from_utc(utc):
+    """Eastern Time for an aware UTC datetime, with no tz database needed.
+
+    Without tzdata (stock Windows Python, slim containers) `ZoneInfo` raises, and this module
+    used to fall back to the MACHINE'S clock labelled as ET: a container on UTC at 16:30 (12:30
+    ET, session open) read as "after-close, S gradeable" and graded relative volume on a partial
+    session with no warning at all. US daylight time runs from 02:00 on the second Sunday of March
+    to 02:00 on the first Sunday of November (the rule in force since 2007), i.e. 07:00 UTC to
+    06:00 UTC, so the offset can be computed exactly.
+    """
+    start = datetime.datetime.combine(_nth_sunday(utc.year, 3, 2), datetime.time(7),
+                                      tzinfo=datetime.timezone.utc)
+    end = datetime.datetime.combine(_nth_sunday(utc.year, 11, 1), datetime.time(6),
+                                    tzinfo=datetime.timezone.utc)
+    hours = -4 if start <= utc < end else -5
+    return utc.astimezone(datetime.timezone(datetime.timedelta(hours=hours), "ET"))
+
+
 def now_et():
-    if ET is None:
-        return datetime.datetime.now()
-    return datetime.datetime.now(datetime.timezone.utc).astimezone(ET)
+    utc = datetime.datetime.now(datetime.timezone.utc)
+    return utc.astimezone(ET) if ET is not None else et_from_utc(utc)
 
 
 def classify(now=None, settle_min=SETTLE_MIN):

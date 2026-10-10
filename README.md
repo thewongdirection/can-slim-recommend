@@ -10,18 +10,19 @@ It activates when you ask for stock ideas — *"recommend some stocks"*, *"what 
 
 ## Install
 
-**Clone it. Do not unzip it** — that one choice decides whether the skill can ever update itself.
+Install it through the marketplace it is published in. The skill does not check for or apply
+updates itself — whatever installed it owns that, so updates arrive the same way the install did.
+
+To install by hand instead, `SKILL.md` sits at the repo root, so cloning the repo *as* the skill
+directory is the whole install:
 
 ```bash
 git clone https://github.com/thewongdirection/can-slim-recommend.git \
   ~/.claude/skills/can-slim-recommend
 ```
 
-That is the whole install. It works because `SKILL.md` sits at the repo root, so cloning the repo
-*as* the skill directory gives you `~/.claude/skills/can-slim-recommend/SKILL.md` **and** a git
-checkout in one step. A fresh clone lands on `main` tracking `origin/main`, which is exactly the
-upstream the version check needs. For a project-scoped install, clone to
-`{your-project}/.claude/skills/can-slim-recommend` instead.
+For a project-scoped install, clone to `{your-project}/.claude/skills/can-slim-recommend`
+instead. A hand install stays at the version you cloned until you `git pull` it.
 
 ### Install the companion skills too — data sourcing is a skill *set*
 
@@ -53,44 +54,13 @@ git clone https://github.com/thewongdirection/ibkr-review-ticker.git \
   financial look before it earns a place on a list.
 
 If one of them is missing, the run does not fail silently: it tells you which skill is absent, and
-which weaker source it used instead.
+which weaker source it used instead. Each is a separate install and is updated the way you
+installed it.
 
-**Why not the zip.** Step 0 of every run compares this checkout against its git remote. A zip
-export has no `.git`, so there is nothing to compare and the check reports:
+### The I-cache needs a quarterly rebuild
 
-```
-Version not verified - not a git checkout
-```
-
-It fails open and the run continues, but the copy is frozen forever. The zip from
-`scripts/export_portable.py` is for handing the skill to a **non-Claude assistant** (see below),
-not for installing it here.
-
-### Keeping auto-update working
-
-Four things, none of which are obvious:
-
-- **Do not edit files in place.** `--update` refuses to fast-forward a dirty tree — it will not
-  pull over your work. Commit any customisation and expect to merge rather than fast-forward.
-- **`data/` will not dirty the tree.** The throttle state and the I-cache both write there, and it
-  is gitignored, so `git status` stays clean and updates keep succeeding after real use.
-- **git and network access to github.com are required.** Without either, step 0 says so plainly
-  and the run continues on whatever copy you have. It never blocks.
-- **Code updates land this run; instruction updates land the next.** `scripts/` and `assets/` are
-  read from disk when they execute. `SKILL.md` and `references/` were already loaded into context
-  before step 0 ran, so a change to those takes effect on the following invocation — the check
-  reports the two groups separately rather than implying otherwise.
-
-Check or update by hand at any time:
-
-```bash
-python scripts/check_for_updates.py            # report only
-python scripts/check_for_updates.py --update   # fast-forward when it is safe to
-```
-
-### One thing auto-update does not refresh
-
-The **I-cache** (institutional sponsorship) is built from SEC bulk data, not from this repo.
+The **I-cache** (institutional sponsorship) is built from SEC bulk data, not from this repo, so
+installing or updating the skill never refreshes it.
 Rebuild it once a quarter, after each 13F deadline — mid-Feb, mid-May, mid-Aug, mid-Nov:
 
 ```bash
@@ -135,11 +105,6 @@ loss-cutting stop.
 
 ## How it works
 
-0. **Version check first** — `scripts/check_for_updates.py` compares this checkout against its
-   remote before any market call. Code updates (`scripts/`, `assets/`) take effect on the spot;
-   instruction updates (`SKILL.md`, `references/`) were already loaded and land on the next
-   invocation, so the run reports which it got. It never blocks a run and never pulls over
-   uncommitted work.
 1. **M first** — market direction from SPY/QQQ bars (distribution days, 50/200-day trend), graded
    once and applied to every row. In a correction the lists come out short rather than the cut
    coming down.
@@ -266,7 +231,8 @@ Any source that provides those works. It also carries the rules most likely to b
 translation — never invent a number, always attempt fresh data, always date it, never lower the
 bar to fill a list.
 
-Re-run the script after changing the skill; a stale bundle is worse than none.
+Re-run the script after changing the skill; a stale bundle is worse than none, so the regression
+suite fails until `dist/can-slim-recommend-portable.md` matches the sources again.
 
 ## Contents
 - `SKILL.md` — activation + the full workflow.
@@ -280,11 +246,15 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
   built.
 - `references/ibkr-data-guide.md` — the fallback path (IBKR / Massive / FMP) plus the shared
   fundamental-source ladder.
-- `scripts/check_for_updates.py` — step 0: is this copy current? Fails open when it cannot
-  check; `--update` fast-forwards only on a clean, undiverged tree.
 - `scripts/sector_screen.py` — sector sweep arithmetic + CAN SLIM triage over the screener rows.
+- `scripts/rubric.py` — the shared thresholds as code (pivot band, price and liquidity floors,
+  S's volume bands, L's laggard test, the pass/partial/fail weights). Shared verbatim with
+  `can-slim-grader`; `sector_screen.py` imports it rather than restating the numbers.
 - `scripts/relative_strength.py` — RS proxy, % off 52-week high, base depth/length, breakout
   volume from OHLCV bars. Shared with `can-slim-grader`.
+- `scripts/market_session.py` — step 1: is a trading session in progress? S is graded from
+  relative volume, which mid-session is a partial sum. Waits out a short gap and says so
+  immediately on a long one.
 - `scripts/tv_throttle.py` — paces TradingView calls so a sweep never earns a block. `--wait`
   blocks the caller rather than advising it, because the connector gives no warning: a burst
   succeeds, then the screener 403s for twenty minutes with no server-side way out. The rate is
@@ -303,26 +273,29 @@ Re-run the script after changing the skill; a stale bundle is worse than none.
   self-audit before emitting.
 - `scripts/html_to_pdf.py` — the PDF engine chain behind it. Shared with `can-slim-grader`.
 - `scripts/export_portable.py` — bundles the skill for use with a non-Claude assistant.
+- `scripts/check_parity.py` — proves this skill and `can-slim-grader` still grade the same way.
 - `assets/dashboard_template.html` — the self-contained report template: dark on screen, white
   on paper.
 - `tests/test_regression.py` — the regression suite (see below).
 
 ## Tests
 ```
-python tests/test_regression.py        # all of it, ~2s
+python tests/test_regression.py        # all of it, ~30s
 python tests/test_regression.py -v     # name every passing check
 python tests/test_regression.py ceiling   # only suites matching a substring
 ```
 Pure standard library — no pytest, no network, no MCP connector. Run it after touching anything
-under `scripts/` or `assets/`.
+under `scripts/` or `assets/`. The dashboard tests render the real template in a headless browser and
+skip themselves when there is none; the sister-skill parity check skips without a `can-slim-grader`
+checkout (see "Keeping the pair at parity" in `SKILL.md`).
 
 The load-bearing check is the ceiling's **soundness**: a ceiling that sits too high only wastes
 API calls, but one that sits too low drops a qualifying name and leaves no trace in the report.
 Two tests pin it from opposite directions — a brute force over the whole grade space against an
 independently written copy of the rubric, and every grade the 2026-09-12 run actually awarded,
 asserting no real score exceeded its own ceiling. The rest cover triage (a missing column must be
-skipped, never failed), `@page` margin parsing, the dashboard's self-audit rules, and the full
-`check_for_updates` git matrix including that it fails open and refuses to pull over a dirty tree.
+skipped, never failed), `@page` margin parsing, the dashboard's self-audit rules, and that the
+docs, the exporter and the code still agree with each other.
 
 ## Requirements
 - **TradingView MCP connector** (primary). Falls back to IBKR / Massive Market Data / web, and
