@@ -92,6 +92,8 @@ DEFAULTS = {
     "min_days": 330,     # a fiscal year's duration, wide enough for 52/53-week calendars
     "max_days": 400,
     "stale_days": 700,   # a series ending longer ago than this cannot answer "the last 3 years"
+    "gap_min": 300,      # consecutive fiscal years end this many days apart (52/53-week years
+    "gap_max": 430,      #   and a shifted year-end included); outside it, a year is MISSING
     "pause": 0.15,       # SEC asks for <= 10 requests/second; stay well under
 }
 
@@ -122,25 +124,43 @@ def http(url, contact, timeout=60, retries=5):
     return None, why or "unreachable"
 
 
-def _cached(path, fetch, pause=DEFAULTS["pause"]):
-    """Read `path`, or fetch and write it. Returns bytes (possibly b'{}').
+CACHE_MAX_AGE_DAYS = 30
 
-    An empty body is cached too, deliberately: "this filer does not report that tag" is a real
-    answer and re-asking for it on every run is rude to SEC and slow for us.
+
+def _cached(path, fetch, pause=DEFAULTS["pause"], max_age_days=CACHE_MAX_AGE_DAYS):
+    """Read `path`, or fetch and write it. `fetch` returns http()'s (bytes, why). Returns bytes.
+
+    Only what SEC actually ANSWERED is remembered. A 404 is an answer - "this filer does not report
+    that tag" - and is cached as b'{}', because re-asking on every run is rude to SEC and slow for
+    us. A 503, a 403 or a timeout is NOT an answer. It used to be written to disk as b'{}' too, so
+    one bad minute left company_tickers.json empty for good: every later run reported "no CIK" for
+    every name, and a 403 on a concept file left that name ungraded permanently. A failure is now
+    returned as empty for THIS run and never written; if an older copy exists it is used instead.
+
+    Entries expire after `max_age_days`: a new 10-K or a restatement is otherwise never picked up.
     """
+    stale = None
     if os.path.exists(path):
-        return io.open(path, "rb").read()
-    body = fetch() or b"{}"
+        body = io.open(path, "rb").read()
+        if time.time() - os.path.getmtime(path) <= max_age_days * 86400:
+            return body
+        stale = body
+    body, why = fetch()
+    time.sleep(pause)               # SEC asks for <= 10 requests/second; stay well under
+    if body is None:
+        if why != "HTTP 404":
+            return stale if stale is not None else b"{}"
+        body = b"{}"
+    body = body or b"{}"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     io.open(path, "wb").write(body)
-    time.sleep(pause)               # SEC asks for <= 10 requests/second; stay well under
     return body
 
 
 def load_tickers(cache_dir, contact):
     """{TICKER: zero-padded CIK} from SEC's own registrant list."""
     body = _cached(os.path.join(cache_dir, "company_tickers.json"),
-                   lambda: http(TICKERS_URL, contact)[0])
+                   lambda: http(TICKERS_URL, contact))
     try:
         d = json.loads(body)
     except ValueError:
@@ -193,7 +213,7 @@ def annual_eps(cik, cache_dir, contact, cfg):
     got = {}
     for ns, tag in CONCEPTS:
         body = _cached(os.path.join(cache_dir, "concept_%s_%s.json" % (cik, tag)),
-                       lambda ns=ns, tag=tag: http(CONCEPT_URL % (cik, ns, tag), contact)[0])
+                       lambda ns=ns, tag=tag: http(CONCEPT_URL % (cik, ns, tag), contact))
         _fill(got, parse_annual(body, cfg))
         # Enough consecutive years to answer the test, and the newest is recent? Stop paying
         # for calls. Otherwise keep filling from the less-preferred tags.
@@ -206,7 +226,7 @@ def annual_eps(cik, cache_dir, contact, cfg):
     # Nothing ANNUAL under any tag in the concept feed - trap 4. companyfacts is larger but
     # complete, and is merged across tags for the same reason.
     body = _cached(os.path.join(cache_dir, "facts_%s.json" % cik),
-                   lambda: http(FACTS_URL % cik, contact)[0])
+                   lambda: http(FACTS_URL % cik, contact))
     try:
         facts = json.loads(body).get("facts", {})
     except ValueError:
@@ -257,6 +277,16 @@ def grade(eps_by_end, cfg, today=None, roe=None):
     last = keep[-need:]
     vals = [eps_by_end[e] for e in last]
     series = [(e[:4], v) for e, v in zip(last, vals)]
+
+    # `consecutive` collapses duplicates but never checks that the years it keeps are ADJACENT. With
+    # FY2023 absent from the filings, FY2022 -> FY2024 was scored as ONE annual step, so +30%, +31%,
+    # +29% "passed" when the real growth was 13.8% a year. A missing year is a gap in the evidence.
+    for a, b in zip(last, last[1:]):
+        days = (dt.date.fromisoformat(b) - dt.date.fromisoformat(a)).days
+        if not (cfg["gap_min"] <= days <= cfg["gap_max"]):
+            return ("partial", "no fiscal year ends between %s and %s (%d days apart) - a year is "
+                    "missing from the filings, so %d-year growth cannot be measured"
+                    % (a, b, days, cfg["years"]), series, [])
 
     age = (today - dt.date.fromisoformat(last[-1])).days
     if age > cfg["stale_days"]:

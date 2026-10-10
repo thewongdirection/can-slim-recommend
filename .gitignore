@@ -33,7 +33,8 @@ reviews/
 # Local environment files.
 .env*
 
-# Cached SEC XBRL responses behind annual_eps.py (the A letter). Rebuildable, and an empty body
-# is cached deliberately - "this filer does not report that tag" is a real answer worth keeping.
+# Cached SEC XBRL responses behind annual_eps.py (the A letter). Rebuildable. A 404 is cached as an
+# empty body deliberately - "this filer does not report that tag" is a real answer worth keeping -
+# but a failed fetch is never cached, and every entry expires after 30 days.
 data/sec-eps/
 data/a-grades.json

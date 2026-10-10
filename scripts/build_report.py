@@ -78,13 +78,25 @@ def script_tag_problem(path):
         text = open(path, encoding="utf-8", errors="replace").read()
     except OSError:
         return None
-    opens = len(re.findall(r"<script\b", text, re.I))
-    closes = len(re.findall(r"</script", text, re.I))
-    if opens == closes:
+    # Open and close tags must ALTERNATE, in order. Comparing the two counts passed a CONFIG string
+    # holding a complete script element: the counts balance, but the parser still ends the real
+    # script at the string's closing tag and the rest of CONFIG leaks into the page as text.
+    expect, depth_problem = "<script", None
+    for m in re.finditer(r"<script\b|</script", text, re.I):
+        tag = m.group(0).lower()
+        if tag != expect:
+            say = {"<script": "an opening", "</script": "a closing"}
+            depth_problem = ("%s tag appears where %s tag was expected (near character %d)"
+                             % (say[tag], say[expect], m.start()))
+            break
+        expect = "</script" if expect == "<script" else "<script"
+    if depth_problem is None and expect == "</script":
+        depth_problem = "a script tag is never closed"
+    if depth_problem is None:
         return None
-    return ("the file has %d script tag(s) but %d closing ones - a CONFIG string almost certainly "
-            "contains the closing-script-tag text, which ends the script early. Write every < inside "
-            "CONFIG strings as \\u003c." % (opens, closes))
+    return ("the file's script tags do not pair up: %s - a CONFIG string almost certainly contains "
+            "script-tag text, which ends the script early. Write every < inside CONFIG strings as "
+            "\\u003c." % depth_problem)
 
 
 def dump_dom(path):
@@ -92,7 +104,7 @@ def dump_dom(path):
     exe = html_to_pdf.find_browser()
     if not exe:
         return None, "no headless browser found"
-    url = "file:///" + os.path.abspath(path).replace("\\", "/")
+    url = html_to_pdf.file_url(path)
     for head in ("--headless=new", "--headless"):
         try:
             out = subprocess.run(

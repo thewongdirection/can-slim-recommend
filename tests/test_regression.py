@@ -678,7 +678,7 @@ def check_too_little_tape_is_partial_never_fail():
 
 # ---------------------------------------------------------------- institutional_cache (I, 13F)
 
-def _mk13f(path, rows, period="31-MAR-2026"):
+def _mk13f(path, rows, period="31-MAR-2026", filed=None):
     """A zip shaped like SEC's real Form 13F data set: SUBMISSION + COVERPAGE + INFOTABLE.
 
     Built to the real schema after the first version of these fixtures invented one. The manager's
@@ -688,6 +688,7 @@ def _mk13f(path, rows, period="31-MAR-2026"):
 
     rows: [(accession, cik, submissiontype, period, amendmenttype, [(issuer, cusip, shares,
             sshprnamttype, putcall), ...]), ...]
+    filed: {accession: "dd-MON-yyyy"} filing dates; every other accession is filed 01-MAY-2026.
     """
     import zipfile
     sub = ["ACCESSION_NUMBER\tFILING_DATE\tSUBMISSIONTYPE\tCIK\tPERIODOFREPORT"]
@@ -697,7 +698,8 @@ def _mk13f(path, rows, period="31-MAR-2026"):
             "SSHPRNAMT\tSSHPRNAMTTYPE\tPUTCALL"]
     k = 0
     for acc, cik, styp, per, amd, holds in rows:
-        sub.append("%s\t01-MAY-2026\t%s\t%s\t%s" % (acc, styp, cik, per or period))
+        sub.append("%s\t%s\t%s\t%s\t%s" % (acc, (filed or {}).get(acc, "01-MAY-2026"), styp, cik,
+                                           per or period))
         cov.append("%s\t%s\t%s\t%s\t%s\tFUND %s" % (acc, per or period, "Y" if amd else "N",
                                                     "1" if amd else "", amd or "", cik))
         for issuer, cusip, sh, typ, pc in holds:
@@ -775,6 +777,162 @@ def check_13f_ignores_notices_and_resolves_amendments(tmp):
     # the filter is only visible in the REPORTED manager count - which is what makes that number
     # honest rather than an inflated "managers who filed something".
     assert "2 managers" in note, note
+
+
+def check_the_latest_restatement_wins_by_date_not_by_text(tmp):
+    """FILING_DATE is dd-MON-yyyy. Compared as TEXT, "30-APR-2026" sorts after "05-MAY-2026" (and
+    "15-DEC-2025" after "02-JAN-2026"), so the SUPERSEDED filing's holdings were counted for every
+    restating manager."""
+    for early, late in (("30-APR-2026", "05-MAY-2026"), ("15-DEC-2026", "02-JAN-2027")):
+        b = _mk13f(os.path.join(tmp, "q.zip"), [
+            ("R1", "111", "13F-HR/A", None, "RESTATEMENT", [("NVIDIA CORP", "67066G104", 100, "SH", "")]),
+            ("R2", "111", "13F-HR/A", None, "RESTATEMENT", [("NVIDIA CORP", "67066G104", 999, "SH", "")])],
+            filed={"R1": early, "R2": late})
+        agg, _ = ic.aggregate(b, "31-MAR-2026")
+        assert agg["67066G104"]["shares"] == 999, (early, late, agg["67066G104"]["shares"])
+    assert ic._filed_key("05-MAY-2026") == "2026-05-05" and ic._filed_key("2026-05-05") == "2026-05-05"
+    assert ic._filed_key("garbage") == "" and ic._filed_key(None) == ""
+
+
+def check_new_holdings_filed_after_a_restatement_are_kept(tmp):
+    """The docstring said a NEW HOLDINGS amendment "adds and is kept alongside", but only the single
+    latest restatement was kept, so holdings filed after it were dropped. Anything filed BEFORE
+    the restatement is what it replaced."""
+    rows = [("O", "111", "13F-HR", None, None, [("NVIDIA CORP", "67066G104", 100, "SH", "")]),
+            ("R", "111", "13F-HR/A", None, "RESTATEMENT", [("NVIDIA CORP", "67066G104", 200, "SH", "")]),
+            ("Before", "111", "13F-HR/A", None, "NEW HOLDINGS", [("ORACLE CORP", "68389X105", 7, "SH", "")]),
+            ("After", "111", "13F-HR/A", None, "NEW HOLDINGS", [("APPLE INC", "037833100", 50, "SH", "")])]
+    b = _mk13f(os.path.join(tmp, "q.zip"), rows,
+               filed={"O": "01-APR-2026", "Before": "05-APR-2026", "R": "10-APR-2026", "After": "20-APR-2026"})
+    agg, note = ic.aggregate(b, "31-MAR-2026")
+    assert {k: v["shares"] for k, v in agg.items()} == {"67066G104": 200, "037833100": 50}, agg
+    assert "2 superseded" in note, note                     # the original and the pre-restatement addition
+
+
+def check_a_corrupt_archive_member_fails_open(tmp):
+    """Only opening the zip was guarded, so a download damaged INSIDE a member (a bad CRC) escaped
+    as a traceback and exit 1 - no cache written, --fallback never merged - against the module's
+    own promise to fail open."""
+    import zipfile
+    path = os.path.join(tmp, "c.zip")
+    z = zipfile.ZipFile(path, "w", zipfile.ZIP_STORED)
+    z.writestr("SUBMISSION.tsv", "ACCESSION_NUMBER\tFILING_DATE\tSUBMISSIONTYPE\tCIK\tPERIODOFREPORT\n"
+                                 "A\t01-MAY-2026\t13F-HR\t1\t31-MAR-2026")
+    z.writestr("COVERPAGE.tsv", "ACCESSION_NUMBER\tAMENDMENTTYPE\nA\t")
+    z.writestr("INFOTABLE.tsv", "ACCESSION_NUMBER\tNAMEOFISSUER\tCUSIP\tVALUE\tSSHPRNAMT\tSSHPRNAMTTYPE\tPUTCALL\n"
+               + "".join("A\tNVIDIA CORP\t67066G104\t1\t5\tSH\t\n" for _ in range(200)))
+    z.close()
+    good = io.open(path, "rb").read()
+    assert ic.aggregate(good, "31-MAR-2026")[0], "the fixture itself is unreadable"
+    bad = bytearray(good)
+    bad[bad.find(b"A\tNVIDIA CORP", bad.find(b"INFOTABLE.tsv")) + 3] ^= 0x01     # one flipped byte
+    agg, why = ic.aggregate(bytes(bad), "31-MAR-2026")
+    assert agg is None and "unreadable" in why, (agg, why)
+    agg, why = ic.aggregate(good[: len(good) // 2], "31-MAR-2026")                  # cut short
+    assert agg is None and why, (agg, why)
+
+
+def check_a_quote_in_an_issuer_name_does_not_swallow_rows(tmp):
+    """SEC's files are tab-separated with no quoting. With the csv default, a name that BEGINS with a
+    quote opened a quoted field that ran across tabs and newlines and swallowed every row after it."""
+    b = _mk13f(os.path.join(tmp, "q.zip"), [
+        ("B", "2", "13F-HR", None, None, [('"BIG 5 SPORTING', "11111111A", 5, "SH", ""),
+                                          ("APPLE INC", "037833100", 7, "SH", ""),
+                                          ("MICROSOFT CORP", "594918104", 9, "SH", "")])])
+    agg, _ = ic.aggregate(b, "31-MAR-2026")
+    assert set(agg) == {"11111111A", "037833100", "594918104"}, sorted(agg)
+
+
+def check_get_dataset_only_caches_a_real_zip(tmp):
+    """A proxy or error page returned with a 200 and over 1000 bytes passed the size-only check and
+    was saved under the data set's name - then served as "cached" on every run, one HTTP call in
+    total, until someone found and deleted it."""
+    cache = os.path.join(tmp, "cache")
+    ds = {"name": "01mar2026-31may2026_form13f.zip", "url": "https://www.sec.gov/x.zip"}
+    calls = []
+    real = ic.http
+    def serve(body):
+        def f(url, c, t, retries=6):
+            calls.append(url)
+            return body, None
+        return f
+    try:
+        ic.http = serve(b"<html>" + b"x" * 2000 + b"</html>")
+        data, where = ic.get_dataset(ds, "me@example.org", 5, cache)
+        assert data is None and "not a zip" in where, (data, where)
+        assert not os.path.exists(os.path.join(cache, ds["name"])), "an error page was cached"
+        ic.get_dataset(ds, "me@example.org", 5, cache)
+        assert len(calls) == 2, "the failure was remembered instead of retried"
+
+        os.makedirs(cache, exist_ok=True)                     # an already-poisoned cache heals
+        io.open(os.path.join(cache, ds["name"]), "wb").write(b"<html>" + b"y" * 2000)
+        ic.http = serve(b"PK" + b"z" * 2000)
+        data, where = ic.get_dataset(ds, "me@example.org", 5, cache)
+        assert data and data[:2] == b"PK" and not where.startswith("cached"), where
+        data, where = ic.get_dataset(ds, "me@example.org", 5, cache)
+        assert where.startswith("cached"), "a good zip was not reused"
+        assert not [f for f in os.listdir(cache) if f.endswith(".tmp")], "a temp file was left behind"
+    finally:
+        ic.http = real
+
+
+def check_prior_quarter_reads_an_iso_date_and_a_bad_month_is_a_value_error():
+    """--quarter takes '2026-03-31' (period_end does), and --prior is "derived from --quarter" - but
+    prior_quarter returned None for that form, which meant NO PRIOR QUARTER: every grade capped at
+    partial for want of a trend, with nothing saying the date form was why. A month of 13 raised a
+    KeyError, which build() (it catches ValueError) does not catch."""
+    assert ic.prior_quarter("2026-03-31") == "2025Q4" and ic.prior_quarter("2026-06-30") == "2026Q1"
+    assert ic.prior_quarter("2026Q3") == "2026Q2" and ic.prior_quarter("nonsense") is None
+    assert ic.prior_quarter("2026-13-01") is None
+    for bad in ("2026-13-01", "2026-00-10"):
+        try:
+            ic.period_end(bad)
+        except ValueError:
+            continue
+        raise AssertionError("%s did not raise ValueError" % bad)
+
+
+def check_a_no_reply_contact_is_refused_with_a_reason():
+    """Measured against SEC (see the module comment): x@users.noreply.github.com is a 403 though it
+    parses fine. Only that documented case is refused - you@your-domain.com measured 200."""
+    c, why = ic.resolve_contact("x@users.noreply.github.com")
+    assert c is None and "no-reply" in why, (c, why)
+    assert ic.resolve_contact("noreply@mycompany.com")[0] is None
+    assert ic.resolve_contact("you@your-domain.com") == ("you@your-domain.com", None)
+    assert ic.resolve_contact("me@example.org") == ("me@example.org", None)
+
+
+def check_a_failed_build_keeps_a_good_cache_of_the_same_quarter_only(tmp):
+    """A failed build overwrote the cache with an empty one, so an SEC outage destroyed the right
+    answer. It must NOT keep any old cache, though: a cache from last quarter would grade
+    sponsorship from last quarter without saying so, which is why it is rebuilt each quarter."""
+    out = os.path.join(tmp, "i-cache.json")
+    good = lambda quarter: json.dumps({"meta": {"ok": True, "quarter": quarter},
+                                       "known": {"NVDA": {"I": "pass"}}, "detail": {}})
+    real_http, real_argv = ic.http, sys.argv
+    ic.http = lambda *a, **k: (None, "down")
+    try:
+        def run():
+            sys.argv = ["x", "--quarter", "2026Q1", "--contact", "me@mydomain.org", "-o", out,
+                        "--cache-dir", os.path.join(tmp, "c")]
+            err = io.StringIO()
+            real_err, sys.stderr = sys.stderr, err
+            try:
+                return ic.main(), err.getvalue()
+            finally:
+                sys.stderr = real_err
+        io.open(out, "w", encoding="utf-8").write(good("2026Q1"))
+        rc, err = run()
+        assert rc == 0 and json.load(io.open(out))["known"] == {"NVDA": {"I": "pass"}}, "a good cache was destroyed"
+        assert "KEPT" in err, err
+
+        io.open(out, "w", encoding="utf-8").write(good("2025Q4"))          # last quarter's: replaced
+        run()
+        assert json.load(io.open(out))["known"] == {} and not json.load(io.open(out))["meta"]["ok"], \
+            "last quarter's cache was kept and would be graded as this quarter's"
+        assert not [f for f in os.listdir(tmp) if f.endswith(".tmp")], "a temp file was left behind"
+    finally:
+        ic.http, sys.argv = real_http, real_argv
 
 
 def check_gzip_is_undone_before_parsing():
@@ -975,6 +1133,67 @@ def check_annual_eps_only_hands_the_ceiling_what_the_filings_decided(tmp):
     withheld = " ".join(out["meta"]["ungraded"])
     assert "AAA" in withheld and "BBB" in withheld, "withheld names must be listed with their reason"
     assert set(out["detail"]) == {"NYSE:AAA", "NYSE:BBB", "NYSE:CCC"}, "a withheld name vanished from detail"
+
+
+def check_a_missing_fiscal_year_is_not_bridged(tmp):
+    """`consecutive` collapses duplicates but never checked the years it kept were ADJACENT, so with
+    FY2023 absent, FY2022 -> FY2024 was scored as one annual step: +30%, +31%, +29% PASSED while
+    the real growth was 13.8% a year. A missing year is a gap in the evidence, not a result."""
+    today = _dt.date(2025, 6, 1)
+    gappy = {"2020-12-31": 1.00, "2021-12-31": 1.30, "2022-12-31": 1.70, "2024-12-31": 2.20}
+    g, why, series, steps = aeps.grade(gappy, aeps.DEFAULTS, today=today, roe=20.0)
+    assert g == "partial" and "missing" in why, (g, why)
+    assert not aeps.decides(g, steps, aeps.DEFAULTS, 20.0), "a gap must not reach the ceiling"
+    full = {"2021-12-31": 1.00, "2022-12-31": 1.30, "2023-12-31": 1.70, "2024-12-31": 2.20}
+    assert aeps.grade(full, aeps.DEFAULTS, today=today, roe=20.0)[0] == "pass"
+    # 52/53-week filers drift their year-end by days; that is still adjacent years
+    retail = {"2021-12-26": 1.00, "2022-12-31": 1.30, "2024-01-06": 1.70, "2024-12-28": 2.20}
+    assert aeps.grade(retail, aeps.DEFAULTS, today=today, roe=20.0)[0] == "pass"
+
+
+def check_only_what_sec_answered_is_cached(tmp):
+    """A 503, 403 or timeout was written to disk as b'{}', so one bad minute left
+    company_tickers.json empty for good (every later run: "no CIK" for every name) and a 403 on a
+    concept file left that name ungraded permanently. A 404 IS an answer and stays cached."""
+    path = os.path.join(tmp, "c", "x.json")
+    calls = []
+    def fetch(result):
+        def f():
+            calls.append(1)
+            return result
+        return f
+    assert aeps._cached(path, fetch((None, "HTTP 503")), pause=0) == b"{}"
+    assert not os.path.exists(path), "a failure was cached"
+    assert aeps._cached(path, fetch((b'{"ok":1}', None)), pause=0) == b'{"ok":1}'
+    n = len(calls)
+    assert aeps._cached(path, fetch((None, "never")), pause=0) == b'{"ok":1}' and len(calls) == n, \
+        "a good cache entry was refetched"
+
+    nf = os.path.join(tmp, "c", "404.json")
+    assert aeps._cached(nf, fetch((None, "HTTP 404")), pause=0) == b"{}"
+    n = len(calls)
+    assert aeps._cached(nf, fetch((b"x", None)), pause=0) == b"{}" and len(calls) == n, \
+        "a 404 (the filer does not report this tag) must be remembered"
+
+    # entries expire; and if the refresh fails, the older copy beats an empty answer
+    old = time.time() - 31 * 86400
+    os.utime(path, (old, old))
+    assert aeps._cached(path, fetch((b'{"ok":2}', None)), pause=0) == b'{"ok":2}', "a stale entry was served"
+    os.utime(path, (old, old))
+    assert aeps._cached(path, fetch((None, "HTTP 503")), pause=0) == b'{"ok":2}', \
+        "a failed refresh threw the stale copy away"
+
+    # end to end, the case that bit: the registrant list during an SEC blip, then recovery
+    real = aeps.http
+    d = os.path.join(tmp, "e2e")
+    try:
+        aeps.http = lambda *a, **k: (None, "HTTP 503")
+        assert aeps.load_tickers(d, "me@example.com") == {}
+        aeps.http = lambda *a, **k: (json.dumps({"0": {"ticker": "NVDA", "cik_str": 1045810}}).encode(), None)
+        assert aeps.load_tickers(d, "me@example.com") == {"NVDA": "0001045810"}, \
+            "the registrant list stayed empty after SEC recovered"
+    finally:
+        aeps.http = real
 
 
 def check_A_needs_both_legs_eps_growth_and_roe():
@@ -1699,6 +1918,48 @@ def check_a_closing_script_tag_in_config_is_refused(tmp):
     if _browser():
         ok, lines = br.audit(path)
         assert not ok, "the browser path reported an injected report clean: %s" % lines
+
+
+def check_script_tag_pairing_catches_a_balanced_but_nested_injection(tmp):
+    """Comparing the NUMBER of opening and closing script tags passed a CONFIG string that holds a
+    whole script element: the counts balance, yet the parser ends the real script at the string's
+    closing tag and the rest of CONFIG (and the render-complete mark) leaks into the page as text.
+    This check is the only guard when no browser is installed, so it has to be positional."""
+    one = lambda body: br.script_tag_problem(_write(tmp, "t.html", body))
+    assert one('<script>const C={a:"x"};</script><script>1</script>') is None
+    for bad in ('<script>const C={a:"saw <script>x</script> here"};</script>',     # balanced, nested
+                '<script>const C={a:"</script>"};</script>',                        # stray close
+                '<script>const C={a:1};', '</script><script>1</script>'):          # unclosed / leading close
+        assert one(bad), "missed: %s" % bad
+    cfg = _good_cfg()
+    cfg["picks"][0]["reason"] = "saw <script>x</script> on a web page"
+    leaked = _fill(tmp, cfg, name="nested.html", raw_json=json.dumps(cfg))          # NOT escaped
+    assert br.script_tag_problem(leaked), "the nested injection slipped past the static check"
+    assert br.script_tag_problem(_fill(tmp, cfg, name="safe.html")) is None, "the \\u003c form was refused"
+
+
+def _write(tmp, name, body):
+    path = os.path.join(tmp, name)
+    io.open(path, "w", encoding="utf-8").write(body)
+    return path
+
+
+def check_file_urls_survive_awkward_paths(tmp):
+    """"file:///" + path gave file:////tmp/My Reports #2/r.html: a doubled slash and raw characters,
+    where "#" starts a fragment, "?" a query and "%" an escape. A report under a folder named
+    "Q3 #2" or "100%" was loaded from the wrong place."""
+    import urllib.parse
+    import urllib.request
+    folder = os.path.join(tmp, "My Reports #2 100% ?x")
+    os.makedirs(folder)
+    path = _write(folder, "r.html", "<html><body><p id=m>found-it</p></body></html>")
+    url = h2p.file_url(path)
+    assert url.startswith("file:///") and not url.startswith("file:////"), url
+    assert " " not in url and "#2" not in url and "?x" not in url, url
+    assert urllib.request.url2pathname(urllib.parse.urlsplit(url).path) == os.path.abspath(path), url
+    if _browser():                                  # ...and a real browser actually opens it
+        dom, why = br.dump_dom(path)
+        assert dom and "found-it" in dom, why
 
 
 def check_a_pick_without_a_symbol_is_flagged_not_fatal(tmp):

@@ -79,6 +79,11 @@ with zero tickers in it.
 Takes about 40 seconds and needs `www.sec.gov` reachable. Without it the skill still runs — **I**
 falls back to the volume proxy in `scripts/accumulation.py`, and every reason string says so.
 
+A rebuild that cannot reach SEC writes an empty cache, so a stale one is never graded as current. The
+one exception is a file that already holds a good build of the **same** quarter: that is kept, and
+the run prints `KEPT`. Downloads are checked to be real zip archives before they are cached, and a
+cached SEC answer for **A** expires after 30 days.
+
 ## What it produces
 
 Two lists, both built from the same graded pool:
